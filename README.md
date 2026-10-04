@@ -36,10 +36,11 @@ Snapshot as of **2026-10-04** — all four quality gates green
 Android-only, so wallet connect is Android-only; persisted captures anchor
 only to the farm that is current when the outbox flushes, and the captured
 photo _files_ live in the OS cache (the hash and anchor payload persist —
-the pixels are best-effort); the protocol admin is still a single key —
-authority now lives in the config PDA, so the Squads M-of-N handover is one
-`set_roles` transaction away, but creating the vault and signing the rotation
-remains outstanding; the final device screenshots for the write-up are still
+the pixels are best-effort); on devnet the three roles are split across
+deterministic per-role keys (`scripts/role-keys.cjs` — reproducible from a
+public formula, so structural rather than secret), while the real Squads
+M-of-N handover remains outstanding: creating the vault and signing the
+rotation to it; the final device screenshots for the write-up are still
 outstanding.
 
 ---
@@ -236,6 +237,26 @@ config prints its roles; the treasury USDC ATA is `getOrCreate`), takes
 `RPC_URL=http://127.0.0.1:8899` for a local validator, and takes
 `USDC_MINT=…` where the treasury mint isn't the app's devnet USDC.
 
+### Devnet role keys
+
+Roles on devnet are split across three independent keys, derived
+deterministically so they never need a backup:
+
+```bash
+cd programs/indorse_program
+node scripts/role-keys.cjs           # print admin/verifier/oracle public keys
+node scripts/role-keys.cjs rotate    # set_roles to them (idempotent)
+```
+
+The formula is `sha256("indorse-devnet-role-v1:<role>") → Keypair.fromSeed` —
+public by design, which means anyone can derive it and sign as these roles:
+the devnet roles structure the flow (a separate key per gate, the rotation
+path rehearsed end to end with both signers proven), they do not secure it.
+`ROLE_SEED` overrides the seed, `ADMIN/VERIFIER/ORACLE` override individual
+rotation targets (rotate back to the bootstrap key with all three), and
+`RPC_URL` picks the cluster. A Squads vault holding real keys is still the
+actual Phase 0 handover.
+
 ### Generated client
 
 `lib/generated/indorse` is a [Codama](https://github.com/codama-idl/codama)-rendered
@@ -336,7 +357,7 @@ indorse/
 │
 ├── api/                     # Vercel-style functions: AI classify (OpenAI/Gemini), SIWS, email, SAS
 ├── programs/
-│   └── indorse_program/     # Anchor workspace (Rust program + integration tests + init-config cutover)
+│   └── indorse_program/     # Anchor workspace (Rust program + integration tests + init-config/role-keys scripts)
 │
 ├── *.test.tsx / **/*.test.ts  # 57 suites — see Build process → Test strategy
 ├── test/setup-mocks.ts       # Shared test mocks (icon set, expo-crypto digest)
