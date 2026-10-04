@@ -1,0 +1,1674 @@
+{
+  "address": "GVenujqgMJZCvYPKqMmPiAXQp7o3mwQbXw1nSBu3U5Ht",
+  "metadata": {
+    "name": "indorse_program",
+    "version": "0.1.0",
+    "spec": "0.1.0",
+    "description": "Created with Anchor"
+  },
+  "instructions": [
+    {
+      "name": "cancel_escrow",
+      "docs": ["Buyer cancels and reclaims funds ONLY before the lock_until timestamp."],
+      "discriminator": [156, 203, 54, 179, 38, 72, 33, 21],
+      "accounts": [
+        {
+          "name": "buyer",
+          "writable": true,
+          "signer": true
+        },
+        {
+          "name": "escrow",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [101, 115, 99, 114, 111, 119]
+              },
+              {
+                "kind": "account",
+                "path": "escrow.batch",
+                "account": "Escrow"
+              }
+            ]
+          }
+        },
+        {
+          "name": "escrow_vault",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [101, 115, 99, 114, 111, 119, 95, 118, 97, 117, 108, 116]
+              },
+              {
+                "kind": "account",
+                "path": "escrow.batch",
+                "account": "Escrow"
+              }
+            ]
+          }
+        },
+        {
+          "name": "buyer_usdc",
+          "writable": true
+        },
+        {
+          "name": "token_program",
+          "address": "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA"
+        }
+      ],
+      "args": []
+    },
+    {
+      "name": "create_escrow",
+      "docs": [
+        "Buyer deposits USDC into an escrow PDA tied to a specific harvest batch.",
+        "Funds are locked until the farmer releases or the buyer cancels (before lock).",
+        "",
+        "PDA seeds: [b\"escrow\", batch]"
+      ],
+      "discriminator": [253, 215, 165, 116, 36, 108, 68, 80],
+      "accounts": [
+        {
+          "name": "buyer",
+          "writable": true,
+          "signer": true
+        },
+        {
+          "name": "batch"
+        },
+        {
+          "name": "escrow",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [101, 115, 99, 114, 111, 119]
+              },
+              {
+                "kind": "account",
+                "path": "batch"
+              }
+            ]
+          }
+        },
+        {
+          "name": "escrow_vault",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [101, 115, 99, 114, 111, 119, 95, 118, 97, 117, 108, 116]
+              },
+              {
+                "kind": "account",
+                "path": "batch"
+              }
+            ]
+          }
+        },
+        {
+          "name": "buyer_usdc",
+          "writable": true
+        },
+        {
+          "name": "usdc_mint"
+        },
+        {
+          "name": "token_program",
+          "address": "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA"
+        },
+        {
+          "name": "system_program",
+          "address": "11111111111111111111111111111111"
+        },
+        {
+          "name": "rent",
+          "address": "SysvarRent111111111111111111111111111111111"
+        }
+      ],
+      "args": [
+        {
+          "name": "amount_usdc",
+          "type": "u64"
+        },
+        {
+          "name": "lock_until",
+          "type": "i64"
+        }
+      ]
+    },
+    {
+      "name": "create_policy",
+      "docs": [
+        "Farmer creates a parametric insurance policy.",
+        "Coverage pays out in USDC when the weather trigger fires.",
+        "The farmer's scouting history can reduce the premium rate.",
+        "",
+        "The farmer pays the premium alone; the treasury tops the vault up with",
+        "the coverage amount in a separate transfer, so a mobile wallet only",
+        "ever needs one signature.",
+        "",
+        "PDA seeds: [b\"policy\", farm, policy_index (u32 LE)]"
+      ],
+      "discriminator": [27, 81, 33, 27, 196, 103, 246, 53],
+      "accounts": [
+        {
+          "name": "farmer",
+          "writable": true,
+          "signer": true
+        },
+        {
+          "name": "farm",
+          "writable": true
+        },
+        {
+          "name": "policy",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [112, 111, 108, 105, 99, 121]
+              },
+              {
+                "kind": "account",
+                "path": "farm"
+              },
+              {
+                "kind": "account",
+                "path": "farm.policy_count",
+                "account": "Farm"
+              }
+            ]
+          }
+        },
+        {
+          "name": "insurance_vault",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [105, 110, 115, 117, 114, 97, 110, 99, 101, 95, 118, 97, 117, 108, 116]
+              },
+              {
+                "kind": "account",
+                "path": "farm"
+              },
+              {
+                "kind": "account",
+                "path": "farm.policy_count",
+                "account": "Farm"
+              }
+            ]
+          }
+        },
+        {
+          "name": "farmer_usdc",
+          "writable": true
+        },
+        {
+          "name": "usdc_mint"
+        },
+        {
+          "name": "token_program",
+          "address": "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA"
+        },
+        {
+          "name": "system_program",
+          "address": "11111111111111111111111111111111"
+        },
+        {
+          "name": "rent",
+          "address": "SysvarRent111111111111111111111111111111111"
+        }
+      ],
+      "args": [
+        {
+          "name": "crop",
+          "type": "string"
+        },
+        {
+          "name": "coverage_usdc",
+          "type": "u64"
+        },
+        {
+          "name": "premium_usdc",
+          "type": "u64"
+        },
+        {
+          "name": "trigger_threshold_mm",
+          "type": "u32"
+        },
+        {
+          "name": "season_start",
+          "type": "i64"
+        },
+        {
+          "name": "season_end",
+          "type": "i64"
+        }
+      ]
+    },
+    {
+      "name": "delete_farm",
+      "docs": [
+        "Close the farm record and return its rent to the owner.",
+        "",
+        "Ownership is enforced twice over: the PDA seeds bind the farm to the",
+        "signing owner, and `has_one` double-checks the stored owner field.",
+        "Child accounts — scout reports, harvest batches, policies — are not",
+        "touched: their evidence stays on chain as an independent trail, and",
+        "every PDA derived from the farm address stays re-derivable after the",
+        "account itself is gone."
+      ],
+      "discriminator": [233, 185, 114, 56, 250, 185, 117, 50],
+      "accounts": [
+        {
+          "name": "farm",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [102, 97, 114, 109]
+              },
+              {
+                "kind": "account",
+                "path": "owner"
+              }
+            ]
+          }
+        },
+        {
+          "name": "owner",
+          "docs": ["The owner receives the rent; the PDA seeds bind this signer to the farm."],
+          "writable": true,
+          "signer": true,
+          "relations": ["farm"]
+        }
+      ],
+      "args": []
+    },
+    {
+      "name": "register_farm",
+      "docs": ["Create a farm PDA for the signing owner."],
+      "discriminator": [183, 52, 200, 186, 245, 91, 216, 246],
+      "accounts": [
+        {
+          "name": "owner",
+          "writable": true,
+          "signer": true
+        },
+        {
+          "name": "farm",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [102, 97, 114, 109]
+              },
+              {
+                "kind": "account",
+                "path": "owner"
+              }
+            ]
+          }
+        },
+        {
+          "name": "system_program",
+          "address": "11111111111111111111111111111111"
+        }
+      ],
+      "args": [
+        {
+          "name": "name",
+          "type": "string"
+        },
+        {
+          "name": "lat_e6",
+          "type": "i64"
+        },
+        {
+          "name": "lng_e6",
+          "type": "i64"
+        }
+      ]
+    },
+    {
+      "name": "release_escrow",
+      "docs": [
+        "Farmer releases the escrow, transferring funds to their wallet.",
+        "Only callable by the farmer named on the batch."
+      ],
+      "discriminator": [146, 253, 129, 233, 20, 145, 181, 206],
+      "accounts": [
+        {
+          "name": "farmer",
+          "signer": true
+        },
+        {
+          "name": "escrow",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [101, 115, 99, 114, 111, 119]
+              },
+              {
+                "kind": "account",
+                "path": "escrow.batch",
+                "account": "Escrow"
+              }
+            ]
+          }
+        },
+        {
+          "name": "escrow_vault",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [101, 115, 99, 114, 111, 119, 95, 118, 97, 117, 108, 116]
+              },
+              {
+                "kind": "account",
+                "path": "escrow.batch",
+                "account": "Escrow"
+              }
+            ]
+          }
+        },
+        {
+          "name": "farmer_usdc",
+          "writable": true
+        },
+        {
+          "name": "token_program",
+          "address": "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA"
+        }
+      ],
+      "args": []
+    },
+    {
+      "name": "revoke_policy",
+      "docs": [
+        "Revoke an active policy before the season ends.",
+        "",
+        "The farmer's premium comes back out of the policy vault, whatever the",
+        "treasury funded beyond it returns to the treasury, and both the empty",
+        "vault and the policy account close — their rents go back to the farmer.",
+        "Revocation is refused once the season is over: from then on the policy",
+        "must go through `settle_policy`, so a farmer can never reclaim the",
+        "premium to dodge a dry-season payout check."
+      ],
+      "discriminator": [49, 221, 179, 43, 154, 148, 35, 4],
+      "accounts": [
+        {
+          "name": "farmer",
+          "writable": true,
+          "signer": true
+        },
+        {
+          "name": "policy",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [112, 111, 108, 105, 99, 121]
+              },
+              {
+                "kind": "account",
+                "path": "policy.farm",
+                "account": "Policy"
+              },
+              {
+                "kind": "account",
+                "path": "policy.index",
+                "account": "Policy"
+              }
+            ]
+          }
+        },
+        {
+          "name": "insurance_vault",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [105, 110, 115, 117, 114, 97, 110, 99, 101, 95, 118, 97, 117, 108, 116]
+              },
+              {
+                "kind": "account",
+                "path": "policy.farm",
+                "account": "Policy"
+              },
+              {
+                "kind": "account",
+                "path": "policy.index",
+                "account": "Policy"
+              }
+            ]
+          }
+        },
+        {
+          "name": "farmer_usdc",
+          "writable": true
+        },
+        {
+          "name": "insurer_usdc",
+          "writable": true
+        },
+        {
+          "name": "token_program",
+          "address": "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA"
+        }
+      ],
+      "args": []
+    },
+    {
+      "name": "reward_report",
+      "docs": ["Transfer SKR tokens from the reward vault to the reporter."],
+      "discriminator": [149, 104, 2, 186, 73, 95, 161, 217],
+      "accounts": [
+        {
+          "name": "authority",
+          "docs": ["Hackathon gate: only the admin can pay out rewards."],
+          "signer": true
+        },
+        {
+          "name": "report",
+          "writable": true
+        },
+        {
+          "name": "reward_authority",
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [114, 101, 119, 97, 114, 100, 95, 97, 117, 116, 104, 111, 114, 105, 116, 121]
+              }
+            ]
+          }
+        },
+        {
+          "name": "reward_vault",
+          "writable": true
+        },
+        {
+          "name": "reward_mint",
+          "docs": ["Reward SPL mint (e.g. SKR on devnet)"]
+        },
+        {
+          "name": "reporter_token_account",
+          "writable": true
+        },
+        {
+          "name": "token_program",
+          "address": "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA"
+        }
+      ],
+      "args": [
+        {
+          "name": "amount",
+          "type": "u64"
+        }
+      ]
+    },
+    {
+      "name": "settle_policy",
+      "docs": [
+        "Settle a policy against a weather reading.",
+        "",
+        "If rainfall < threshold  → payout fires, farmer receives coverage_usdc.",
+        "If rainfall >= threshold → no payout, the treasury reclaims coverage.",
+        "In both cases the premium stays in the policy vault."
+      ],
+      "discriminator": [180, 234, 21, 174, 50, 214, 91, 113],
+      "accounts": [
+        {
+          "name": "settler",
+          "docs": ["Hackathon gate: only the admin can trigger settlement."],
+          "signer": true
+        },
+        {
+          "name": "policy",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [112, 111, 108, 105, 99, 121]
+              },
+              {
+                "kind": "account",
+                "path": "policy.farm",
+                "account": "Policy"
+              },
+              {
+                "kind": "account",
+                "path": "policy.index",
+                "account": "Policy"
+              }
+            ]
+          }
+        },
+        {
+          "name": "insurance_vault",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [105, 110, 115, 117, 114, 97, 110, 99, 101, 95, 118, 97, 117, 108, 116]
+              },
+              {
+                "kind": "account",
+                "path": "policy.farm",
+                "account": "Policy"
+              },
+              {
+                "kind": "account",
+                "path": "policy.index",
+                "account": "Policy"
+              }
+            ]
+          }
+        },
+        {
+          "name": "oracle"
+        },
+        {
+          "name": "farmer_usdc",
+          "writable": true
+        },
+        {
+          "name": "insurer_usdc",
+          "writable": true
+        },
+        {
+          "name": "token_program",
+          "address": "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA"
+        }
+      ],
+      "args": []
+    },
+    {
+      "name": "submit_harvest_batch",
+      "docs": [
+        "Record a harvest batch on-chain. GPS + timestamp prove provenance.",
+        "Buyers can inspect the farm's scouting history alongside this record.",
+        "",
+        "PDA seeds: [b\"batch\", farm, batch_index (u32 LE)]"
+      ],
+      "discriminator": [52, 6, 195, 205, 125, 160, 103, 25],
+      "accounts": [
+        {
+          "name": "farmer",
+          "writable": true,
+          "signer": true
+        },
+        {
+          "name": "farm",
+          "writable": true
+        },
+        {
+          "name": "batch",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [98, 97, 116, 99, 104]
+              },
+              {
+                "kind": "account",
+                "path": "farm"
+              },
+              {
+                "kind": "account",
+                "path": "farm.batch_count",
+                "account": "Farm"
+              }
+            ]
+          }
+        },
+        {
+          "name": "system_program",
+          "address": "11111111111111111111111111111111"
+        }
+      ],
+      "args": [
+        {
+          "name": "photo_hash",
+          "type": {
+            "array": ["u8", 32]
+          }
+        },
+        {
+          "name": "uri",
+          "type": "string"
+        },
+        {
+          "name": "lat_e6",
+          "type": "i64"
+        },
+        {
+          "name": "lng_e6",
+          "type": "i64"
+        },
+        {
+          "name": "crop",
+          "type": "string"
+        },
+        {
+          "name": "quantity_kg",
+          "type": "u64"
+        },
+        {
+          "name": "notes",
+          "type": "string"
+        }
+      ]
+    },
+    {
+      "name": "submit_scout_report",
+      "docs": ["Submit a new scout report (photo hash + GPS + AI label)."],
+      "discriminator": [33, 247, 136, 179, 97, 253, 136, 255],
+      "accounts": [
+        {
+          "name": "reporter",
+          "writable": true,
+          "signer": true
+        },
+        {
+          "name": "farm",
+          "writable": true
+        },
+        {
+          "name": "report",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [114, 101, 112, 111, 114, 116]
+              },
+              {
+                "kind": "account",
+                "path": "farm"
+              },
+              {
+                "kind": "account",
+                "path": "farm.report_count",
+                "account": "Farm"
+              }
+            ]
+          }
+        },
+        {
+          "name": "system_program",
+          "address": "11111111111111111111111111111111"
+        }
+      ],
+      "args": [
+        {
+          "name": "photo_hash",
+          "type": {
+            "array": ["u8", 32]
+          }
+        },
+        {
+          "name": "uri",
+          "type": "string"
+        },
+        {
+          "name": "lat_e6",
+          "type": "i64"
+        },
+        {
+          "name": "lng_e6",
+          "type": "i64"
+        },
+        {
+          "name": "ai_label",
+          "type": "string"
+        }
+      ]
+    },
+    {
+      "name": "submit_weather_reading",
+      "docs": [
+        "An authorised weather oracle posts a rainfall reading for a farm/season.",
+        "",
+        "PDA seeds: [b\"weather\", farm, season_start (i64 LE)]"
+      ],
+      "discriminator": [179, 120, 118, 89, 76, 254, 15, 107],
+      "accounts": [
+        {
+          "name": "authority",
+          "docs": ["Hackathon gate: only the admin can act as the weather oracle."],
+          "writable": true,
+          "signer": true
+        },
+        {
+          "name": "farm"
+        },
+        {
+          "name": "oracle",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [119, 101, 97, 116, 104, 101, 114]
+              },
+              {
+                "kind": "account",
+                "path": "farm"
+              },
+              {
+                "kind": "arg",
+                "path": "season_start"
+              }
+            ]
+          }
+        },
+        {
+          "name": "system_program",
+          "address": "11111111111111111111111111111111"
+        }
+      ],
+      "args": [
+        {
+          "name": "season_start",
+          "type": "i64"
+        },
+        {
+          "name": "total_rainfall_mm",
+          "type": "u32"
+        },
+        {
+          "name": "reading_timestamp",
+          "type": "i64"
+        }
+      ]
+    },
+    {
+      "name": "verify_scout_report",
+      "docs": ["Approve or reject a pending scout report."],
+      "discriminator": [195, 245, 205, 232, 143, 27, 24, 218],
+      "accounts": [
+        {
+          "name": "verifier",
+          "docs": ["Hackathon gate: only the admin can verify reports."],
+          "signer": true
+        },
+        {
+          "name": "report",
+          "writable": true
+        },
+        {
+          "name": "farm",
+          "docs": ["Farm must match the report so we can increment verified_report_count"],
+          "writable": true
+        }
+      ],
+      "args": [
+        {
+          "name": "approved",
+          "type": "bool"
+        }
+      ]
+    }
+  ],
+  "accounts": [
+    {
+      "name": "Escrow",
+      "discriminator": [31, 213, 123, 187, 186, 22, 218, 155]
+    },
+    {
+      "name": "Farm",
+      "discriminator": [161, 156, 211, 253, 250, 64, 53, 250]
+    },
+    {
+      "name": "HarvestBatch",
+      "discriminator": [77, 207, 252, 164, 233, 174, 126, 159]
+    },
+    {
+      "name": "Policy",
+      "discriminator": [222, 135, 7, 163, 235, 177, 33, 68]
+    },
+    {
+      "name": "ScoutReport",
+      "discriminator": [246, 140, 121, 176, 245, 175, 42, 243]
+    },
+    {
+      "name": "WeatherOracle",
+      "discriminator": [72, 134, 13, 212, 180, 3, 74, 162]
+    }
+  ],
+  "events": [
+    {
+      "name": "EscrowCancelled",
+      "discriminator": [98, 241, 195, 122, 213, 0, 162, 161]
+    },
+    {
+      "name": "EscrowCreated",
+      "discriminator": [70, 127, 105, 102, 92, 97, 7, 173]
+    },
+    {
+      "name": "EscrowReleased",
+      "discriminator": [131, 7, 138, 104, 166, 190, 113, 112]
+    },
+    {
+      "name": "FarmDeleted",
+      "discriminator": [125, 198, 165, 25, 5, 8, 104, 125]
+    },
+    {
+      "name": "FarmRegistered",
+      "discriminator": [0, 150, 9, 212, 18, 84, 91, 242]
+    },
+    {
+      "name": "HarvestBatchSubmitted",
+      "discriminator": [129, 229, 144, 184, 164, 10, 202, 173]
+    },
+    {
+      "name": "PolicyCreated",
+      "discriminator": [59, 189, 65, 121, 86, 157, 108, 10]
+    },
+    {
+      "name": "PolicyRevoked",
+      "discriminator": [237, 81, 204, 33, 25, 198, 186, 38]
+    },
+    {
+      "name": "PolicySettled",
+      "discriminator": [67, 45, 149, 235, 199, 184, 83, 77]
+    },
+    {
+      "name": "ReportRewarded",
+      "discriminator": [89, 50, 27, 236, 93, 17, 77, 2]
+    },
+    {
+      "name": "ScoutReportSubmitted",
+      "discriminator": [140, 218, 186, 18, 206, 212, 43, 100]
+    },
+    {
+      "name": "ScoutReportVerified",
+      "discriminator": [196, 58, 91, 213, 212, 117, 233, 173]
+    },
+    {
+      "name": "WeatherReadingSubmitted",
+      "discriminator": [160, 132, 195, 231, 25, 58, 123, 245]
+    }
+  ],
+  "errors": [
+    {
+      "code": 6000,
+      "name": "NameTooLong",
+      "msg": "Farm name too long (max 64 chars)"
+    },
+    {
+      "code": 6001,
+      "name": "UriTooLong",
+      "msg": "URI too long (max 128 chars)"
+    },
+    {
+      "code": 6002,
+      "name": "LabelTooLong",
+      "msg": "Label too long (max 32 chars)"
+    },
+    {
+      "code": 6003,
+      "name": "AlreadyVerified",
+      "msg": "Report already verified or rejected"
+    },
+    {
+      "code": 6004,
+      "name": "NotVerified",
+      "msg": "Report is not verified"
+    },
+    {
+      "code": 6005,
+      "name": "NotesTooLong",
+      "msg": "Notes too long (max 256 chars)"
+    },
+    {
+      "code": 6006,
+      "name": "ZeroQuantity",
+      "msg": "Quantity must be greater than zero"
+    },
+    {
+      "code": 6007,
+      "name": "ZeroAmount",
+      "msg": "Amount must be greater than zero"
+    },
+    {
+      "code": 6008,
+      "name": "EscrowNotFunded",
+      "msg": "Escrow is not in funded state"
+    },
+    {
+      "code": 6009,
+      "name": "UnauthorisedEscrow",
+      "msg": "Caller is not authorised for this escrow"
+    },
+    {
+      "code": 6010,
+      "name": "EscrowLocked",
+      "msg": "Escrow is locked — cancellation window has passed"
+    },
+    {
+      "code": 6011,
+      "name": "InvalidSeason",
+      "msg": "Season end must be after season start"
+    },
+    {
+      "code": 6012,
+      "name": "PolicyNotActive",
+      "msg": "Policy is not active"
+    },
+    {
+      "code": 6013,
+      "name": "OracleFarmMismatch",
+      "msg": "Oracle farm does not match policy farm"
+    },
+    {
+      "code": 6014,
+      "name": "OracleSeasonMismatch",
+      "msg": "Oracle season does not match policy season"
+    },
+    {
+      "code": 6015,
+      "name": "SeasonNotEnded",
+      "msg": "Season has not ended yet"
+    },
+    {
+      "code": 6016,
+      "name": "UnauthorisedVerifier",
+      "msg": "Caller is not the authorised verifier/admin"
+    },
+    {
+      "code": 6017,
+      "name": "UnauthorisedOracle",
+      "msg": "Caller is not the authorised weather oracle"
+    },
+    {
+      "code": 6018,
+      "name": "RewardVaultInvalid",
+      "msg": "Reward vault does not belong to the program reward authority"
+    },
+    {
+      "code": 6019,
+      "name": "ReporterTokenInvalid",
+      "msg": "Reporter token account does not match the report recipient or mint"
+    },
+    {
+      "code": 6020,
+      "name": "TokenAccountInvalid",
+      "msg": "Token account owner or mint does not match the expected values"
+    },
+    {
+      "code": 6021,
+      "name": "NotFarmOwner",
+      "msg": "Caller does not own this farm"
+    },
+    {
+      "code": 6022,
+      "name": "NotPolicyFarmer",
+      "msg": "Caller is not the policy farmer"
+    },
+    {
+      "code": 6023,
+      "name": "RevocationWindowClosed",
+      "msg": "Season has ended — the policy can no longer be revoked"
+    }
+  ],
+  "types": [
+    {
+      "name": "Escrow",
+      "docs": ["Layer 2 — Escrow for buyer/farmer USDC settlement"],
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "batch",
+            "type": "pubkey"
+          },
+          {
+            "name": "buyer",
+            "type": "pubkey"
+          },
+          {
+            "name": "farmer",
+            "type": "pubkey"
+          },
+          {
+            "name": "amount_usdc",
+            "type": "u64"
+          },
+          {
+            "name": "lock_until",
+            "type": "i64"
+          },
+          {
+            "name": "state",
+            "type": {
+              "defined": {
+                "name": "EscrowState"
+              }
+            }
+          },
+          {
+            "name": "bump",
+            "type": "u8"
+          }
+        ]
+      }
+    },
+    {
+      "name": "EscrowCancelled",
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "escrow",
+            "type": "pubkey"
+          },
+          {
+            "name": "buyer",
+            "type": "pubkey"
+          },
+          {
+            "name": "amount_usdc",
+            "type": "u64"
+          }
+        ]
+      }
+    },
+    {
+      "name": "EscrowCreated",
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "escrow",
+            "type": "pubkey"
+          },
+          {
+            "name": "batch",
+            "type": "pubkey"
+          },
+          {
+            "name": "buyer",
+            "type": "pubkey"
+          },
+          {
+            "name": "amount_usdc",
+            "type": "u64"
+          }
+        ]
+      }
+    },
+    {
+      "name": "EscrowReleased",
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "escrow",
+            "type": "pubkey"
+          },
+          {
+            "name": "farmer",
+            "type": "pubkey"
+          },
+          {
+            "name": "amount_usdc",
+            "type": "u64"
+          }
+        ]
+      }
+    },
+    {
+      "name": "EscrowState",
+      "type": {
+        "kind": "enum",
+        "variants": [
+          {
+            "name": "Funded"
+          },
+          {
+            "name": "Released"
+          },
+          {
+            "name": "Cancelled"
+          }
+        ]
+      }
+    },
+    {
+      "name": "Farm",
+      "docs": ["Layer 1 — Farm registry"],
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "owner",
+            "type": "pubkey"
+          },
+          {
+            "name": "name",
+            "type": "string"
+          },
+          {
+            "name": "lat_e6",
+            "type": "i64"
+          },
+          {
+            "name": "lng_e6",
+            "type": "i64"
+          },
+          {
+            "name": "report_count",
+            "type": "u32"
+          },
+          {
+            "name": "batch_count",
+            "type": "u32"
+          },
+          {
+            "name": "verified_report_count",
+            "type": "u32"
+          },
+          {
+            "name": "policy_count",
+            "type": "u32"
+          },
+          {
+            "name": "bump",
+            "type": "u8"
+          }
+        ]
+      }
+    },
+    {
+      "name": "FarmDeleted",
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "farm",
+            "type": "pubkey"
+          },
+          {
+            "name": "owner",
+            "type": "pubkey"
+          }
+        ]
+      }
+    },
+    {
+      "name": "FarmRegistered",
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "farm",
+            "type": "pubkey"
+          },
+          {
+            "name": "owner",
+            "type": "pubkey"
+          }
+        ]
+      }
+    },
+    {
+      "name": "HarvestBatch",
+      "docs": ["Layer 2 — Harvest batch with provenance snapshot"],
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "farm",
+            "type": "pubkey"
+          },
+          {
+            "name": "farmer",
+            "type": "pubkey"
+          },
+          {
+            "name": "index",
+            "type": "u32"
+          },
+          {
+            "name": "photo_hash",
+            "type": {
+              "array": ["u8", 32]
+            }
+          },
+          {
+            "name": "uri",
+            "type": "string"
+          },
+          {
+            "name": "lat_e6",
+            "type": "i64"
+          },
+          {
+            "name": "lng_e6",
+            "type": "i64"
+          },
+          {
+            "name": "crop",
+            "type": "string"
+          },
+          {
+            "name": "quantity_kg",
+            "type": "u64"
+          },
+          {
+            "name": "notes",
+            "type": "string"
+          },
+          {
+            "name": "scout_reports_at_harvest",
+            "docs": ["Total scout reports on the farm when batch was submitted"],
+            "type": "u32"
+          },
+          {
+            "name": "verified_reports_at_harvest",
+            "docs": ["Verified scout reports on the farm when batch was submitted"],
+            "type": "u32"
+          },
+          {
+            "name": "timestamp",
+            "type": "i64"
+          },
+          {
+            "name": "bump",
+            "type": "u8"
+          }
+        ]
+      }
+    },
+    {
+      "name": "HarvestBatchSubmitted",
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "farm",
+            "type": "pubkey"
+          },
+          {
+            "name": "batch",
+            "type": "pubkey"
+          },
+          {
+            "name": "index",
+            "type": "u32"
+          },
+          {
+            "name": "quantity_kg",
+            "type": "u64"
+          }
+        ]
+      }
+    },
+    {
+      "name": "Policy",
+      "docs": ["Layer 3 — Parametric insurance policy"],
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "farm",
+            "type": "pubkey"
+          },
+          {
+            "name": "farmer",
+            "type": "pubkey"
+          },
+          {
+            "name": "index",
+            "type": "u32"
+          },
+          {
+            "name": "crop",
+            "type": "string"
+          },
+          {
+            "name": "coverage_usdc",
+            "type": "u64"
+          },
+          {
+            "name": "premium_usdc",
+            "type": "u64"
+          },
+          {
+            "name": "trigger_threshold_mm",
+            "type": "u32"
+          },
+          {
+            "name": "season_start",
+            "type": "i64"
+          },
+          {
+            "name": "season_end",
+            "type": "i64"
+          },
+          {
+            "name": "verified_reports_at_creation",
+            "type": "u32"
+          },
+          {
+            "name": "state",
+            "type": {
+              "defined": {
+                "name": "PolicyState"
+              }
+            }
+          },
+          {
+            "name": "bump",
+            "type": "u8"
+          }
+        ]
+      }
+    },
+    {
+      "name": "PolicyCreated",
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "policy",
+            "type": "pubkey"
+          },
+          {
+            "name": "farm",
+            "type": "pubkey"
+          },
+          {
+            "name": "coverage_usdc",
+            "type": "u64"
+          },
+          {
+            "name": "trigger_threshold_mm",
+            "type": "u32"
+          }
+        ]
+      }
+    },
+    {
+      "name": "PolicyRevoked",
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "policy",
+            "type": "pubkey"
+          },
+          {
+            "name": "farmer",
+            "type": "pubkey"
+          },
+          {
+            "name": "premium_refunded_usdc",
+            "type": "u64"
+          }
+        ]
+      }
+    },
+    {
+      "name": "PolicySettled",
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "policy",
+            "type": "pubkey"
+          },
+          {
+            "name": "triggered",
+            "type": "bool"
+          },
+          {
+            "name": "payout_usdc",
+            "type": "u64"
+          },
+          {
+            "name": "rainfall_mm",
+            "type": "u32"
+          }
+        ]
+      }
+    },
+    {
+      "name": "PolicyState",
+      "type": {
+        "kind": "enum",
+        "variants": [
+          {
+            "name": "Active"
+          },
+          {
+            "name": "PaidOut"
+          },
+          {
+            "name": "Expired"
+          }
+        ]
+      }
+    },
+    {
+      "name": "ReportRewarded",
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "report",
+            "type": "pubkey"
+          },
+          {
+            "name": "reporter",
+            "type": "pubkey"
+          },
+          {
+            "name": "amount",
+            "type": "u64"
+          }
+        ]
+      }
+    },
+    {
+      "name": "ReportStatus",
+      "type": {
+        "kind": "enum",
+        "variants": [
+          {
+            "name": "Pending"
+          },
+          {
+            "name": "Verified"
+          },
+          {
+            "name": "Rejected"
+          },
+          {
+            "name": "Rewarded"
+          }
+        ]
+      }
+    },
+    {
+      "name": "ScoutReport",
+      "docs": ["Layer 1 — Scout report"],
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "farm",
+            "type": "pubkey"
+          },
+          {
+            "name": "reporter",
+            "type": "pubkey"
+          },
+          {
+            "name": "index",
+            "type": "u32"
+          },
+          {
+            "name": "photo_hash",
+            "type": {
+              "array": ["u8", 32]
+            }
+          },
+          {
+            "name": "uri",
+            "type": "string"
+          },
+          {
+            "name": "lat_e6",
+            "type": "i64"
+          },
+          {
+            "name": "lng_e6",
+            "type": "i64"
+          },
+          {
+            "name": "ai_label",
+            "type": "string"
+          },
+          {
+            "name": "status",
+            "type": {
+              "defined": {
+                "name": "ReportStatus"
+              }
+            }
+          },
+          {
+            "name": "verifier",
+            "type": "pubkey"
+          },
+          {
+            "name": "timestamp",
+            "type": "i64"
+          },
+          {
+            "name": "bump",
+            "type": "u8"
+          }
+        ]
+      }
+    },
+    {
+      "name": "ScoutReportSubmitted",
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "farm",
+            "type": "pubkey"
+          },
+          {
+            "name": "report",
+            "type": "pubkey"
+          },
+          {
+            "name": "index",
+            "type": "u32"
+          }
+        ]
+      }
+    },
+    {
+      "name": "ScoutReportVerified",
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "report",
+            "type": "pubkey"
+          },
+          {
+            "name": "approved",
+            "type": "bool"
+          },
+          {
+            "name": "verifier",
+            "type": "pubkey"
+          }
+        ]
+      }
+    },
+    {
+      "name": "WeatherOracle",
+      "docs": ["Layer 3 — Weather oracle reading (posted by authorised oracle keypair)"],
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "farm",
+            "type": "pubkey"
+          },
+          {
+            "name": "authority",
+            "type": "pubkey"
+          },
+          {
+            "name": "season_start",
+            "type": "i64"
+          },
+          {
+            "name": "total_rainfall_mm",
+            "type": "u32"
+          },
+          {
+            "name": "reading_timestamp",
+            "type": "i64"
+          },
+          {
+            "name": "bump",
+            "type": "u8"
+          }
+        ]
+      }
+    },
+    {
+      "name": "WeatherReadingSubmitted",
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "oracle",
+            "type": "pubkey"
+          },
+          {
+            "name": "farm",
+            "type": "pubkey"
+          },
+          {
+            "name": "total_rainfall_mm",
+            "type": "u32"
+          }
+        ]
+      }
+    }
+  ]
+}

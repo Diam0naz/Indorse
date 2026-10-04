@@ -1,0 +1,57 @@
+@import 'tailwindcss';
+@import 'uniwind';
+
+/*
+ * Design-system fonts for className-based components (`font-sans` /
+ * `font-display`). The families are the loaded Google Fonts from
+ * constants/theme.ts — same names, so StyleSheets and Tailwind agree.
+ *
+ * `font-sans` is Inter (labels, metadata, body copy) and `font-display` is
+ * Space Grotesk (headings, titles, large numbers).
+ */
+@theme {
+  --font-sans: 'Inter_400Regular';
+  --font-display: 'SpaceGrotesk_700Bold';
+}
+
+/*
+ * Design-system colours — the same warm three-family palette as
+ * constants/theme.ts, exposed as Tailwind utilities for className-based
+ * components (`bg-surface`, `text-ink`, `border-border`, `text-primary`, …).
+ *
+ *   Ink     background / surface / surface-alt / ink / ink-muted / border
+ *   Amber   primary, primary-hover   — actions, active states, links
+ *   Emerald accent                    — verified / success only
+ *   Danger  errors / destructive actions only (the one extra hue)
+ *
+ * Every theme must declare the same variables, or Uniwind warns in __DEV__.
+ */
+@layer theme {
+  :root {
+    @variant light {
+      --color-background: #fafaf8;
+      --color-surface: #ffffff;
+      --color-surface-alt: #f0efea;
+      --color-ink: #151310;
+      --color-ink-muted: #6e6b63;
+      --color-border: #e6e4dd;
+      --color-primary: #d97b1e;
+      --color-primary-hover: #b8630f;
+      --color-accent: #0e7a4e;
+      --color-danger: #b23a2a;
+    }
+
+    @variant dark {
+      --color-background: #0e0d0b;
+      --color-surface: #1a1815;
+      --color-surface-alt: #231f1a;
+      --color-ink: #f5f3ee;
+      --color-ink-muted: #9b968c;
+      --color-border: #2e2a24;
+      --color-primary: #f2a340;
+      --color-primary-hover: #ffc169;
+      --color-accent: #34b37e;
+      --color-danger: #f0947f;
+    }
+  }
+}

@@ -1,0 +1,65 @@
+# Learn more https://docs.github.com/en/get-started/getting-started-with-git/ignoring-files
+
+# dependencies
+node_modules/
+
+# Expo
+.expo/
+dist/
+web-build/
+expo-env.d.ts
+
+# Native
+.kotlin/
+*.orig.*
+*.jks
+*.p8
+*.p12
+*.key
+*.mobileprovision
+
+# Metro
+.metro-health-check*
+
+# tests
+coverage/
+
+# debug
+npm-debug.*
+yarn-debug.*
+yarn-error.*
+
+# macOS
+.DS_Store
+*.pem
+
+# local env files
+.env*.local
+.env
+
+# typescript
+*.tsbuildinfo
+
+app-example
+
+# generated native folders
+/ios
+/android
+
+# build artifacts (defense in depth — also covered by /android)
+*.apk
+*.aab
+
+# agent tooling (worktrees, installed skills, tool configs — regenerable
+# per machine, not app source)
+.kilo/
+.agents/
+.claude/
+
+# generated video/motion outputs (dated artifact dirs)
+brag-output-*/
+
+# Anchor / Solana program build (target/deploy holds the program keypair,
+# test-ledger holds validator/faucet keypairs — never commit those)
+programs/**/target/
+programs/**/test-ledger/

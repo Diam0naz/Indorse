@@ -1,0 +1,47 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="200" height="200" viewBox="0 0 200 200" fill="none">
+  <defs>
+    <linearGradient id="im-primary" x1="30" y1="10" x2="170" y2="190" gradientUnits="userSpaceOnUse">
+      <stop offset="0%" stop-color="#FFC169" />
+      <stop offset="50%" stop-color="#F2A340" />
+      <stop offset="100%" stop-color="#F2A340" />
+    </linearGradient>
+    <linearGradient id="im-accent" x1="20" y1="0" x2="90" y2="100" gradientUnits="userSpaceOnUse">
+      <stop offset="0%" stop-color="#FFC169" stop-opacity="0.6" />
+      <stop offset="100%" stop-color="#FFC169" stop-opacity="0" />
+    </linearGradient>
+    <linearGradient id="im-shadow" x1="110" y1="100" x2="190" y2="200" gradientUnits="userSpaceOnUse">
+      <stop offset="0%" stop-color="#000000" stop-opacity="0" />
+      <stop offset="100%" stop-color="#000000" stop-opacity="0.25" />
+    </linearGradient>
+  </defs>
+
+  <!-- Letter body: crown + stem + foot with interior cuts -->
+  <path
+    fill-rule="evenodd"
+    fill="url(#im-primary)"
+    d="M 100,14 L 158,36 L 172,56 L 124,70 L 124,134 L 172,148 L 158,168 L 100,186 L 42,168 L 28,148 L 76,134 L 76,70 L 28,56 L 42,36 Z M 100,14 L 116,42 L 100,54 L 84,42 Z M 76,102 L 89,89 L 111,89 L 124,102 L 111,115 L 89,115 Z M 100,186 L 116,158 L 100,146 L 84,158 Z"
+  />
+  <path
+    fill-rule="evenodd"
+    fill="url(#im-shadow)"
+    d="M 100,14 L 158,36 L 172,56 L 124,70 L 124,134 L 172,148 L 158,168 L 100,186 L 42,168 L 28,148 L 76,134 L 76,70 L 28,56 L 42,36 Z M 100,14 L 116,42 L 100,54 L 84,42 Z M 76,102 L 89,89 L 111,89 L 124,102 L 111,115 L 89,115 Z M 100,186 L 116,158 L 100,146 L 84,158 Z"
+  />
+  <path
+    fill-rule="evenodd"
+    fill="url(#im-accent)"
+    d="M 100,14 L 158,36 L 172,56 L 124,70 L 124,134 L 172,148 L 158,168 L 100,186 L 42,168 L 28,148 L 76,134 L 76,70 L 28,56 L 42,36 Z M 100,14 L 116,42 L 100,54 L 84,42 Z M 76,102 L 89,89 L 111,89 L 124,102 L 111,115 L 89,115 Z M 100,186 L 116,158 L 100,146 L 84,158 Z"
+  />
+  <path
+    fill-rule="evenodd"
+    fill="none"
+    stroke="#FFC169"
+    stroke-width="1"
+    d="M 100,14 L 158,36 L 172,56 L 124,70 L 124,134 L 172,148 L 158,168 L 100,186 L 42,168 L 28,148 L 76,134 L 76,70 L 28,56 L 42,36 Z M 100,14 L 116,42 L 100,54 L 84,42 Z M 76,102 L 89,89 L 111,89 L 124,102 L 111,115 L 89,115 Z M 100,186 L 116,158 L 100,146 L 84,158 Z"
+  />
+
+  <!-- Wing diamond ornaments -->
+  <path
+    fill="url(#im-primary)"
+    d="M 28,46 L 38,56 L 28,66 L 18,56 Z M 172,46 L 182,56 L 172,66 L 162,56 Z M 28,138 L 38,148 L 28,158 L 18,148 Z M 172,138 L 182,148 L 172,158 L 162,148 Z"
+  />
+</svg>
