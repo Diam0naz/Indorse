@@ -1,11 +1,16 @@
 /**
  * app/settings/export.tsx — Export farm record as CSV
  *
- * Builds the record with `lib/csv.ts`, shows a contents summary and a raw
- * preview, then either shares the `.csv` file (written to the cache dir and
- * handed to the system share sheet) or copies the document to the
- * clipboard. Sharing failure degrades to the copy path instead of failing
- * silently.
+ * Reads the record live — farm, reports, escrow, policy and oracle through
+ * the same hooks the tabs use — hands it to `lib/csv.ts`, and shows a
+ * contents summary and a raw preview before sharing the `.csv` file
+ * (written to the cache dir and handed to the system share sheet) or
+ * copying the document to the clipboard. Sharing failure degrades to the
+ * copy path instead of failing silently.
+ *
+ * Nothing is exported before the reads settle: an honest banner explains
+ * guest / no-farm / loading / RPC-failure states and the buttons stay
+ * disabled until there is a real record to write.
  */
 
 import { useMemo, useState } from 'react'
@@ -14,10 +19,24 @@ import Clipboard from '@react-native-clipboard/clipboard'
 import { cacheDirectory, EncodingType, writeAsStringAsync } from 'expo-file-system/legacy'
 import * as Sharing from 'expo-sharing'
 import { Banner, SectionLabel } from '@/components/screen-kit'
+import { useProfile } from '@/components/profile-provider'
 import { SettingsButton, SettingsGroup, SettingsNote, SettingsScreen, SettingRow } from '@/components/settings-ui'
 import { useTheme } from '@/components/theme-provider'
 import { createStyles, fontSizes, spacing, type Colors } from '@/constants/theme'
-import { buildFarmRecordCsv, farmRecordFileName, farmRecordRowCount, farmRecordSections } from '@/lib/csv'
+import { useEscrowQuery } from '@/features/escrow/useEscrowQuery'
+import { useFarmQuery } from '@/features/farm/useFarmQuery'
+import { usePolicyQuery } from '@/features/insurance/usePolicyQuery'
+import { useWeatherOracleQuery } from '@/features/insurance/useWeatherOracleQuery'
+import { useReportsQuery } from '@/features/reports/useReportsQuery'
+import { buildFieldsFromReports } from '@/features/scout/fields'
+import { useMobileWalletSetup } from '@/features/wallet/useMobileWalletSetup'
+import {
+  buildFarmRecordCsv,
+  farmRecordFileName,
+  farmRecordRowCount,
+  farmRecordSections,
+  type FarmRecordInput,
+} from '@/lib/csv'
 import { useT } from '@/lib/i18n'
 
 const PREVIEW_LINES = 30
@@ -29,13 +48,86 @@ export default function ExportSettingsScreen() {
   const styles = makeStyles(colors)
   const t = useT()
 
-  // Static seed record → build once.
-  const csv = useMemo(() => buildFarmRecordCsv(new Date(2026, 8, 28)), [])
-  const sections = useMemo(() => farmRecordSections(), [])
+  const { address } = useMobileWalletSetup()
+  const { profile } = useProfile()
+
+  // Live record — the same reads the tabs already perform.
+  const farmQuery = useFarmQuery()
+  const farm = farmQuery.farm
+  const farmAddress = farmQuery.farmAddress
+  const reportsQuery = useReportsQuery(
+    farm && farmAddress ? { address: farmAddress, reportCount: farm.reportCount } : null,
+  )
+  const escrowQuery = useEscrowQuery(farm && farmAddress ? { farmAddress, batchCount: farm.batchCount } : null)
+  const policyQuery = usePolicyQuery(farm && farmAddress ? { farmAddress, policyCount: farm.policyCount } : null)
+  const readingQuery = useWeatherOracleQuery(
+    farmAddress && policyQuery.policy ? { farmAddress, seasonStart: policyQuery.policy.seasonStart } : null,
+  )
+
+  const fields = useMemo(
+    () => (farm ? buildFieldsFromReports(reportsQuery.reports, farm.name) : []),
+    [farm, reportsQuery.reports],
+  )
+
+  const record: FarmRecordInput = useMemo(
+    () => ({
+      farm,
+      operator: profile?.name.trim() ?? '',
+      reports: reportsQuery.reports,
+      fields,
+      escrow: escrowQuery.escrow
+        ? {
+            buyer: escrowQuery.escrow.buyer,
+            amountUsdc: escrowQuery.escrow.amountUsdc,
+            address: escrowQuery.escrow.address ?? escrowQuery.escrowAddress ?? undefined,
+          }
+        : null,
+      policy: policyQuery.policy
+        ? {
+            coverageUsdc: policyQuery.policy.coverageUsdc,
+            premiumUsdc: policyQuery.policy.premiumUsdc,
+            triggerThresholdMm: policyQuery.policy.triggerThresholdMm,
+            seasonStart: policyQuery.policy.seasonStart,
+            seasonEnd: policyQuery.policy.seasonEnd,
+            state: policyQuery.policy.state,
+            address: policyQuery.policyAddress ?? undefined,
+          }
+        : null,
+      reading: readingQuery.reading,
+      exportedAt: new Date(),
+    }),
+    [
+      farm,
+      profile,
+      reportsQuery.reports,
+      fields,
+      escrowQuery.escrow,
+      escrowQuery.escrowAddress,
+      policyQuery.policy,
+      policyQuery.policyAddress,
+      readingQuery.reading,
+    ],
+  )
+
+  const csv = useMemo(() => buildFarmRecordCsv(record), [record])
+  const sections = useMemo(() => farmRecordSections(record), [record])
+  const rowCount = farmRecordRowCount(record)
   const preview = useMemo(() => csv.split('\n').slice(0, PREVIEW_LINES).join('\n'), [csv])
 
   const [state, setState] = useState<ShareState>('idle')
   const [copied, setCopied] = useState(false)
+
+  const chainError = !!address && farmQuery.state === 'error'
+  const loading =
+    !!address &&
+    (farmQuery.state === 'loading' ||
+      (!!farm &&
+        (reportsQuery.state === 'loading' ||
+          escrowQuery.state === 'loading' ||
+          policyQuery.state === 'loading' ||
+          (!!policyQuery.policy && readingQuery.state === 'loading'))))
+  const noFarm = !!address && farmQuery.state === 'ready' && !farm
+  const canExport = !chainError && !loading && rowCount > 0
 
   function copyCsv() {
     Clipboard.setString(csv)
@@ -48,7 +140,7 @@ export default function ExportSettingsScreen() {
     try {
       const available = await Sharing.isAvailableAsync()
       if (!available || !cacheDirectory) throw new Error('sharing unavailable')
-      const uri = `${cacheDirectory}${farmRecordFileName(new Date(2026, 8, 28))}`
+      const uri = `${cacheDirectory}${farmRecordFileName(record.farm?.name ?? null, record.exportedAt)}`
       await writeAsStringAsync(uri, csv, { encoding: EncodingType.UTF8 })
       await Sharing.shareAsync(uri, {
         mimeType: 'text/csv',
@@ -64,6 +156,23 @@ export default function ExportSettingsScreen() {
   return (
     <SettingsScreen title={t('export.title')} subtitle={t('export.subtitle')}>
       {state === 'error' && <Banner tone="danger" title={t('export.error.title')} message={t('export.error.body')} />}
+
+      {/* One honest banner for why the record is not exportable (yet). */}
+      {chainError ? (
+        <Banner
+          tone="danger"
+          title={t('export.chainError.title')}
+          message={t('export.chainError.body')}
+          actionLabel={t('export.retry')}
+          onAction={farmQuery.retry}
+        />
+      ) : loading ? (
+        <Banner tone="info" title={t('export.loading.title')} message={t('export.loading.body')} />
+      ) : !address ? (
+        <Banner tone="warning" title={t('export.unavailable.title')} message={t('export.unavailable.body')} />
+      ) : noFarm ? (
+        <Banner tone="warning" title={t('export.empty.title')} message={t('export.empty.body')} />
+      ) : null}
 
       <SettingsGroup label={t('export.contents')}>
         {sections.map((section, index) => (
@@ -81,7 +190,7 @@ export default function ExportSettingsScreen() {
           </Text>
         </ScrollView>
         <Text style={styles.previewMeta}>
-          {t('export.rows', { n: farmRecordRowCount() })} · {csv.length} bytes
+          {t('export.rows', { n: rowCount })} · {csv.length} bytes
         </Text>
       </View>
 
@@ -90,8 +199,14 @@ export default function ExportSettingsScreen() {
           label={state === 'writing' ? t('export.writing') : t('export.share')}
           onPress={() => void shareCsv()}
           busy={state === 'writing'}
+          disabled={!canExport}
         />
-        <SettingsButton label={copied ? t('export.copied') : t('export.copy')} tone="secondary" onPress={copyCsv} />
+        <SettingsButton
+          label={copied ? t('export.copied') : t('export.copy')}
+          tone="secondary"
+          onPress={copyCsv}
+          disabled={!canExport}
+        />
       </View>
 
       <SettingsNote>{t('export.note')}</SettingsNote>

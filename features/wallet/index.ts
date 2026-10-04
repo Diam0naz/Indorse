@@ -1,6 +1,7 @@
 export * from './types'
 export * from './useMobileWalletSetup'
 export * from './useWalletMutation'
+export * from './mwaTransaction'
 export * from './useWalletBalances'
 export * from './useDeviceVerification'
 export { WalletConnectButton } from './WalletConnectButton'

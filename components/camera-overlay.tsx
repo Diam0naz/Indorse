@@ -21,7 +21,10 @@
  * The shutter captures into `shots`; "Analyze crop" runs the classifier on
  * the captured bytes (`features/ai/usePhotoClassification`) and the done
  * card shows the live verdict. "Submit to Chain" hands a freshly built
- * ScoutEvent back to the caller so the scouting log updates immediately.
+ * ScoutEvent back to the caller so the scouting log updates immediately —
+ * without a farm it hands back a local row instead, carrying the `anchor`
+ * payload (photo hash, uri, label) the log store persists so the capture
+ * can be anchored to the chain after a restart, once a farm exists.
  */
 
 import { useEffect, useRef, useState } from 'react'
@@ -288,7 +291,10 @@ export function CameraOverlay({ onClose, onSubmit, farmAddress, farmName }: Came
     }
 
     if (!farmAddress) {
-      // No registered farm to anchor against — keep the capture as a local row.
+      // No registered farm to anchor against — keep the capture as a local
+      // row, carrying the outbox payload a restart needs to anchor it later:
+      // exactly the fields the chain path would have sent, nothing invented.
+      const aiLabel = classification?.label ?? NO_AI_LABEL
       Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success)
       onSubmit?.({
         ...base,
@@ -296,6 +302,13 @@ export function CameraOverlay({ onClose, onSubmit, farmAddress, farmName }: Came
         id: `sc${stamp}`,
         // Local rows carry the photo digest until a chain row replaces it.
         txSig: bytesToHex(hash),
+        anchor: {
+          photoHashHex: bytesToHex(hash),
+          uri,
+          aiLabel,
+          // Real shot files only — best-effort evidence to re-derive the hash.
+          photoUris: shots.map((shot) => shot.uri).filter((shotUri) => shotUri.length > 0),
+        },
       })
       onClose()
       return

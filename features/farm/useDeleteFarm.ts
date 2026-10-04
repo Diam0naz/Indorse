@@ -15,7 +15,9 @@
 import { useQueryClient } from '@tanstack/react-query'
 import { useMobileWallet } from '@wallet-ui/react-native-kit'
 import { useWalletMutation } from '@/features/wallet/useWalletMutation'
-import { buildInstruction } from '@/lib/program'
+import { toWalletInstruction, walletSigner } from '@/features/wallet/mwaTransaction'
+import { getDeleteFarmInstruction } from '@/lib/generated/indorse'
+import { toAddress } from '@/lib/program'
 
 export function useDeleteFarm() {
   const wallet = useMobileWallet()
@@ -24,11 +26,11 @@ export function useDeleteFarm() {
   return useWalletMutation<string, string>({
     actionLabel: 'delete farm',
     action: async (farmAddress, address) => {
-      const ix = buildInstruction('delete_farm', {
-        farm: farmAddress,
-        owner: address,
+      const ix = getDeleteFarmInstruction({
+        farm: toAddress(farmAddress),
+        owner: walletSigner(address),
       })
-      await wallet.sendTransactions([ix])
+      await wallet.sendTransactions([toWalletInstruction(ix)])
       await queryClient.invalidateQueries({ queryKey: ['indorse'] })
       return farmAddress
     },

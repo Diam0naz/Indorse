@@ -3,8 +3,10 @@ use anchor_spl::token::{self, Mint, Token, TokenAccount, Transfer};
 
 declare_id!("GVenujqgMJZCvYPKqMmPiAXQp7o3mwQbXw1nSBu3U5Ht");
 
-/// Hackathon authority — verifier, reward caller and weather oracle.
-/// For production this would be a multisig or a dedicated oracle program.
+/// Bootstrap authority — the only key that may create the `Config` PDA, and
+/// nothing else. Every runtime gate (verify, reward, oracle, settle, the
+/// treasury token checks) reads `config` instead of this const, so moving the
+/// protocol to a multisig is a `set_roles` transaction — never a redeploy.
 pub const ADMIN: Pubkey = anchor_lang::pubkey!("AXUTwBhtwbgAJGAZYKHXAJgSo4dMC29XrnbP91BPcYg8");
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -14,6 +16,61 @@ pub const ADMIN: Pubkey = anchor_lang::pubkey!("AXUTwBhtwbgAJGAZYKHXAJgSo4dMC29X
 #[program]
 pub mod indorse_program {
     use super::*;
+
+    // =========================================================================
+    //  LAYER 0 — CONFIG (authority as data, not as a const)
+    // =========================================================================
+
+    /// Bootstrap the config PDA once. `init` refuses a second call and the
+    /// signer must be the hard-coded `ADMIN`; from here on the authority is
+    /// account data that `set_roles` can rotate.
+    pub fn init_config(
+        ctx: Context<InitConfig>,
+        admin: Pubkey,
+        verifier: Pubkey,
+        oracle: Pubkey,
+    ) -> Result<()> {
+        require!(admin != Pubkey::default(), FarmError::UnauthorisedAdmin);
+
+        let config = &mut ctx.accounts.config;
+        config.admin = admin;
+        config.verifier = verifier;
+        config.oracle = oracle;
+        config.bump = ctx.bumps.config;
+
+        emit!(ConfigInitialized {
+            admin,
+            verifier,
+            oracle,
+        });
+        Ok(())
+    }
+
+    /// Rotate every role in one atomic transaction, signed by the current
+    /// admin. This is how authority moves to (for example) a Squads vault:
+    /// pass the vault address as the new `admin` — no upgrade, no redeploy.
+    pub fn set_roles(
+        ctx: Context<SetRoles>,
+        admin: Pubkey,
+        verifier: Pubkey,
+        oracle: Pubkey,
+    ) -> Result<()> {
+        // A default admin would brick every future rotation (no key can sign
+        // for it); verifier/oracle may be parked on an un-signable key on purpose.
+        require!(admin != Pubkey::default(), FarmError::UnauthorisedAdmin);
+
+        let config = &mut ctx.accounts.config;
+        config.admin = admin;
+        config.verifier = verifier;
+        config.oracle = oracle;
+
+        emit!(RolesRotated {
+            admin,
+            verifier,
+            oracle,
+        });
+        Ok(())
+    }
 
     // =========================================================================
     //  LAYER 1 — SCOUTING
@@ -89,7 +146,10 @@ pub mod indorse_program {
         report.timestamp = Clock::get()?.unix_timestamp;
         report.bump = ctx.bumps.report;
 
-        farm.report_count += 1;
+        farm.report_count = farm
+            .report_count
+            .checked_add(1)
+            .ok_or(FarmError::Overflow)?;
 
         emit!(ScoutReportSubmitted {
             farm: farm.key(),
@@ -116,7 +176,12 @@ pub mod indorse_program {
 
         // Keep a tally of verified reports on the farm for insurance premiums
         if approved {
-            ctx.accounts.farm.verified_report_count += 1;
+            ctx.accounts.farm.verified_report_count = ctx
+                .accounts
+                .farm
+                .verified_report_count
+                .checked_add(1)
+                .ok_or(FarmError::Overflow)?;
         }
 
         emit!(ScoutReportVerified {
@@ -204,7 +269,7 @@ pub mod indorse_program {
         batch.timestamp = Clock::get()?.unix_timestamp;
         batch.bump = ctx.bumps.batch;
 
-        farm.batch_count += 1;
+        farm.batch_count = farm.batch_count.checked_add(1).ok_or(FarmError::Overflow)?;
 
         emit!(HarvestBatchSubmitted {
             farm: farm.key(),
@@ -265,10 +330,6 @@ pub mod indorse_program {
             escrow.state == EscrowState::Funded,
             FarmError::EscrowNotFunded
         );
-        require!(
-            ctx.accounts.farmer.key() == escrow.farmer,
-            FarmError::UnauthorisedEscrow
-        );
 
         escrow.state = EscrowState::Released;
         let amount = escrow.amount_usdc;
@@ -303,10 +364,6 @@ pub mod indorse_program {
         require!(
             escrow.state == EscrowState::Funded,
             FarmError::EscrowNotFunded
-        );
-        require!(
-            ctx.accounts.buyer.key() == escrow.buyer,
-            FarmError::UnauthorisedEscrow
         );
 
         let now = Clock::get()?.unix_timestamp;
@@ -412,7 +469,12 @@ pub mod indorse_program {
         // transfer into the vault after creation — no co-signer here.
 
         // Increment policy count on farm
-        ctx.accounts.farm.policy_count += 1;
+        ctx.accounts.farm.policy_count = ctx
+            .accounts
+            .farm
+            .policy_count
+            .checked_add(1)
+            .ok_or(FarmError::Overflow)?;
 
         emit!(PolicyCreated {
             policy: policy.key(),
@@ -433,6 +495,11 @@ pub mod indorse_program {
         reading_timestamp: i64,
     ) -> Result<()> {
         let oracle = &mut ctx.accounts.oracle;
+        // `init_if_needed` serves both the first reading and later corrections.
+        // A freshly initialised account is zeroed, so an unset authority is the
+        // tell that this call created the account rather than updating it.
+        let created = oracle.authority == Pubkey::default();
+
         oracle.farm = ctx.accounts.farm.key();
         oracle.authority = ctx.accounts.authority.key();
         oracle.season_start = season_start;
@@ -444,6 +511,7 @@ pub mod indorse_program {
             oracle: oracle.key(),
             farm: oracle.farm,
             total_rainfall_mm,
+            created,
         });
         Ok(())
     }
@@ -629,11 +697,62 @@ pub mod indorse_program {
         });
         Ok(())
     }
+
+    /// Move accumulated refunds out of the program treasury into the admin's
+    /// own USDC account. The treasury PDA signs the transfer, so custody sits
+    /// with the program until governance decides otherwise — an EOA admin
+    /// today, a Squads vault after `set_roles`.
+    pub fn withdraw_treasury(ctx: Context<WithdrawTreasury>, amount: u64) -> Result<()> {
+        let bump = ctx.bumps.treasury;
+        let seeds = [b"treasury".as_ref(), &[bump]];
+        let signer = &[&seeds[..]];
+
+        token::transfer(
+            CpiContext::new_with_signer(
+                ctx.accounts.token_program.to_account_info(),
+                Transfer {
+                    from: ctx.accounts.treasury_usdc.to_account_info(),
+                    to: ctx.accounts.destination_usdc.to_account_info(),
+                    authority: ctx.accounts.treasury.to_account_info(),
+                },
+                signer,
+            ),
+            amount,
+        )?;
+
+        emit!(TreasuryWithdrawn {
+            amount,
+            destination: ctx.accounts.destination_usdc.key(),
+        });
+        Ok(())
+    }
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
 //  Accounts
 // ─────────────────────────────────────────────────────────────────────────────
+
+/// Layer 0 — Program configuration: who may sign which ops gate.
+///
+/// One PDA (`seeds = [b"config"]`) replaces the hard-coded `ADMIN` const as
+/// the source of truth for verify/reward/oracle/settle and for who may
+/// withdraw from the program treasury. Roles are independent pubkeys so they
+/// can be split across keys (or a multisig) without touching the program;
+/// `admin` owns the rotation itself.
+#[account]
+pub struct Config {
+    /// Governance: rotates every role below (including itself) and the only
+    /// key allowed to withdraw from the program treasury.
+    pub admin: Pubkey,
+    /// Verifies scout reports and pays out rewards.
+    pub verifier: Pubkey,
+    /// Posts weather readings.
+    pub oracle: Pubkey,
+    pub bump: u8,
+}
+impl Config {
+    pub const MAX_SIZE: usize = 32 + 32 + 32 + 1;
+}
 
 /// Layer 1 — Farm registry
 #[account]
@@ -777,10 +896,41 @@ pub enum PolicyState {
 //  Instruction Contexts
 // ─────────────────────────────────────────────────────────────────────────────
 
+// ── Layer 0 ──────────────────────────────────────────────────────────────────
+
+#[derive(Accounts)]
+pub struct InitConfig<'info> {
+    /// Bootstrap gate: only the hard-coded `ADMIN` may create the config.
+    #[account(mut, constraint = initializer.key() == ADMIN @ FarmError::UnauthorisedAdmin)]
+    pub initializer: Signer<'info>,
+
+    #[account(
+        init,
+        payer = initializer,
+        space = 8 + Config::MAX_SIZE,
+        seeds = [b"config"],
+        bump
+    )]
+    pub config: Account<'info, Config>,
+
+    pub system_program: Program<'info, System>,
+}
+
+#[derive(Accounts)]
+pub struct SetRoles<'info> {
+    /// The current `config.admin` — checked against the stored role below.
+    #[account(mut, constraint = authority.key() == config.admin @ FarmError::UnauthorisedAdmin)]
+    pub authority: Signer<'info>,
+
+    /// Seeded, self-referential authority: only the key stored here may
+    /// rotate the roles stored here.
+    #[account(mut, seeds = [b"config"], bump = config.bump)]
+    pub config: Account<'info, Config>,
+}
+
 // ── Layer 1 ──────────────────────────────────────────────────────────────────
 
 #[derive(Accounts)]
-#[instruction(name: String)]
 pub struct RegisterFarm<'info> {
     #[account(mut)]
     pub owner: Signer<'info>,
@@ -819,9 +969,12 @@ pub struct SubmitScoutReport<'info> {
 
 #[derive(Accounts)]
 pub struct VerifyScoutReport<'info> {
-    /// Hackathon gate: only the admin can verify reports.
-    #[account(constraint = verifier.key() == ADMIN @ FarmError::UnauthorisedVerifier)]
+    /// Role gate: only `config.verifier` may verify reports.
+    #[account(constraint = verifier.key() == config.verifier @ FarmError::UnauthorisedVerifier)]
     pub verifier: Signer<'info>,
+
+    /// The role lives here — rotating it is `set_roles`, not a redeploy.
+    pub config: Account<'info, Config>,
 
     #[account(mut)]
     pub report: Account<'info, ScoutReport>,
@@ -833,9 +986,12 @@ pub struct VerifyScoutReport<'info> {
 
 #[derive(Accounts)]
 pub struct RewardReport<'info> {
-    /// Hackathon gate: only the admin can pay out rewards.
-    #[account(constraint = authority.key() == ADMIN @ FarmError::UnauthorisedVerifier)]
+    /// Role gate: only `config.verifier` may pay out rewards.
+    #[account(constraint = authority.key() == config.verifier @ FarmError::UnauthorisedVerifier)]
     pub authority: Signer<'info>,
+
+    /// The role lives here — rotating it is `set_roles`, not a redeploy.
+    pub config: Account<'info, Config>,
 
     #[account(mut)]
     pub report: Account<'info, ScoutReport>,
@@ -932,7 +1088,12 @@ pub struct CreateEscrow<'info> {
 pub struct ReleaseEscrow<'info> {
     pub farmer: Signer<'info>,
 
-    #[account(mut, seeds = [b"escrow", escrow.batch.as_ref()], bump = escrow.bump)]
+    #[account(
+        mut,
+        seeds = [b"escrow", escrow.batch.as_ref()],
+        bump = escrow.bump,
+        constraint = escrow.farmer == farmer.key() @ FarmError::UnauthorisedEscrow
+    )]
     pub escrow: Account<'info, Escrow>,
 
     #[account(mut, seeds = [b"escrow_vault", escrow.batch.as_ref()], bump)]
@@ -958,7 +1119,8 @@ pub struct CancelEscrow<'info> {
         mut,
         close = buyer,
         seeds = [b"escrow", escrow.batch.as_ref()],
-        bump = escrow.bump
+        bump = escrow.bump,
+        constraint = escrow.buyer == buyer.key() @ FarmError::UnauthorisedEscrow
     )]
     pub escrow: Account<'info, Escrow>,
 
@@ -980,8 +1142,6 @@ pub struct CancelEscrow<'info> {
 // ── Layer 3 ──────────────────────────────────────────────────────────────────
 
 #[derive(Accounts)]
-#[instruction(crop: String, coverage_usdc: u64, premium_usdc: u64,
-              trigger_threshold_mm: u32, season_start: i64)]
 pub struct CreatePolicy<'info> {
     #[account(mut)]
     pub farmer: Signer<'info>,
@@ -1026,12 +1186,15 @@ pub struct CreatePolicy<'info> {
 #[derive(Accounts)]
 #[instruction(season_start: i64)]
 pub struct SubmitWeatherReading<'info> {
-    /// Hackathon gate: only the admin can act as the weather oracle.
+    /// Role gate: only `config.oracle` may act as the weather oracle.
     #[account(
         mut,
-        constraint = authority.key() == ADMIN @ FarmError::UnauthorisedOracle
+        constraint = authority.key() == config.oracle @ FarmError::UnauthorisedOracle
     )]
     pub authority: Signer<'info>,
+
+    /// The role lives here — rotating it is `set_roles`, not a redeploy.
+    pub config: Account<'info, Config>,
 
     pub farm: Account<'info, Farm>,
 
@@ -1049,9 +1212,13 @@ pub struct SubmitWeatherReading<'info> {
 
 #[derive(Accounts)]
 pub struct SettlePolicy<'info> {
-    /// Hackathon gate: only the admin can trigger settlement.
-    #[account(constraint = settler.key() == ADMIN @ FarmError::UnauthorisedVerifier)]
+    /// Role gate: only `config.admin` can trigger settlement.
+    #[account(constraint = settler.key() == config.admin @ FarmError::UnauthorisedVerifier)]
     pub settler: Signer<'info>,
+
+    /// Governance role — who may trigger settlement; the treasury below is
+    /// program-owned, so rotating admin moves settlement but not custody.
+    pub config: Account<'info, Config>,
 
     #[account(
         mut,
@@ -1076,9 +1243,23 @@ pub struct SettlePolicy<'info> {
     )]
     pub farmer_usdc: Account<'info, TokenAccount>,
 
+    /// Program-owned treasury: refunds sweep to its canonical USDC ATA,
+    /// whoever `config.admin` happens to be.
+    /// CHECK: the `seeds` constraint re-derives the address from
+    /// `[b"treasury"]` under this program, so only the program's own PDA
+    /// passes — no state is read from it beyond the address.
+    #[account(seeds = [b"treasury"], bump)]
+    pub treasury: UncheckedAccount<'info>,
+
+    /// The treasury's canonical USDC ATA — validated by address, so the
+    /// sweep can only land in program custody.
     #[account(
         mut,
-        constraint = insurer_usdc.owner == ADMIN @ FarmError::TokenAccountInvalid,
+        constraint = insurer_usdc.key()
+            == anchor_spl::associated_token::get_associated_token_address(
+                &treasury.key(),
+                &insurance_vault.mint,
+            ) @ FarmError::TokenAccountInvalid,
         constraint = insurer_usdc.mint == insurance_vault.mint @ FarmError::TokenAccountInvalid
     )]
     pub insurer_usdc: Account<'info, TokenAccount>,
@@ -1132,12 +1313,62 @@ pub struct RevokePolicy<'info> {
     )]
     pub farmer_usdc: Account<'info, TokenAccount>,
 
+    /// Program-owned treasury: the sweep-back lands in its canonical USDC
+    /// ATA — validated by address, the same check as `settle_policy`.
+    /// CHECK: the `seeds` constraint re-derives the address from
+    /// `[b"treasury"]` under this program, so only the program's own PDA
+    /// passes — no state is read from it beyond the address.
+    #[account(seeds = [b"treasury"], bump)]
+    pub treasury: UncheckedAccount<'info>,
+
+    /// The treasury's canonical USDC ATA.
     #[account(
         mut,
-        constraint = insurer_usdc.owner == ADMIN @ FarmError::TokenAccountInvalid,
+        constraint = insurer_usdc.key()
+            == anchor_spl::associated_token::get_associated_token_address(
+                &treasury.key(),
+                &insurance_vault.mint,
+            ) @ FarmError::TokenAccountInvalid,
         constraint = insurer_usdc.mint == insurance_vault.mint @ FarmError::TokenAccountInvalid
     )]
     pub insurer_usdc: Account<'info, TokenAccount>,
+
+    pub token_program: Program<'info, Token>,
+}
+
+#[derive(Accounts)]
+pub struct WithdrawTreasury<'info> {
+    /// Role gate: only `config.admin` may move treasury funds.
+    #[account(constraint = authority.key() == config.admin @ FarmError::UnauthorisedAdmin)]
+    pub authority: Signer<'info>,
+
+    pub config: Account<'info, Config>,
+
+    /// CHECK: the `seeds` constraint re-derives the address from
+    /// `[b"treasury"]` under this program, so only the program's own PDA
+    /// passes — no state is read from it beyond the address.
+    #[account(seeds = [b"treasury"], bump)]
+    pub treasury: UncheckedAccount<'info>,
+
+    /// The treasury's canonical USDC ATA — the only source funds leave from.
+    #[account(
+        mut,
+        constraint = treasury_usdc.key()
+            == anchor_spl::associated_token::get_associated_token_address(
+                &treasury.key(),
+                &destination_usdc.mint,
+            ) @ FarmError::TokenAccountInvalid
+    )]
+    pub treasury_usdc: Account<'info, TokenAccount>,
+
+    /// Withdrawals land in the admin's own USDC account (a vault's, once
+    /// `set_roles` points admin at a multisig) — never an arbitrary sink.
+    #[account(
+        mut,
+        constraint = destination_usdc.owner == config.admin @ FarmError::TokenAccountInvalid,
+        constraint = destination_usdc.mint == treasury_usdc.mint @ FarmError::TokenAccountInvalid
+    )]
+    pub destination_usdc: Account<'info, TokenAccount>,
 
     pub token_program: Program<'info, Token>,
 }
@@ -1225,6 +1456,9 @@ pub struct WeatherReadingSubmitted {
     pub oracle: Pubkey,
     pub farm: Pubkey,
     pub total_rainfall_mm: u32,
+    /// True when this instruction created the oracle account (the first
+    /// reading for the farm/season); false when it overwrote an existing one.
+    pub created: bool,
 }
 
 #[event]
@@ -1240,6 +1474,27 @@ pub struct PolicyRevoked {
     pub policy: Pubkey,
     pub farmer: Pubkey,
     pub premium_refunded_usdc: u64,
+}
+
+// Layer 0 (appended — event names hash to discriminators, order is free)
+#[event]
+pub struct ConfigInitialized {
+    pub admin: Pubkey,
+    pub verifier: Pubkey,
+    pub oracle: Pubkey,
+}
+
+#[event]
+pub struct RolesRotated {
+    pub admin: Pubkey,
+    pub verifier: Pubkey,
+    pub oracle: Pubkey,
+}
+
+#[event]
+pub struct TreasuryWithdrawn {
+    pub amount: u64,
+    pub destination: Pubkey,
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -1306,4 +1561,10 @@ pub enum FarmError {
     NotPolicyFarmer,
     #[msg("Season has ended — the policy can no longer be revoked")]
     RevocationWindowClosed,
+    #[msg("Counter overflow")]
+    Overflow,
+
+    // Appended with the config (Layer 0) instructions.
+    #[msg("Caller is not the authorised program admin")]
+    UnauthorisedAdmin,
 }

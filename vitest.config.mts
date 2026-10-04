@@ -1,6 +1,6 @@
 import { fileURLToPath } from 'node:url'
 import { presets, reactNative } from 'vitest-native'
-import { defineConfig } from 'vitest/config'
+import { configDefaults, defineConfig } from 'vitest/config'
 
 export default defineConfig({
   plugins: [
@@ -53,5 +53,10 @@ export default defineConfig({
       reporter: ['text', 'lcov'],
     },
     include: ['**/*.test.{ts,tsx}'],
+    // Gitignored scratch trees (agent worktrees under `.kilo/`) hold stale
+    // copies whose tests would resolve `@/*` to *this* tree's source — a
+    // suite that tests neither checkout. Vitest doesn't read .gitignore,
+    // so exclude them explicitly alongside the defaults.
+    exclude: [...configDefaults.exclude, '.kilo/**'],
   },
 })

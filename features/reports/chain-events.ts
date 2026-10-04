@@ -34,11 +34,26 @@ export function reportToScoutEvent(report: ChainReport, farm: Pick<Farm, 'name'>
   }
 }
 
-/** Merge locally-submitted rows with freshly fetched ones, deduping by id. */
+/**
+ * Merge locally stored rows with freshly fetched ones, deduping by id.
+ *
+ * A local row that has since landed on-chain keeps its richer display
+ * fields (the chain stores no confidence or severity), but the chain wins
+ * wherever it is the source of truth: the review status and the farm the
+ * report belongs to. So an offline-cached row adopts the freshest truth
+ * the moment a refetch reaches it — a verified report never stays
+ * "pending" behind its optimistic copy.
+ */
 export function mergeLogEvents(local: ScoutEvent[], fetched: ScoutEvent[]): ScoutEvent[] {
-  const seen = new Set<string>()
+  const fetchedById = new Map(fetched.map((event) => [event.id, event]))
   const out: ScoutEvent[] = []
-  for (const event of [...local, ...fetched]) {
+  const seen = new Set<string>()
+  for (const event of local) {
+    const fresh = fetchedById.get(event.id)
+    out.push(fresh ? { ...event, field: fresh.field, chainStatus: fresh.chainStatus } : event)
+    seen.add(event.id)
+  }
+  for (const event of fetched) {
     if (seen.has(event.id)) continue
     seen.add(event.id)
     out.push(event)

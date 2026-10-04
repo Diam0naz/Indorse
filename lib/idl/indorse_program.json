@@ -9,8 +9,19 @@
   "instructions": [
     {
       "name": "cancel_escrow",
-      "docs": ["Buyer cancels and reclaims funds ONLY before the lock_until timestamp."],
-      "discriminator": [156, 203, 54, 179, 38, 72, 33, 21],
+      "docs": [
+        "Buyer cancels and reclaims funds ONLY before the lock_until timestamp."
+      ],
+      "discriminator": [
+        156,
+        203,
+        54,
+        179,
+        38,
+        72,
+        33,
+        21
+      ],
       "accounts": [
         {
           "name": "buyer",
@@ -24,7 +35,14 @@
             "seeds": [
               {
                 "kind": "const",
-                "value": [101, 115, 99, 114, 111, 119]
+                "value": [
+                  101,
+                  115,
+                  99,
+                  114,
+                  111,
+                  119
+                ]
               },
               {
                 "kind": "account",
@@ -41,7 +59,20 @@
             "seeds": [
               {
                 "kind": "const",
-                "value": [101, 115, 99, 114, 111, 119, 95, 118, 97, 117, 108, 116]
+                "value": [
+                  101,
+                  115,
+                  99,
+                  114,
+                  111,
+                  119,
+                  95,
+                  118,
+                  97,
+                  117,
+                  108,
+                  116
+                ]
               },
               {
                 "kind": "account",
@@ -70,7 +101,16 @@
         "",
         "PDA seeds: [b\"escrow\", batch]"
       ],
-      "discriminator": [253, 215, 165, 116, 36, 108, 68, 80],
+      "discriminator": [
+        253,
+        215,
+        165,
+        116,
+        36,
+        108,
+        68,
+        80
+      ],
       "accounts": [
         {
           "name": "buyer",
@@ -87,7 +127,14 @@
             "seeds": [
               {
                 "kind": "const",
-                "value": [101, 115, 99, 114, 111, 119]
+                "value": [
+                  101,
+                  115,
+                  99,
+                  114,
+                  111,
+                  119
+                ]
               },
               {
                 "kind": "account",
@@ -103,7 +150,20 @@
             "seeds": [
               {
                 "kind": "const",
-                "value": [101, 115, 99, 114, 111, 119, 95, 118, 97, 117, 108, 116]
+                "value": [
+                  101,
+                  115,
+                  99,
+                  114,
+                  111,
+                  119,
+                  95,
+                  118,
+                  97,
+                  117,
+                  108,
+                  116
+                ]
               },
               {
                 "kind": "account",
@@ -156,7 +216,16 @@
         "",
         "PDA seeds: [b\"policy\", farm, policy_index (u32 LE)]"
       ],
-      "discriminator": [27, 81, 33, 27, 196, 103, 246, 53],
+      "discriminator": [
+        27,
+        81,
+        33,
+        27,
+        196,
+        103,
+        246,
+        53
+      ],
       "accounts": [
         {
           "name": "farmer",
@@ -174,7 +243,14 @@
             "seeds": [
               {
                 "kind": "const",
-                "value": [112, 111, 108, 105, 99, 121]
+                "value": [
+                  112,
+                  111,
+                  108,
+                  105,
+                  99,
+                  121
+                ]
               },
               {
                 "kind": "account",
@@ -195,7 +271,23 @@
             "seeds": [
               {
                 "kind": "const",
-                "value": [105, 110, 115, 117, 114, 97, 110, 99, 101, 95, 118, 97, 117, 108, 116]
+                "value": [
+                  105,
+                  110,
+                  115,
+                  117,
+                  114,
+                  97,
+                  110,
+                  99,
+                  101,
+                  95,
+                  118,
+                  97,
+                  117,
+                  108,
+                  116
+                ]
               },
               {
                 "kind": "account",
@@ -268,7 +360,16 @@
         "every PDA derived from the farm address stays re-derivable after the",
         "account itself is gone."
       ],
-      "discriminator": [233, 185, 114, 56, 250, 185, 117, 50],
+      "discriminator": [
+        233,
+        185,
+        114,
+        56,
+        250,
+        185,
+        117,
+        50
+      ],
       "accounts": [
         {
           "name": "farm",
@@ -277,7 +378,12 @@
             "seeds": [
               {
                 "kind": "const",
-                "value": [102, 97, 114, 109]
+                "value": [
+                  102,
+                  97,
+                  114,
+                  109
+                ]
               },
               {
                 "kind": "account",
@@ -288,18 +394,98 @@
         },
         {
           "name": "owner",
-          "docs": ["The owner receives the rent; the PDA seeds bind this signer to the farm."],
+          "docs": [
+            "The owner receives the rent; the PDA seeds bind this signer to the farm."
+          ],
           "writable": true,
           "signer": true,
-          "relations": ["farm"]
+          "relations": [
+            "farm"
+          ]
         }
       ],
       "args": []
     },
     {
+      "name": "init_config",
+      "docs": [
+        "Bootstrap the config PDA once. `init` refuses a second call and the",
+        "signer must be the hard-coded `ADMIN`; from here on the authority is",
+        "account data that `set_roles` can rotate."
+      ],
+      "discriminator": [
+        23,
+        235,
+        115,
+        232,
+        168,
+        96,
+        1,
+        231
+      ],
+      "accounts": [
+        {
+          "name": "initializer",
+          "docs": [
+            "Bootstrap gate: only the hard-coded `ADMIN` may create the config."
+          ],
+          "writable": true,
+          "signer": true
+        },
+        {
+          "name": "config",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  99,
+                  111,
+                  110,
+                  102,
+                  105,
+                  103
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "name": "system_program",
+          "address": "11111111111111111111111111111111"
+        }
+      ],
+      "args": [
+        {
+          "name": "admin",
+          "type": "pubkey"
+        },
+        {
+          "name": "verifier",
+          "type": "pubkey"
+        },
+        {
+          "name": "oracle",
+          "type": "pubkey"
+        }
+      ]
+    },
+    {
       "name": "register_farm",
-      "docs": ["Create a farm PDA for the signing owner."],
-      "discriminator": [183, 52, 200, 186, 245, 91, 216, 246],
+      "docs": [
+        "Create a farm PDA for the signing owner."
+      ],
+      "discriminator": [
+        183,
+        52,
+        200,
+        186,
+        245,
+        91,
+        216,
+        246
+      ],
       "accounts": [
         {
           "name": "owner",
@@ -313,7 +499,12 @@
             "seeds": [
               {
                 "kind": "const",
-                "value": [102, 97, 114, 109]
+                "value": [
+                  102,
+                  97,
+                  114,
+                  109
+                ]
               },
               {
                 "kind": "account",
@@ -348,7 +539,16 @@
         "Farmer releases the escrow, transferring funds to their wallet.",
         "Only callable by the farmer named on the batch."
       ],
-      "discriminator": [146, 253, 129, 233, 20, 145, 181, 206],
+      "discriminator": [
+        146,
+        253,
+        129,
+        233,
+        20,
+        145,
+        181,
+        206
+      ],
       "accounts": [
         {
           "name": "farmer",
@@ -361,7 +561,14 @@
             "seeds": [
               {
                 "kind": "const",
-                "value": [101, 115, 99, 114, 111, 119]
+                "value": [
+                  101,
+                  115,
+                  99,
+                  114,
+                  111,
+                  119
+                ]
               },
               {
                 "kind": "account",
@@ -378,7 +585,20 @@
             "seeds": [
               {
                 "kind": "const",
-                "value": [101, 115, 99, 114, 111, 119, 95, 118, 97, 117, 108, 116]
+                "value": [
+                  101,
+                  115,
+                  99,
+                  114,
+                  111,
+                  119,
+                  95,
+                  118,
+                  97,
+                  117,
+                  108,
+                  116
+                ]
               },
               {
                 "kind": "account",
@@ -411,7 +631,16 @@
         "must go through `settle_policy`, so a farmer can never reclaim the",
         "premium to dodge a dry-season payout check."
       ],
-      "discriminator": [49, 221, 179, 43, 154, 148, 35, 4],
+      "discriminator": [
+        49,
+        221,
+        179,
+        43,
+        154,
+        148,
+        35,
+        4
+      ],
       "accounts": [
         {
           "name": "farmer",
@@ -425,7 +654,14 @@
             "seeds": [
               {
                 "kind": "const",
-                "value": [112, 111, 108, 105, 99, 121]
+                "value": [
+                  112,
+                  111,
+                  108,
+                  105,
+                  99,
+                  121
+                ]
               },
               {
                 "kind": "account",
@@ -447,7 +683,23 @@
             "seeds": [
               {
                 "kind": "const",
-                "value": [105, 110, 115, 117, 114, 97, 110, 99, 101, 95, 118, 97, 117, 108, 116]
+                "value": [
+                  105,
+                  110,
+                  115,
+                  117,
+                  114,
+                  97,
+                  110,
+                  99,
+                  101,
+                  95,
+                  118,
+                  97,
+                  117,
+                  108,
+                  116
+                ]
               },
               {
                 "kind": "account",
@@ -467,7 +719,36 @@
           "writable": true
         },
         {
+          "name": "treasury",
+          "docs": [
+            "Program-owned treasury: the sweep-back lands in its canonical USDC",
+            "ATA — validated by address, the same check as `settle_policy`.",
+            "`[b\"treasury\"]` under this program, so only the program's own PDA",
+            "passes — no state is read from it beyond the address."
+          ],
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  116,
+                  114,
+                  101,
+                  97,
+                  115,
+                  117,
+                  114,
+                  121
+                ]
+              }
+            ]
+          }
+        },
+        {
           "name": "insurer_usdc",
+          "docs": [
+            "The treasury's canonical USDC ATA."
+          ],
           "writable": true
         },
         {
@@ -479,13 +760,32 @@
     },
     {
       "name": "reward_report",
-      "docs": ["Transfer SKR tokens from the reward vault to the reporter."],
-      "discriminator": [149, 104, 2, 186, 73, 95, 161, 217],
+      "docs": [
+        "Transfer SKR tokens from the reward vault to the reporter."
+      ],
+      "discriminator": [
+        149,
+        104,
+        2,
+        186,
+        73,
+        95,
+        161,
+        217
+      ],
       "accounts": [
         {
           "name": "authority",
-          "docs": ["Hackathon gate: only the admin can pay out rewards."],
+          "docs": [
+            "Role gate: only `config.verifier` may pay out rewards."
+          ],
           "signer": true
+        },
+        {
+          "name": "config",
+          "docs": [
+            "The role lives here — rotating it is `set_roles`, not a redeploy."
+          ]
         },
         {
           "name": "report",
@@ -497,7 +797,24 @@
             "seeds": [
               {
                 "kind": "const",
-                "value": [114, 101, 119, 97, 114, 100, 95, 97, 117, 116, 104, 111, 114, 105, 116, 121]
+                "value": [
+                  114,
+                  101,
+                  119,
+                  97,
+                  114,
+                  100,
+                  95,
+                  97,
+                  117,
+                  116,
+                  104,
+                  111,
+                  114,
+                  105,
+                  116,
+                  121
+                ]
               }
             ]
           }
@@ -508,7 +825,9 @@
         },
         {
           "name": "reward_mint",
-          "docs": ["Reward SPL mint (e.g. SKR on devnet)"]
+          "docs": [
+            "Reward SPL mint (e.g. SKR on devnet)"
+          ]
         },
         {
           "name": "reporter_token_account",
@@ -527,6 +846,71 @@
       ]
     },
     {
+      "name": "set_roles",
+      "docs": [
+        "Rotate every role in one atomic transaction, signed by the current",
+        "admin. This is how authority moves to (for example) a Squads vault:",
+        "pass the vault address as the new `admin` — no upgrade, no redeploy."
+      ],
+      "discriminator": [
+        119,
+        86,
+        129,
+        161,
+        55,
+        23,
+        250,
+        12
+      ],
+      "accounts": [
+        {
+          "name": "authority",
+          "docs": [
+            "The current `config.admin` — checked against the stored role below."
+          ],
+          "writable": true,
+          "signer": true
+        },
+        {
+          "name": "config",
+          "docs": [
+            "Seeded, self-referential authority: only the key stored here may",
+            "rotate the roles stored here."
+          ],
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  99,
+                  111,
+                  110,
+                  102,
+                  105,
+                  103
+                ]
+              }
+            ]
+          }
+        }
+      ],
+      "args": [
+        {
+          "name": "admin",
+          "type": "pubkey"
+        },
+        {
+          "name": "verifier",
+          "type": "pubkey"
+        },
+        {
+          "name": "oracle",
+          "type": "pubkey"
+        }
+      ]
+    },
+    {
       "name": "settle_policy",
       "docs": [
         "Settle a policy against a weather reading.",
@@ -535,12 +919,30 @@
         "If rainfall >= threshold → no payout, the treasury reclaims coverage.",
         "In both cases the premium stays in the policy vault."
       ],
-      "discriminator": [180, 234, 21, 174, 50, 214, 91, 113],
+      "discriminator": [
+        180,
+        234,
+        21,
+        174,
+        50,
+        214,
+        91,
+        113
+      ],
       "accounts": [
         {
           "name": "settler",
-          "docs": ["Hackathon gate: only the admin can trigger settlement."],
+          "docs": [
+            "Role gate: only `config.admin` can trigger settlement."
+          ],
           "signer": true
+        },
+        {
+          "name": "config",
+          "docs": [
+            "Governance role — who may trigger settlement; the treasury below is",
+            "program-owned, so rotating admin moves settlement but not custody."
+          ]
         },
         {
           "name": "policy",
@@ -549,7 +951,14 @@
             "seeds": [
               {
                 "kind": "const",
-                "value": [112, 111, 108, 105, 99, 121]
+                "value": [
+                  112,
+                  111,
+                  108,
+                  105,
+                  99,
+                  121
+                ]
               },
               {
                 "kind": "account",
@@ -571,7 +980,23 @@
             "seeds": [
               {
                 "kind": "const",
-                "value": [105, 110, 115, 117, 114, 97, 110, 99, 101, 95, 118, 97, 117, 108, 116]
+                "value": [
+                  105,
+                  110,
+                  115,
+                  117,
+                  114,
+                  97,
+                  110,
+                  99,
+                  101,
+                  95,
+                  118,
+                  97,
+                  117,
+                  108,
+                  116
+                ]
               },
               {
                 "kind": "account",
@@ -594,7 +1019,37 @@
           "writable": true
         },
         {
+          "name": "treasury",
+          "docs": [
+            "Program-owned treasury: refunds sweep to its canonical USDC ATA,",
+            "whoever `config.admin` happens to be.",
+            "`[b\"treasury\"]` under this program, so only the program's own PDA",
+            "passes — no state is read from it beyond the address."
+          ],
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  116,
+                  114,
+                  101,
+                  97,
+                  115,
+                  117,
+                  114,
+                  121
+                ]
+              }
+            ]
+          }
+        },
+        {
           "name": "insurer_usdc",
+          "docs": [
+            "The treasury's canonical USDC ATA — validated by address, so the",
+            "sweep can only land in program custody."
+          ],
           "writable": true
         },
         {
@@ -612,7 +1067,16 @@
         "",
         "PDA seeds: [b\"batch\", farm, batch_index (u32 LE)]"
       ],
-      "discriminator": [52, 6, 195, 205, 125, 160, 103, 25],
+      "discriminator": [
+        52,
+        6,
+        195,
+        205,
+        125,
+        160,
+        103,
+        25
+      ],
       "accounts": [
         {
           "name": "farmer",
@@ -630,7 +1094,13 @@
             "seeds": [
               {
                 "kind": "const",
-                "value": [98, 97, 116, 99, 104]
+                "value": [
+                  98,
+                  97,
+                  116,
+                  99,
+                  104
+                ]
               },
               {
                 "kind": "account",
@@ -653,7 +1123,10 @@
         {
           "name": "photo_hash",
           "type": {
-            "array": ["u8", 32]
+            "array": [
+              "u8",
+              32
+            ]
           }
         },
         {
@@ -684,8 +1157,19 @@
     },
     {
       "name": "submit_scout_report",
-      "docs": ["Submit a new scout report (photo hash + GPS + AI label)."],
-      "discriminator": [33, 247, 136, 179, 97, 253, 136, 255],
+      "docs": [
+        "Submit a new scout report (photo hash + GPS + AI label)."
+      ],
+      "discriminator": [
+        33,
+        247,
+        136,
+        179,
+        97,
+        253,
+        136,
+        255
+      ],
       "accounts": [
         {
           "name": "reporter",
@@ -703,7 +1187,14 @@
             "seeds": [
               {
                 "kind": "const",
-                "value": [114, 101, 112, 111, 114, 116]
+                "value": [
+                  114,
+                  101,
+                  112,
+                  111,
+                  114,
+                  116
+                ]
               },
               {
                 "kind": "account",
@@ -726,7 +1217,10 @@
         {
           "name": "photo_hash",
           "type": {
-            "array": ["u8", 32]
+            "array": [
+              "u8",
+              32
+            ]
           }
         },
         {
@@ -754,13 +1248,30 @@
         "",
         "PDA seeds: [b\"weather\", farm, season_start (i64 LE)]"
       ],
-      "discriminator": [179, 120, 118, 89, 76, 254, 15, 107],
+      "discriminator": [
+        179,
+        120,
+        118,
+        89,
+        76,
+        254,
+        15,
+        107
+      ],
       "accounts": [
         {
           "name": "authority",
-          "docs": ["Hackathon gate: only the admin can act as the weather oracle."],
+          "docs": [
+            "Role gate: only `config.oracle` may act as the weather oracle."
+          ],
           "writable": true,
           "signer": true
+        },
+        {
+          "name": "config",
+          "docs": [
+            "The role lives here — rotating it is `set_roles`, not a redeploy."
+          ]
         },
         {
           "name": "farm"
@@ -772,7 +1283,15 @@
             "seeds": [
               {
                 "kind": "const",
-                "value": [119, 101, 97, 116, 104, 101, 114]
+                "value": [
+                  119,
+                  101,
+                  97,
+                  116,
+                  104,
+                  101,
+                  114
+                ]
               },
               {
                 "kind": "account",
@@ -807,13 +1326,32 @@
     },
     {
       "name": "verify_scout_report",
-      "docs": ["Approve or reject a pending scout report."],
-      "discriminator": [195, 245, 205, 232, 143, 27, 24, 218],
+      "docs": [
+        "Approve or reject a pending scout report."
+      ],
+      "discriminator": [
+        195,
+        245,
+        205,
+        232,
+        143,
+        27,
+        24,
+        218
+      ],
       "accounts": [
         {
           "name": "verifier",
-          "docs": ["Hackathon gate: only the admin can verify reports."],
+          "docs": [
+            "Role gate: only `config.verifier` may verify reports."
+          ],
           "signer": true
+        },
+        {
+          "name": "config",
+          "docs": [
+            "The role lives here — rotating it is `set_roles`, not a redeploy."
+          ]
         },
         {
           "name": "report",
@@ -821,7 +1359,9 @@
         },
         {
           "name": "farm",
-          "docs": ["Farm must match the report so we can increment verified_report_count"],
+          "docs": [
+            "Farm must match the report so we can increment verified_report_count"
+          ],
           "writable": true
         }
       ],
@@ -831,86 +1371,389 @@
           "type": "bool"
         }
       ]
+    },
+    {
+      "name": "withdraw_treasury",
+      "docs": [
+        "Move accumulated refunds out of the program treasury into the admin's",
+        "own USDC account. The treasury PDA signs the transfer, so custody sits",
+        "with the program until governance decides otherwise — an EOA admin",
+        "today, a Squads vault after `set_roles`."
+      ],
+      "discriminator": [
+        40,
+        63,
+        122,
+        158,
+        144,
+        216,
+        83,
+        96
+      ],
+      "accounts": [
+        {
+          "name": "authority",
+          "docs": [
+            "Role gate: only `config.admin` may move treasury funds."
+          ],
+          "signer": true
+        },
+        {
+          "name": "config"
+        },
+        {
+          "name": "treasury",
+          "docs": [
+            "`[b\"treasury\"]` under this program, so only the program's own PDA",
+            "passes — no state is read from it beyond the address."
+          ],
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  116,
+                  114,
+                  101,
+                  97,
+                  115,
+                  117,
+                  114,
+                  121
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "name": "treasury_usdc",
+          "docs": [
+            "The treasury's canonical USDC ATA — the only source funds leave from."
+          ],
+          "writable": true
+        },
+        {
+          "name": "destination_usdc",
+          "docs": [
+            "Withdrawals land in the admin's own USDC account (a vault's, once",
+            "`set_roles` points admin at a multisig) — never an arbitrary sink."
+          ],
+          "writable": true
+        },
+        {
+          "name": "token_program",
+          "address": "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA"
+        }
+      ],
+      "args": [
+        {
+          "name": "amount",
+          "type": "u64"
+        }
+      ]
     }
   ],
   "accounts": [
     {
+      "name": "Config",
+      "discriminator": [
+        155,
+        12,
+        170,
+        224,
+        30,
+        250,
+        204,
+        130
+      ]
+    },
+    {
       "name": "Escrow",
-      "discriminator": [31, 213, 123, 187, 186, 22, 218, 155]
+      "discriminator": [
+        31,
+        213,
+        123,
+        187,
+        186,
+        22,
+        218,
+        155
+      ]
     },
     {
       "name": "Farm",
-      "discriminator": [161, 156, 211, 253, 250, 64, 53, 250]
+      "discriminator": [
+        161,
+        156,
+        211,
+        253,
+        250,
+        64,
+        53,
+        250
+      ]
     },
     {
       "name": "HarvestBatch",
-      "discriminator": [77, 207, 252, 164, 233, 174, 126, 159]
+      "discriminator": [
+        77,
+        207,
+        252,
+        164,
+        233,
+        174,
+        126,
+        159
+      ]
     },
     {
       "name": "Policy",
-      "discriminator": [222, 135, 7, 163, 235, 177, 33, 68]
+      "discriminator": [
+        222,
+        135,
+        7,
+        163,
+        235,
+        177,
+        33,
+        68
+      ]
     },
     {
       "name": "ScoutReport",
-      "discriminator": [246, 140, 121, 176, 245, 175, 42, 243]
+      "discriminator": [
+        246,
+        140,
+        121,
+        176,
+        245,
+        175,
+        42,
+        243
+      ]
     },
     {
       "name": "WeatherOracle",
-      "discriminator": [72, 134, 13, 212, 180, 3, 74, 162]
+      "discriminator": [
+        72,
+        134,
+        13,
+        212,
+        180,
+        3,
+        74,
+        162
+      ]
     }
   ],
   "events": [
     {
+      "name": "ConfigInitialized",
+      "discriminator": [
+        181,
+        49,
+        200,
+        156,
+        19,
+        167,
+        178,
+        91
+      ]
+    },
+    {
       "name": "EscrowCancelled",
-      "discriminator": [98, 241, 195, 122, 213, 0, 162, 161]
+      "discriminator": [
+        98,
+        241,
+        195,
+        122,
+        213,
+        0,
+        162,
+        161
+      ]
     },
     {
       "name": "EscrowCreated",
-      "discriminator": [70, 127, 105, 102, 92, 97, 7, 173]
+      "discriminator": [
+        70,
+        127,
+        105,
+        102,
+        92,
+        97,
+        7,
+        173
+      ]
     },
     {
       "name": "EscrowReleased",
-      "discriminator": [131, 7, 138, 104, 166, 190, 113, 112]
+      "discriminator": [
+        131,
+        7,
+        138,
+        104,
+        166,
+        190,
+        113,
+        112
+      ]
     },
     {
       "name": "FarmDeleted",
-      "discriminator": [125, 198, 165, 25, 5, 8, 104, 125]
+      "discriminator": [
+        125,
+        198,
+        165,
+        25,
+        5,
+        8,
+        104,
+        125
+      ]
     },
     {
       "name": "FarmRegistered",
-      "discriminator": [0, 150, 9, 212, 18, 84, 91, 242]
+      "discriminator": [
+        0,
+        150,
+        9,
+        212,
+        18,
+        84,
+        91,
+        242
+      ]
     },
     {
       "name": "HarvestBatchSubmitted",
-      "discriminator": [129, 229, 144, 184, 164, 10, 202, 173]
+      "discriminator": [
+        129,
+        229,
+        144,
+        184,
+        164,
+        10,
+        202,
+        173
+      ]
     },
     {
       "name": "PolicyCreated",
-      "discriminator": [59, 189, 65, 121, 86, 157, 108, 10]
+      "discriminator": [
+        59,
+        189,
+        65,
+        121,
+        86,
+        157,
+        108,
+        10
+      ]
     },
     {
       "name": "PolicyRevoked",
-      "discriminator": [237, 81, 204, 33, 25, 198, 186, 38]
+      "discriminator": [
+        237,
+        81,
+        204,
+        33,
+        25,
+        198,
+        186,
+        38
+      ]
     },
     {
       "name": "PolicySettled",
-      "discriminator": [67, 45, 149, 235, 199, 184, 83, 77]
+      "discriminator": [
+        67,
+        45,
+        149,
+        235,
+        199,
+        184,
+        83,
+        77
+      ]
     },
     {
       "name": "ReportRewarded",
-      "discriminator": [89, 50, 27, 236, 93, 17, 77, 2]
+      "discriminator": [
+        89,
+        50,
+        27,
+        236,
+        93,
+        17,
+        77,
+        2
+      ]
+    },
+    {
+      "name": "RolesRotated",
+      "discriminator": [
+        158,
+        149,
+        91,
+        105,
+        67,
+        182,
+        253,
+        31
+      ]
     },
     {
       "name": "ScoutReportSubmitted",
-      "discriminator": [140, 218, 186, 18, 206, 212, 43, 100]
+      "discriminator": [
+        140,
+        218,
+        186,
+        18,
+        206,
+        212,
+        43,
+        100
+      ]
     },
     {
       "name": "ScoutReportVerified",
-      "discriminator": [196, 58, 91, 213, 212, 117, 233, 173]
+      "discriminator": [
+        196,
+        58,
+        91,
+        213,
+        212,
+        117,
+        233,
+        173
+      ]
+    },
+    {
+      "name": "TreasuryWithdrawn",
+      "discriminator": [
+        143,
+        181,
+        157,
+        169,
+        87,
+        155,
+        170,
+        46
+      ]
     },
     {
       "name": "WeatherReadingSubmitted",
-      "discriminator": [160, 132, 195, 231, 25, 58, 123, 245]
+      "discriminator": [
+        160,
+        132,
+        195,
+        231,
+        25,
+        58,
+        123,
+        245
+      ]
     }
   ],
   "errors": [
@@ -1033,12 +1876,87 @@
       "code": 6023,
       "name": "RevocationWindowClosed",
       "msg": "Season has ended — the policy can no longer be revoked"
+    },
+    {
+      "code": 6024,
+      "name": "Overflow",
+      "msg": "Counter overflow"
+    },
+    {
+      "code": 6025,
+      "name": "UnauthorisedAdmin",
+      "msg": "Caller is not the authorised program admin"
     }
   ],
   "types": [
     {
+      "name": "Config",
+      "docs": [
+        "Layer 0 — Program configuration: who may sign which ops gate.",
+        "",
+        "One PDA (`seeds = [b\"config\"]`) replaces the hard-coded `ADMIN` const as",
+        "the source of truth for verify/reward/oracle/settle and for who may",
+        "withdraw from the program treasury. Roles are independent pubkeys so they",
+        "can be split across keys (or a multisig) without touching the program;",
+        "`admin` owns the rotation itself."
+      ],
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "admin",
+            "docs": [
+              "Governance: rotates every role below (including itself) and the only",
+              "key allowed to withdraw from the program treasury."
+            ],
+            "type": "pubkey"
+          },
+          {
+            "name": "verifier",
+            "docs": [
+              "Verifies scout reports and pays out rewards."
+            ],
+            "type": "pubkey"
+          },
+          {
+            "name": "oracle",
+            "docs": [
+              "Posts weather readings."
+            ],
+            "type": "pubkey"
+          },
+          {
+            "name": "bump",
+            "type": "u8"
+          }
+        ]
+      }
+    },
+    {
+      "name": "ConfigInitialized",
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "admin",
+            "type": "pubkey"
+          },
+          {
+            "name": "verifier",
+            "type": "pubkey"
+          },
+          {
+            "name": "oracle",
+            "type": "pubkey"
+          }
+        ]
+      }
+    },
+    {
       "name": "Escrow",
-      "docs": ["Layer 2 — Escrow for buyer/farmer USDC settlement"],
+      "docs": [
+        "Layer 2 — Escrow for buyer/farmer USDC settlement"
+      ],
       "type": {
         "kind": "struct",
         "fields": [
@@ -1160,7 +2078,9 @@
     },
     {
       "name": "Farm",
-      "docs": ["Layer 1 — Farm registry"],
+      "docs": [
+        "Layer 1 — Farm registry"
+      ],
       "type": {
         "kind": "struct",
         "fields": [
@@ -1237,7 +2157,9 @@
     },
     {
       "name": "HarvestBatch",
-      "docs": ["Layer 2 — Harvest batch with provenance snapshot"],
+      "docs": [
+        "Layer 2 — Harvest batch with provenance snapshot"
+      ],
       "type": {
         "kind": "struct",
         "fields": [
@@ -1256,7 +2178,10 @@
           {
             "name": "photo_hash",
             "type": {
-              "array": ["u8", 32]
+              "array": [
+                "u8",
+                32
+              ]
             }
           },
           {
@@ -1285,12 +2210,16 @@
           },
           {
             "name": "scout_reports_at_harvest",
-            "docs": ["Total scout reports on the farm when batch was submitted"],
+            "docs": [
+              "Total scout reports on the farm when batch was submitted"
+            ],
             "type": "u32"
           },
           {
             "name": "verified_reports_at_harvest",
-            "docs": ["Verified scout reports on the farm when batch was submitted"],
+            "docs": [
+              "Verified scout reports on the farm when batch was submitted"
+            ],
             "type": "u32"
           },
           {
@@ -1330,7 +2259,9 @@
     },
     {
       "name": "Policy",
-      "docs": ["Layer 3 — Parametric insurance policy"],
+      "docs": [
+        "Layer 3 — Parametric insurance policy"
+      ],
       "type": {
         "kind": "struct",
         "fields": [
@@ -1515,8 +2446,30 @@
       }
     },
     {
+      "name": "RolesRotated",
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "admin",
+            "type": "pubkey"
+          },
+          {
+            "name": "verifier",
+            "type": "pubkey"
+          },
+          {
+            "name": "oracle",
+            "type": "pubkey"
+          }
+        ]
+      }
+    },
+    {
       "name": "ScoutReport",
-      "docs": ["Layer 1 — Scout report"],
+      "docs": [
+        "Layer 1 — Scout report"
+      ],
       "type": {
         "kind": "struct",
         "fields": [
@@ -1535,7 +2488,10 @@
           {
             "name": "photo_hash",
             "type": {
-              "array": ["u8", 32]
+              "array": [
+                "u8",
+                32
+              ]
             }
           },
           {
@@ -1618,8 +2574,26 @@
       }
     },
     {
+      "name": "TreasuryWithdrawn",
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "amount",
+            "type": "u64"
+          },
+          {
+            "name": "destination",
+            "type": "pubkey"
+          }
+        ]
+      }
+    },
+    {
       "name": "WeatherOracle",
-      "docs": ["Layer 3 — Weather oracle reading (posted by authorised oracle keypair)"],
+      "docs": [
+        "Layer 3 — Weather oracle reading (posted by authorised oracle keypair)"
+      ],
       "type": {
         "kind": "struct",
         "fields": [
@@ -1666,6 +2640,14 @@
           {
             "name": "total_rainfall_mm",
             "type": "u32"
+          },
+          {
+            "name": "created",
+            "docs": [
+              "True when this instruction created the oracle account (the first",
+              "reading for the farm/season); false when it overwrote an existing one."
+            ],
+            "type": "bool"
           }
         ]
       }

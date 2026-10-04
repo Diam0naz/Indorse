@@ -20,8 +20,10 @@ import { useQueryClient } from '@tanstack/react-query'
 import { useMobileWallet } from '@wallet-ui/react-native-kit'
 import { useSettings } from '@/components/settings-provider'
 import { useWalletMutation } from '@/features/wallet/useWalletMutation'
+import { toWalletInstruction, walletSigner } from '@/features/wallet/mwaTransaction'
 import { USDC_DEVNET, USDC_MAINNET } from '@/constants/tokens'
-import { buildInstruction, ataPda, insuranceVaultPda, policyPda } from '@/lib/program'
+import { getCreatePolicyInstruction } from '@/lib/generated/indorse'
+import { ataPda, insuranceVaultPda, policyPda, toAddress } from '@/lib/program'
 import { usdcToLamports } from '@/lib/format'
 import { validateCreatePolicy } from './types'
 import type { CreatePolicyInput } from './types'
@@ -42,26 +44,21 @@ export function useCreatePolicy() {
         ataPda(address, mint),
       ])
 
-      const ix = buildInstruction(
-        'create_policy',
-        {
-          farmer: address,
-          farm: input.farmAddress,
-          policy,
-          insuranceVault,
-          farmerUsdc,
-          usdcMint: mint,
-        },
-        {
-          crop: input.crop.trim(),
-          coverageUsdc: usdcToLamports(input.coverageUsdc),
-          premiumUsdc: usdcToLamports(input.premiumUsdc),
-          triggerThresholdMm: input.triggerThresholdMm,
-          seasonStart: input.seasonStart,
-          seasonEnd: input.seasonEnd,
-        },
-      )
-      await wallet.sendTransactions([ix])
+      const ix = getCreatePolicyInstruction({
+        farmer: walletSigner(address),
+        farm: toAddress(input.farmAddress),
+        policy,
+        insuranceVault,
+        farmerUsdc,
+        usdcMint: toAddress(mint),
+        crop: input.crop.trim(),
+        coverageUsdc: usdcToLamports(input.coverageUsdc),
+        premiumUsdc: usdcToLamports(input.premiumUsdc),
+        triggerThresholdMm: input.triggerThresholdMm,
+        seasonStart: input.seasonStart,
+        seasonEnd: input.seasonEnd,
+      })
+      await wallet.sendTransactions([toWalletInstruction(ix)])
       await queryClient.invalidateQueries({ queryKey: ['indorse'] })
       return policy
     },

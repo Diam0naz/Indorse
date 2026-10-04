@@ -2,7 +2,14 @@ import * as anchor from '@coral-xyz/anchor'
 import { Program } from '@coral-xyz/anchor'
 import { IndorseProgram } from '../target/types/indorse_program'
 import { Keypair, PublicKey, SystemProgram } from '@solana/web3.js'
-import { createMint, createAccount, mintTo, getAccount, transfer } from '@solana/spl-token'
+import {
+  createMint,
+  createAccount,
+  getOrCreateAssociatedTokenAccount,
+  mintTo,
+  getAccount,
+  transfer,
+} from '@solana/spl-token'
 import { assert } from 'chai'
 
 describe('indorse_program', () => {
@@ -23,6 +30,8 @@ describe('indorse_program', () => {
   let reportBump: number
   let rewardAuthorityPda: PublicKey
   let rewardAuthorityBump: number
+  let configPda: PublicKey
+  let treasuryPda: PublicKey
 
   // Token accounts
   let rewardMint: PublicKey
@@ -33,6 +42,7 @@ describe('indorse_program', () => {
   let usdcMint: PublicKey
   let ownerUsdc: PublicKey
   let adminUsdc: PublicKey
+  let treasuryUsdc: PublicKey
   let policyPda: PublicKey
   let policyVault: PublicKey
 
@@ -83,6 +93,12 @@ describe('indorse_program', () => {
       program.programId,
     )
 
+    // Derive the program-config PDA (Layer 0 — every ops gate reads it)
+    ;[configPda] = PublicKey.findProgramAddressSync([Buffer.from('config')], program.programId)
+
+    // Derive the program-treasury PDA (refunds sweep to its USDC ATA)
+    ;[treasuryPda] = PublicKey.findProgramAddressSync([Buffer.from('treasury')], program.programId)
+
     // Create reward token mint
     rewardMint = await createMint(provider.connection, authority, authority.publicKey, null, 6)
 
@@ -100,6 +116,72 @@ describe('indorse_program', () => {
 
     // Mint tokens to the reward vault
     await mintTo(provider.connection, authority, rewardMint, rewardVault, authority, 1_000_000_000)
+  })
+
+  // ── Layer 0 — config (authority as data) ──────────────────────────────────
+
+  it('Init the config PDA with the bootstrap admin', async () => {
+    await program.methods
+      .initConfig(provider.wallet.publicKey, provider.wallet.publicKey, provider.wallet.publicKey)
+      .accounts({
+        initializer: provider.wallet.publicKey,
+        config: configPda,
+        systemProgram: SystemProgram.programId,
+      })
+      .rpc()
+
+    const config = await program.account.config.fetch(configPda)
+    assert.equal(config.admin.toBase58(), provider.wallet.publicKey.toBase58())
+    assert.equal(config.verifier.toBase58(), provider.wallet.publicKey.toBase58())
+    assert.equal(config.oracle.toBase58(), provider.wallet.publicKey.toBase58())
+
+    // One-shot: `init` refuses a second configuration.
+    try {
+      await program.methods
+        .initConfig(provider.wallet.publicKey, provider.wallet.publicKey, provider.wallet.publicKey)
+        .accounts({
+          initializer: provider.wallet.publicKey,
+          config: configPda,
+          systemProgram: SystemProgram.programId,
+        })
+        .rpc()
+      assert.fail('Should have thrown an error')
+    } catch (err) {
+      assert.include(err.message.toLowerCase(), 'already')
+    }
+  })
+
+  it('Rotate roles only by the stored admin, then rotate back', async () => {
+    const stranger = Keypair.generate()
+
+    // A key outside the admin role cannot rotate anything.
+    try {
+      await program.methods
+        .setRoles(stranger.publicKey, stranger.publicKey, stranger.publicKey)
+        .accounts({ authority: stranger.publicKey, config: configPda })
+        .signers([stranger])
+        .rpc()
+      assert.fail('Should have thrown an error')
+    } catch (err) {
+      assert.include(err.message, 'authorised program admin')
+    }
+
+    // The admin hands the verifier slot to another key — data, not code.
+    await program.methods
+      .setRoles(provider.wallet.publicKey, stranger.publicKey, provider.wallet.publicKey)
+      .accounts({ authority: provider.wallet.publicKey, config: configPda })
+      .rpc()
+    assert.equal((await program.account.config.fetch(configPda)).verifier.toBase58(), stranger.publicKey.toBase58())
+
+    // …and takes it back so the verify/reward tests below keep their signer.
+    await program.methods
+      .setRoles(provider.wallet.publicKey, provider.wallet.publicKey, provider.wallet.publicKey)
+      .accounts({ authority: provider.wallet.publicKey, config: configPda })
+      .rpc()
+    assert.equal(
+      (await program.account.config.fetch(configPda)).verifier.toBase58(),
+      provider.wallet.publicKey.toBase58(),
+    )
   })
 
   it('Register a farm', async () => {
@@ -244,11 +326,32 @@ describe('indorse_program', () => {
     }
   })
 
+  it('Reject verifying by a key outside the verifier role', async () => {
+    const stranger = Keypair.generate()
+
+    try {
+      await program.methods
+        .verifyScoutReport(true)
+        .accounts({
+          verifier: stranger.publicKey,
+          config: configPda,
+          report: reportPda,
+          farm: farmPda,
+        })
+        .signers([stranger])
+        .rpc()
+      assert.fail('Should have thrown an error')
+    } catch (err) {
+      assert.include(err.message, 'authorised verifier')
+    }
+  })
+
   it('Verify a scout report (approved)', async () => {
     await program.methods
       .verifyScoutReport(true)
       .accounts({
         verifier: provider.wallet.publicKey,
+        config: configPda,
         report: reportPda,
         farm: farmPda,
       })
@@ -266,6 +369,7 @@ describe('indorse_program', () => {
         .verifyScoutReport(true)
         .accounts({
           verifier: provider.wallet.publicKey,
+          config: configPda,
           report: reportPda,
           farm: farmPda,
         })
@@ -284,6 +388,7 @@ describe('indorse_program', () => {
       .rewardReport(new anchor.BN(REWARD_AMOUNT))
       .accounts({
         authority: provider.wallet.publicKey,
+        config: configPda,
         report: reportPda,
         rewardAuthority: rewardAuthorityPda,
         rewardVault: rewardVault,
@@ -324,6 +429,7 @@ describe('indorse_program', () => {
         .rewardReport(new anchor.BN(REWARD_AMOUNT))
         .accounts({
           authority: provider.wallet.publicKey,
+          config: configPda,
           report: report2Pda,
           rewardAuthority: rewardAuthorityPda,
           rewardVault: rewardVault,
@@ -361,6 +467,7 @@ describe('indorse_program', () => {
       .verifyScoutReport(false)
       .accounts({
         verifier: provider.wallet.publicKey,
+        config: configPda,
         report: report3Pda,
         farm: farmPda,
       })
@@ -380,6 +487,12 @@ describe('indorse_program', () => {
     // Treasury token account owned by the admin (the provider wallet in tests)
     adminUsdc = await createAccount(provider.connection, owner, usdcMint, provider.wallet.publicKey)
     await mintTo(provider.connection, owner, usdcMint, adminUsdc, owner, 1_000_000_000) // 1000 USDC float
+
+    // Program treasury: the canonical USDC ATA of the treasury PDA — where
+    // settle/revoke sweep refunds, and the only source withdraw_treasury reads.
+    // The owner is a PDA, hence allowOwnerOffCurve.
+    treasuryUsdc = (await getOrCreateAssociatedTokenAccount(provider.connection, owner, usdcMint, treasuryPda, true))
+      .address
 
     ;[policyPda] = PublicKey.findProgramAddressSync(
       [Buffer.from('policy'), farmPda.toBuffer(), u32le(0)],
@@ -436,6 +549,120 @@ describe('indorse_program', () => {
     assert.equal(Number(vault.amount), PREMIUM + COVERAGE)
   })
 
+  it('Revoke returns the premium and sweeps coverage into the program treasury', async () => {
+    // A second policy with a still-running season (revoke refuses after
+    // season_end), so the main index-0 policy stays untouched for settling.
+    const futureEnd = Math.floor(Date.now() / 1000) + 30 * 86_400
+    const [policy2Pda] = PublicKey.findProgramAddressSync(
+      [Buffer.from('policy'), farmPda.toBuffer(), u32le(1)],
+      program.programId,
+    )
+    const [vault2Pda] = PublicKey.findProgramAddressSync(
+      [Buffer.from('insurance_vault'), farmPda.toBuffer(), u32le(1)],
+      program.programId,
+    )
+    const adminWallet = (provider.wallet as anchor.Wallet).payer
+
+    await program.methods
+      .createPolicy(
+        'maize',
+        new anchor.BN(COVERAGE),
+        new anchor.BN(PREMIUM),
+        THRESHOLD_MM,
+        new anchor.BN(SEASON_START),
+        new anchor.BN(futureEnd),
+      )
+      .accounts({
+        farmer: owner.publicKey,
+        farm: farmPda,
+        policy: policy2Pda,
+        insuranceVault: vault2Pda,
+        farmerUsdc: ownerUsdc,
+        usdcMint,
+        tokenProgram: anchor.utils.token.TOKEN_PROGRAM_ID,
+        systemProgram: SystemProgram.programId,
+        rent: anchor.web3.SYSVAR_RENT_PUBKEY,
+      })
+      .signers([owner])
+      .rpc()
+    await transfer(provider.connection, adminWallet, adminUsdc, vault2Pda, adminWallet, COVERAGE)
+
+    const farmerBefore = (await getAccount(provider.connection, ownerUsdc)).amount
+    const treasuryBefore = (await getAccount(provider.connection, treasuryUsdc)).amount
+
+    await program.methods
+      .revokePolicy()
+      .accounts({
+        farmer: owner.publicKey,
+        policy: policy2Pda,
+        insuranceVault: vault2Pda,
+        farmerUsdc: ownerUsdc,
+        treasury: treasuryPda,
+        insurerUsdc: treasuryUsdc,
+        tokenProgram: anchor.utils.token.TOKEN_PROGRAM_ID,
+      })
+      .signers([owner])
+      .rpc()
+
+    // Premium back to the farmer, coverage into program custody, both
+    // policy-side accounts closed (rents to the farmer).
+    const farmerAfter = (await getAccount(provider.connection, ownerUsdc)).amount
+    assert.equal(Number(farmerAfter), Number(farmerBefore) + PREMIUM)
+    const treasuryAfter = (await getAccount(provider.connection, treasuryUsdc)).amount
+    assert.equal(Number(treasuryAfter), Number(treasuryBefore) + COVERAGE)
+    assert.isNull(await program.account.policy.fetchNullable(policy2Pda))
+    let vault2Closed = false
+    try {
+      await getAccount(provider.connection, vault2Pda)
+    } catch {
+      vault2Closed = true
+    }
+    assert.isTrue(vault2Closed)
+  })
+
+  it('Withdraws from the program treasury as the admin and refuses anyone else', async () => {
+    const AMOUNT = 10_000_000 // 10 USDC of the swept refunds
+    const stranger = Keypair.generate()
+
+    try {
+      await program.methods
+        .withdrawTreasury(new anchor.BN(AMOUNT))
+        .accounts({
+          authority: stranger.publicKey,
+          config: configPda,
+          treasury: treasuryPda,
+          treasuryUsdc,
+          destinationUsdc: adminUsdc,
+          tokenProgram: anchor.utils.token.TOKEN_PROGRAM_ID,
+        })
+        .signers([stranger])
+        .rpc()
+      assert.fail('Should have thrown an error')
+    } catch (err) {
+      assert.include(err.message, 'authorised program admin')
+    }
+
+    const treasuryBefore = (await getAccount(provider.connection, treasuryUsdc)).amount
+    const adminBefore = (await getAccount(provider.connection, adminUsdc)).amount
+
+    await program.methods
+      .withdrawTreasury(new anchor.BN(AMOUNT))
+      .accounts({
+        authority: provider.wallet.publicKey,
+        config: configPda,
+        treasury: treasuryPda,
+        treasuryUsdc,
+        destinationUsdc: adminUsdc,
+        tokenProgram: anchor.utils.token.TOKEN_PROGRAM_ID,
+      })
+      .rpc()
+
+    const treasuryAfter = (await getAccount(provider.connection, treasuryUsdc)).amount
+    const adminAfter = (await getAccount(provider.connection, adminUsdc)).amount
+    assert.equal(Number(treasuryAfter), Number(treasuryBefore) - AMOUNT)
+    assert.equal(Number(adminAfter), Number(adminBefore) + AMOUNT)
+  })
+
   it('Post the season reading and reject a refund to a non-treasury account', async () => {
     const [oraclePda] = PublicKey.findProgramAddressSync(
       [Buffer.from('weather'), farmPda.toBuffer(), i64le(SEASON_START)],
@@ -446,6 +673,7 @@ describe('indorse_program', () => {
       .submitWeatherReading(new anchor.BN(SEASON_START), RAINFALL_MM, new anchor.BN(READING_TS))
       .accounts({
         authority: provider.wallet.publicKey,
+        config: configPda,
         farm: farmPda,
         oracle: oraclePda,
         systemProgram: SystemProgram.programId,
@@ -461,10 +689,12 @@ describe('indorse_program', () => {
         .settlePolicy()
         .accounts({
           settler: provider.wallet.publicKey,
+          config: configPda,
           policy: policyPda,
           insuranceVault: policyVault,
           oracle: oraclePda,
           farmerUsdc: ownerUsdc,
+          treasury: treasuryPda,
           insurerUsdc: ownerUsdc,
           tokenProgram: anchor.utils.token.TOKEN_PROGRAM_ID,
         })
@@ -480,17 +710,19 @@ describe('indorse_program', () => {
       [Buffer.from('weather'), farmPda.toBuffer(), i64le(SEASON_START)],
       program.programId,
     )
-    const treasuryBefore = (await getAccount(provider.connection, adminUsdc)).amount
+    const treasuryBefore = (await getAccount(provider.connection, treasuryUsdc)).amount
 
     await program.methods
       .settlePolicy()
       .accounts({
         settler: provider.wallet.publicKey,
+        config: configPda,
         policy: policyPda,
         insuranceVault: policyVault,
         oracle: oraclePda,
         farmerUsdc: ownerUsdc,
-        insurerUsdc: adminUsdc,
+        treasury: treasuryPda,
+        insurerUsdc: treasuryUsdc,
         tokenProgram: anchor.utils.token.TOKEN_PROGRAM_ID,
       })
       .rpc()
@@ -498,7 +730,8 @@ describe('indorse_program', () => {
     const settled = await program.account.policy.fetch(policyPda)
     assert.deepEqual(settled.state, { expired: {} })
 
-    const treasuryAfter = (await getAccount(provider.connection, adminUsdc)).amount
+    // The coverage lands in the program-owned treasury, not the admin's wallet.
+    const treasuryAfter = (await getAccount(provider.connection, treasuryUsdc)).amount
     assert.equal(Number(treasuryAfter), Number(treasuryBefore) + COVERAGE)
 
     // The premium stays in the policy vault.

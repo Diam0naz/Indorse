@@ -17,8 +17,7 @@ import { getBase58Decoder } from '@solana/kit'
 import WeatherScreen from '@/app/(tabs)/reports'
 import { encodeInstruction } from '@/lib/program/codec'
 import { IDL_PROGRAM_ID } from '@/lib/program/idl'
-import { ataPda, insuranceVaultPda, policyPda } from '@/lib/program/pdas'
-import { ADMIN_ADDRESS } from '@/constants/app-config'
+import { ataPda, insuranceVaultPda, policyPda, treasuryPda } from '@/lib/program/pdas'
 import { USDC_DEVNET } from '@/constants/tokens'
 import type { Policy } from '@/features/insurance/types'
 
@@ -300,15 +299,18 @@ describe('revoking an active policy', () => {
     const ix = sentInstruction()
     expect(Array.from(ix.data)).toEqual(Array.from(encodeInstruction('revoke_policy', {})))
 
-    // Most-recent policy: index = policyCount - 1; the sweep destination is
-    // the treasury (ADMIN) account the program validates.
+    // Most-recent policy: index = policyCount - 1. The sweep destination is
+    // the canonical USDC ATA of the program-treasury PDA — derived locally,
+    // no RPC read — and everything else follows the policy.
     const index = weather.policyCount - 1
+    const treasury = await treasuryPda()
     expect(ix.accounts.map((m) => m.address)).toEqual([
       FARMER,
       await policyPda(FARM_ADDRESS, index),
       await insuranceVaultPda(FARM_ADDRESS, index),
       await ataPda(FARMER, USDC_DEVNET),
-      await ataPda(ADMIN_ADDRESS, USDC_DEVNET),
+      treasury,
+      await ataPda(treasury, USDC_DEVNET),
       'TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA',
     ])
 

@@ -22,6 +22,7 @@ import { AuthGate } from '@/components/auth-gate'
 import { AuthProvider } from '@/components/auth-provider'
 import { FarmRegistryProvider } from '@/components/farm-registry-provider'
 import { ProfileProvider } from '@/components/profile-provider'
+import { ScoutLogProvider } from '@/components/scout-log-provider'
 import { SettingsProvider } from '@/components/settings-provider'
 import { ThemeProvider } from '@/components/theme-provider'
 import { LanguageProvider } from '@/lib/i18n'
@@ -63,7 +64,9 @@ void SplashScreen.preventAutoHideAsync().catch(() => undefined)
  * style), language and settings are available to every screen. `ProfileProvider`
  * holds the setup wizard's saved profile + deferred-step flags (AsyncStorage)
  * for the same reason — it wraps AuthProvider so the wizard, the header avatar
- * and the Profile banner all read one source. `AuthProvider`
+ * and the Profile banner all read one source. `ScoutLogProvider` is the device's
+ * scouting log (AsyncStorage): captures persist across restarts and anchor to
+ * the chain later. `AuthProvider`
  * sits innermost of those and renders `AuthGate` — a full-screen modal that
  * covers the app until the registered user passes the app lock (passcode or
  * biometrics); it does not disturb route state.
@@ -89,19 +92,21 @@ export default function RootLayout() {
       <LanguageProvider>
         <SettingsProvider>
           <FarmRegistryProvider>
-            <ProfileProvider>
-              <AuthProvider>
-                <AppProviders>
-                  <Stack screenOptions={{ headerShown: false }}>
-                    <Stack.Screen name="index" options={{ headerShown: false }} />
-                    <Stack.Screen name="onboarding" options={{ headerShown: false }} />
-                    <Stack.Screen name="setup" options={{ headerShown: false }} />
-                    <Stack.Screen name="(tabs)" options={{ headerShown: false }} />
-                  </Stack>
-                </AppProviders>
-                {splashDone ? <AuthGate /> : <AppSplash onDone={finishSplash} />}
-              </AuthProvider>
-            </ProfileProvider>
+            <ScoutLogProvider>
+              <ProfileProvider>
+                <AuthProvider>
+                  <AppProviders>
+                    <Stack screenOptions={{ headerShown: false }}>
+                      <Stack.Screen name="index" options={{ headerShown: false }} />
+                      <Stack.Screen name="onboarding" options={{ headerShown: false }} />
+                      <Stack.Screen name="setup" options={{ headerShown: false }} />
+                      <Stack.Screen name="(tabs)" options={{ headerShown: false }} />
+                    </Stack>
+                  </AppProviders>
+                  {splashDone ? <AuthGate /> : <AppSplash onDone={finishSplash} />}
+                </AuthProvider>
+              </ProfileProvider>
+            </ScoutLogProvider>
           </FarmRegistryProvider>
         </SettingsProvider>
       </LanguageProvider>

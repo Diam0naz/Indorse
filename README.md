@@ -10,6 +10,40 @@ Android device or emulator with a wallet app (e.g. Phantom, Solflare) installed.
 
 ---
 
+## Project status
+
+Snapshot as of **2026-10-04** — all four quality gates green
+(`tsc --noEmit`, `prettier --check .`, `expo lint`, `vitest run`):
+**468 tests passing · 1 skipped (the opt-in smoke test) across 57 files**.
+
+| Area                | State   | Notes                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                    |
+| ------------------- | ------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| On-chain program    | Shipped | 16 instructions — authority is data (the config PDA `839zrf…YzaY8` on devnet holds the admin/verifier/oracle roles every ops gate reads, rotated by `set_roles` instead of a redeploy) and custody is program-owned (settle/revoke sweep refunds to the treasury PDA's USDC ATA; `withdraw_treasury` releases them to the admin only); deployed to devnet (`GVenujqgMJZCvYPKqMmPiAXQp7o3mwQbXw1nSBu3U5Ht`), IDL synced via `npm run idl:sync`; 21 Anchor integration cases plus an opt-in RPC smoke test |
+| Scout tab           | Shipped | Chain-fed log and field cards, attention banner, folding action stack, camera → AI diagnosis, the 3-step onboarding card for the no-farm state (scan works before setup — anchoring needs a farm), and a persisted scan store: captures survive restarts (`indorse.scout.v1`) and anchor through an outbox flush once a farm is reachable                                                                                                                                                                |
+| Provenance & escrow | Shipped | Score, evidence trail, harvest batches; escrow create → release / cancel-and-retry                                                                                                                                                                                                                                                                                                                                                                                                                       |
+| Weather             | Shipped | Policy setup, oracle readings with error + retry, season chart plotted against the trigger                                                                                                                                                                                                                                                                                                                                                                                                               |
+| Profile & settings  | Shipped | Seven settings destinations (incl. Account & Local Data), passcode/biometrics app lock, hide balances, cluster health check, en/es/fr, system/dark/light themes                                                                                                                                                                                                                                                                                                                                          |
+| Data honesty        | Shipped | No mock data reaches the UI — empty states and honest guest/failure/loading notes instead; seed constants survive only as test/CSV fixtures                                                                                                                                                                                                                                                                                                                                                              |
+| CSV export          | Shipped | Live chain reads → one flat RFC 4180 file → share or copy                                                                                                                                                                                                                                                                                                                                                                                                                                                |
+| AI proxy (`api/`)   | Shipped | One route, two backends — OpenAI (streamed, strict `json_schema`) and Gemini (`responseSchema`; provider keys never reach the device)                                                                                                                                                                                                                                                                                                                                                                    |
+| Device verification | Shipped | SIWS nonce/verify routes, SGT dev allowlist, transactional email via Resend                                                                                                                                                                                                                                                                                                                                                                                                                              |
+| Launch media        | Shipped | Launch video in `brag-output-2026-09-30-183600/`                                                                                                                                                                                                                                                                                                                                                                                                                                                         |
+
+**In flight:** the Solana Attestation Service issuer (`api/sas-issuer.ts` +
+`npm run sas:bootstrap`) and the HyperFrames launch deck (`deck/`).
+
+**Known gaps:** iOS scaffolding exists, but Mobile Wallet Adapter is
+Android-only, so wallet connect is Android-only; persisted captures anchor
+only to the farm that is current when the outbox flushes, and the captured
+photo _files_ live in the OS cache (the hash and anchor payload persist —
+the pixels are best-effort); the protocol admin is still a single key —
+authority now lives in the config PDA, so the Squads M-of-N handover is one
+`set_roles` transaction away, but creating the vault and signing the rotation
+remains outstanding; the final device screenshots for the write-up are still
+outstanding.
+
+---
+
 ## Getting started
 
 ```bash
@@ -19,24 +53,154 @@ npm run android
 
 ---
 
+## Build process
+
+### Quality gates
+
+Every change lands only with all four gates green, run in this order:
+
+| Gate   | Command                  | What it catches                                                                   |
+| ------ | ------------------------ | --------------------------------------------------------------------------------- |
+| Types  | `npx tsc --noEmit`       | missing i18n keys (es/fr are typed `Record<MessageKey, string>`), hook/type drift |
+| Format | `npx prettier --check .` | the whole tree — app, tests, `api/`, even `deck/` HTML and Markdown               |
+| Lint   | `npx expo lint`          | React hooks rules, dead code                                                      |
+| Tests  | `npx vitest run`         | behaviour — 57 files, 468 passing + 1 skipped (the opt-in smoke test)             |
+
+`npm run ci` chains the same checks and finishes with an Android prebuild, so
+it also catches anything Metro refuses to bundle.
+
+### Test strategy — stub at the layer you are testing
+
+Tests live at the repo root or beside the code, **never under `app/`** (see
+_Failures_ below — Metro would bundle them into the release JS). Each suite
+stubs the layer its subject actually talks to:
+
+| Layer                  | Suites                                        | Stub                                                                                    |
+| ---------------------- | --------------------------------------------- | --------------------------------------------------------------------------------------- |
+| Hook boundary          | `screens`, `settings`, weather/profile suites | `vi.mock` of `useFarmQuery`, `useMobileWalletSetup`, … driven by scenario objects       |
+| JSON-RPC boundary      | `scout-chain.test.tsx`                        | a global `fetch` answering `getAccountInfo` / `getMultipleAccounts` — real codec + PDAs |
+| Native module boundary | camera, auth, settings                        | `expo-haptics`, `expo-camera`, location and clipboard stand-ins                         |
+| Network (opt-in)       | `test/smoke.test.ts`                          | a real RPC behind `SMOKE_RPC=…` — never runs in the offline gate                        |
+
+Two rules the suite enforces, both learned from failures:
+
+- **Reset scenario state in a file-level `beforeEach`** — vitest runs without
+  `clearMocks`, so a scenario left populated poisons every later test in the
+  file (this bit the Profile tests after the export suite).
+- **Await every `fireEvent` call** — RNTL v14 flushes state per call; an
+  un-awaited press races the re-render it is supposed to observe.
+
+### Device dev loop
+
+```bash
+npm run api:dev                 # AI proxy + SIWS on :3000
+npx expo start --dev-client --port 8081
+adb reverse tcp:8081 tcp:8081   # Metro   → device
+adb reverse tcp:3000 tcp:3000   # API     → device
+adb install -r <debug.apk>      # first run, or after Android wipes app data
+```
+
+Background shells do not survive an environment restart, and when they die the
+symptoms look exactly like an app failure. After any restart, re-run the lines
+above and verify `POST /api/siws/nonce → 200` **before** debugging deeper.
+
+### On-chain change loop
+
+`anchor build` → `npm run idl:sync` → `npm run client:generate` → deploy (devnet,
+or `solana program-v4` on a local validator — see _Running Anchor tests_) →
+optional live round-trip with `SMOKE_RPC=… npx vitest run test/smoke.test.ts`.
+
+### Rules the codebase enforces
+
+- **No invented data** — screens render chain values or an explicit empty /
+  error / guest state. A value the chain does not store becomes an empty CSV
+  cell, never a plausible-looking number.
+- **i18n** — `lib/translations/en.ts` is the source of truth; `es.ts` and
+  `fr.ts` are typed against it, so a new key fails `tsc` until translated.
+- **Theming** — every screen builds styles with `makeStyles(colors)`, which
+  makes light mode a palette swap instead of a second stylesheet.
+- **Secrets stay server-side** — provider keys live only in the `api/`
+  proxies; the app knows a single `EXPO_PUBLIC_AI_CLASSIFY_URL`.
+- **The app lock is not a wallet** — the passcode protects the app in
+  `expo-secure-store`; signing always goes through Mobile Wallet Adapter.
+
+---
+
+## Failures & fixes
+
+A running postmortem: what broke, why, and the guard that now prevents it.
+
+### Release-blocking
+
+| Failure                                                  | Root cause                                                                                                                                               | Fix / guard                                                                                                                                                                                         |
+| -------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| App died at startup with an opaque Metro transform error | A `*.test.*` file under `app/` entered Metro's module graph (its default `blockList` excludes nothing), bundling `describe`/`expect` into the release JS | Test moved to the repo root (`entry.test.tsx`); `test/bundle-guard.test.ts` now fails the suite if any test file appears under `app/` again                                                         |
+| "App not loading" on the device (2026-10-04)             | Two independent faults at once: the `adb reverse` mappings for 8081/3000 were gone **and** the APK was not installed (Android had wiped local app data)  | Restored both `adb reverse` lines, `adb install -r` the debug APK, verified the bundle answered HTTP 200 (~15 MB). The recovery checklist now lives in _Build process → Device dev loop_            |
+| Gemini proxy hung or failed silently in production       | Node's global `fetch` is HTTP/1.1-only, and the POC's mobile uplink blackholes H1 POSTs to Google's edge while H2 gets through                           | `h2Fetch` (`api/_lib/gemini.ts`) — a `node:http2` fetch-shaped client with a hard deadline that surfaces a mapped `timeout` instead of a hung proxy. **Never regress it**; tests inject `fetchImpl` |
+| Plain `anchor test` could not run                        | Anchor 0.32 drives Surfpool, which does not start in this environment; separately, Agave ≥ 2.2 rejects _new_ loader-v3 deploys on a local validator      | Run against `solana-test-validator` and deploy with `solana program-v4` — documented in _Running Anchor tests_                                                                                      |
+| Devnet reads failed intermittently                       | Helius free-tier rate limiting                                                                                                                           | Fall back to the public `https://api.devnet.solana.com` endpoint                                                                                                                                    |
+
+### Mock data shipped to the UI (purged)
+
+| Failure                                                           | Root cause                                                                                                                                                | Fix                                                                                                                                                                                                      |
+| ----------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| The scout screen still showed placeholder rows after the redesign | `SCOUT_EVENTS` was wired as the _fallback_ for log and fields, the success banner claimed "All fields clear" with zero data, a seeded row stayed expanded | Log/fields fall back to `[]`, the banner only renders when `fields.length > 0`, the expanded row defaults to nothing — seeds kept as test/CSV fixtures                                                   |
+| Notifications arrived pre-populated                               | A `NOTIFICATIONS` constant seeded the provider                                                                                                            | The provider starts `useState([])` and the constant is deleted; real items (AI diagnosis, escrow) arrive only through `add()`                                                                            |
+| Settings → CSV export showed fake records                         | The export screen read static data instead of the chain                                                                                                   | `lib/csv.ts` rebuilt around a pure `FarmRecordInput`; the screen wired to the live chain queries with banner states for chain error / loading / no wallet / no farm, and `canExport` gating both actions |
+
+### Test-suite incidents
+
+| Failure                                                                         | Root cause                                                                                                                           | Fix / rule                                                                                                    |
+| ------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------- |
+| 2 export tests: "Connect a wallet to export" shown despite a populated scenario | The file-level `useMobileWalletSetup` mock hardcoded `address: null`, bypassing the kit-level scenario the suite drove               | The mock reads the shared `exportScenario.address`; `beforeEach` resets it so later suites still see a guest  |
+| Later tests poisoned by earlier ones                                            | No `clearMocks` in the vitest config — scenario objects leaked across tests (ProfileScreen mounted the export suite's mocks)         | File-level `beforeEach` reset of every scenario + `vi.clearAllMocks()`                                        |
+| Fold-dock test: the modal never mounted after unfolding                         | Un-awaited `fireEvent.press` — RNTL v14 flushes per call, so the next press landed while the stack was still `pointerEvents: 'none'` | Await **every** `fireEvent` call                                                                              |
+| Profile screen crashed after a camera-test mock changed                         | `vi.mock('@/features/scout/location')` returned only `getCurrentCoords`, but `useSetupSignals` also calls `getLocationPermission`    | Mock a module's full export surface (or spread `importOriginal`) — a partial mock breaks every other consumer |
+| CSV export button enabled for a wallet with nothing to export                   | The scenario set `rowCount > 0` while `address` was null                                                                             | Scenario rule: `address` must be set whenever `farm` is set                                                   |
+
+### Environment & process
+
+- **Parallel sessions share one working tree.** Repo-wide gates fail on
+  artifacts from another workstream (scratch `*.test.tsx` at the root,
+  unformatted `deck/` files). Run all four gates right before any handoff, and
+  never leave scratch files at the repo root.
+- **A gitignored worktree is not excluded by default.** A parallel session's
+  `.kilo/worktrees/…` copy put its stale tests in the run, and with `@/*`
+  resolving to _this_ tree they failed against the wrong source (7 files, 30
+  tests). `vitest.config.mts` now excludes `.kilo/**` explicitly — vitest
+  does not read `.gitignore`, unlike prettier and eslint.
+- **Environment restarts kill background shells.** Metro, the API server and
+  `adb reverse` vanish together — see _Device dev loop_ for the recovery order.
+
+---
+
 ## On-chain program
 
-The Anchor program lives in `programs/indorse_program/` and exposes four
-instructions:
+The Anchor program lives in `programs/indorse_program/` and exposes 16
+instructions. Layer 0 is the config: the `Config` PDA (seeds `["config"]`)
+holds the admin/verifier/oracle roles every ops gate reads, so authority is
+swappable account data — the `ADMIN` const survives only as the one key
+allowed to call `init_config`. Custody is program-owned too: insurance refunds
+sweep into the `["treasury"]` PDA's USDC ATA, never a wallet's:
 
-| Instruction              | Description                                                                                                                       |
-| ------------------------ | --------------------------------------------------------------------------------------------------------------------------------- |
-| `register_farm`          | Create a farm PDA seeded by `[b"farm", owner]`                                                                                    |
-| `submit_scout_report`    | Submit a field photo report for a farm                                                                                            |
-| `verify_scout_report`    | Approve or reject a pending report (admin only)                                                                                   |
-| `reward_report`          | Pay SKR tokens to the reporter (admin only, one payout)                                                                           |
-| `submit_harvest_batch`   | Record a harvest batch with provenance snapshot                                                                                   |
-| `create_escrow`          | Buyer deposits USDC into escrow for a batch                                                                                       |
-| `release_escrow`         | Farmer claims the escrowed funds                                                                                                  |
-| `cancel_escrow`          | Buyer cancels before lock — escrow + vault are closed, USDC and rent refunded, batch slot freed for retry                         |
-| `create_policy`          | Create a parametric weather-insurance policy (single farmer signature; the treasury tops up coverage with a plain token transfer) |
-| `submit_weather_reading` | Oracle posts a season rainfall reading (admin only)                                                                               |
-| `settle_policy`          | Pay out or expire a policy after the season ends (admin) — no-trigger refunds are constrained to the treasury's USDC account      |
+| Instruction              | Description                                                                                                                                                                                                                                                                        |
+| ------------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `init_config`            | One-shot bootstrap: the hard-coded `ADMIN` creates the config PDA and sets the initial admin/verifier/oracle roles (all three default to that same key)                                                                                                                            |
+| `set_roles`              | Rotate all three roles in one atomic transaction, signed by the current `config.admin` — how authority moves to a multisig vault without a program upgrade                                                                                                                         |
+| `register_farm`          | Create a farm PDA seeded by `[b"farm", owner]`                                                                                                                                                                                                                                     |
+| `delete_farm`            | Close the farm PDA and refund its rent (owner only) — child accounts (reports, batches, policies) stay on chain as an independent trail                                                                                                                                            |
+| `submit_scout_report`    | Submit a field photo report for a farm                                                                                                                                                                                                                                             |
+| `verify_scout_report`    | Approve or reject a pending report (`config.verifier` only)                                                                                                                                                                                                                        |
+| `reward_report`          | Pay SKR tokens to the reporter (`config.verifier`, one payout)                                                                                                                                                                                                                     |
+| `submit_harvest_batch`   | Record a harvest batch with provenance snapshot                                                                                                                                                                                                                                    |
+| `create_escrow`          | Buyer deposits USDC into escrow for a batch                                                                                                                                                                                                                                        |
+| `release_escrow`         | Farmer claims the escrowed funds                                                                                                                                                                                                                                                   |
+| `cancel_escrow`          | Buyer cancels before lock — escrow + vault are closed, USDC and rent refunded, batch slot freed for retry                                                                                                                                                                          |
+| `create_policy`          | Create a parametric weather-insurance policy (single farmer signature; the treasury tops up coverage with a plain token transfer)                                                                                                                                                  |
+| `submit_weather_reading` | Oracle posts a season rainfall reading (`config.oracle` only)                                                                                                                                                                                                                      |
+| `settle_policy`          | Pay out or expire a policy after the season ends (`config.admin`) — no-trigger refunds are swept to the program treasury's USDC ATA (address-derived, mint-checked)                                                                                                                |
+| `revoke_policy`          | Farmer revokes an active policy before the season ends: the premium returns from the policy vault, the treasury's top-up sweeps into the program treasury's USDC ATA, both accounts close (rents to the farmer) — refused once the season is over, when `settle_policy` takes over |
+| `withdraw_treasury`      | Move accumulated refunds out of the program treasury to the admin's own USDC account — the treasury PDA signs the transfer, `config.admin` gates it, and the destination must be the admin's account                                                                               |
 
 **Program ID:** `GVenujqgMJZCvYPKqMmPiAXQp7o3mwQbXw1nSBu3U5Ht`
 
@@ -52,6 +216,45 @@ program change with:
 npm run idl:sync
 ```
 
+A program change is a **coordinated cut-over**: the client and the program
+must move together (account lists differ per version — e.g. `revoke_policy`
+now takes the treasury PDA and no `config`, which an older program would
+reject). Order of operations:
+
+```bash
+cd programs/indorse_program
+anchor build                                 # compile + regenerate IDL/types
+cd ../.. && npm run idl:sync && npm run client:generate
+cd programs/indorse_program
+solana program deploy --program-id target/deploy/indorse_program-keypair.json \
+  target/deploy/indorse_program.so --url devnet    # in-place upgrade
+node scripts/init-config.cjs                      # idempotent: config + treasury ATA
+```
+
+`scripts/init-config.cjs` defaults to devnet, is safe to re-run (an existing
+config prints its roles; the treasury USDC ATA is `getOrCreate`), takes
+`RPC_URL=http://127.0.0.1:8899` for a local validator, and takes
+`USDC_MINT=…` where the treasury mint isn't the app's devnet USDC.
+
+### Generated client
+
+`lib/generated/indorse` is a [Codama](https://github.com/codama-idl/codama)-rendered
+`@solana/kit` client for that same IDL: one builder per instruction, PDA finders,
+typed account codecs, event decoders and error codes. It is committed source, so
+neither the app build nor Metro needs the Codama toolchain — only regeneration
+does:
+
+```bash
+npm run client:generate
+```
+
+The renderer is pinned to `@codama/renderers-js@2.4.0`, the last release that
+emits imports for the **kit v7** codecs this app is on (`@solana/codecs-strings@^7`);
+newer versions target kit v8. `lib/program/generated-client.test.ts` asserts the
+generated client and the hand-rolled `lib/program/*` client agree on the program
+address, every instruction discriminator, the argument encoding and the PDA
+seeds, so drift between them fails the suite.
+
 ---
 
 ## Project structure
@@ -59,75 +262,86 @@ npm run idl:sync
 ```
 indorse/
 ├── app/
-│   ├── _layout.tsx          # Root layout — theme, language, settings, AuthProvider + AuthGate, wallet
+│   ├── _layout.tsx          # Root layout — theme, language, settings, AuthProvider + AuthGate, wallet, farm registry, scout log
 │   ├── index.tsx            # Entry redirect → /onboarding
 │   ├── onboarding.tsx       # 3-slide intro + wallet connect CTA
+│   ├── setup.tsx            # First-run setup wizard
 │   ├── settings/
 │   │   ├── notifications.tsx # Push / badge / category / quiet-hour switches
 │   │   ├── security.tsx     # Wallet session, signature confirmations, app passcode, hide balances, auto-lock
+│   │   ├── account.tsx      # Account & local data — what "delete" erases (device stores, wallet session)
 │   │   ├── network.tsx      # Cluster picker + live getSlot health check
-│   │   ├── export.tsx       # CSV farm record preview → share or copy
+│   │   ├── export.tsx       # CSV farm record preview (live chain reads) → share or copy
 │   │   ├── language.tsx     # English / Español / Français
 │   │   └── theme.tsx        # System / Dark Field / Light Paper
 │   └── (tabs)/
 │       ├── _layout.tsx      # App header + custom Scout/Provenance/Weather/Profile tab bar
-│       ├── index.tsx        # Scouting — tiles, field status, log, attention banner, camera
+│       ├── index.tsx        # Scouting — onboarding card (no farm) or tiles, field status, log, banner, camera
 │       ├── farms.tsx        # Provenance — score, evidence banner, escrow, addresses
 │       ├── reports.tsx      # Weather — policy, oracle (error + retry), season chart
-│       └── rewards.tsx      # Profile — wallet state, farm details, activity, settings card
+│       └── rewards.tsx      # Profile — wallet state, farm details, activity, settings destinations
 │
 ├── components/
 │   ├── app-providers.tsx    # QueryClient + theme + language + settings + MobileWalletProvider
 │   ├── app-header.tsx       # Brand header: PDA, notification bell, avatar, farm pill
+│   ├── app-splash.tsx       # Splash while the registry/providers hydrate
 │   ├── auth-gate.tsx        # Full-screen lock modal: create passcode / unlock (+ biometrics)
 │   ├── auth-provider.tsx    # App lock state: salted verifier in SecureStore, attempts, auto-lock
-│   ├── brand.tsx            # BrandMark logo
-│   ├── camera-overlay.tsx   # Full-screen scouting camera overlay (scan → submit)
-│   ├── notifications.tsx    # Notification context + bottom sheet (push/category aware)
-│   ├── screen-kit.tsx       # Card / label / pill / risk bar + Banner, EmptyState, ErrorState, Skeleton
+│   ├── camera-overlay.tsx   # Full-screen scouting camera overlay — captures stay local without a farm
+│   ├── confirm-modal.tsx    # Shared destructive-action confirm sheet
+│   ├── farm-registry-provider.tsx # On-chain + local-only farms, current-farm selection
+│   ├── farm-switcher-sheet.tsx    # Switch between registered farms
+│   ├── log-harvest-modal.tsx / setup-escrow-modal.tsx / underwrite-policy-modal.tsx / verify-email-modal.tsx
+│   ├── notifications.tsx    # Notification context + bottom sheet (starts empty; push/category aware)
+│   ├── profile-provider.tsx # On-device operator profile (name, bio, photo)
+│   ├── register-farm-modal.tsx     # name + GPS (chain or local-only when disconnected)
+│   ├── scout-onboarding.tsx # "Set up in 3 steps" entry card + scan-now info box (no-farm state)
+│   ├── scout-log-provider.tsx # Device's scouting log (`indorse.scout.v1`) — captures persist, anchor later
+│   ├── IndorseMark.tsx / person-icon.tsx # Brand mark + line-drawn avatar
+│   ├── brand.tsx             # legacy logo component — unreferenced (IndorseMark replaced it)
+│   ├── screen-kit.tsx       # Banner / EmptyState / ErrorState / Skeleton / Chip / RiskBar
+│   ├── seed-vault-badge.tsx # Seeker seed-vault badge
 │   ├── settings-provider.tsx # Persisted prefs: notifications, security, network
 │   ├── settings-ui.tsx      # SettingsScreen / Group / Row / ToggleRow / OptionRow + sheet / button
 │   ├── theme-provider.tsx   # Light / Dark / System mode, persisted, drives every makeStyles
 │   └── ui.tsx               # Shared Card / FieldGrid / Badge primitives
 │
 ├── lib/
-│   ├── csv.ts               # Farm record → flat CSV (union header, record_type column)
+│   ├── csv.ts               # Farm record → flat CSV (union header, record_type column, honest empty cells)
 │   ├── format.ts            # toE6/fromE6, timestamps, USDC, shortenAddress
 │   ├── i18n.tsx             # Language context + t() with {placeholder} interpolation
 │   ├── translations/        # en / es / fr dictionaries, typed to MessageKey
-│   ├── use-mock-fetch.ts    # loading → error → ready states pending real chain reads
+│   ├── program/             # codec, PDA derivations, instruction builders, RPC helpers, SAS
+│   ├── idl/                 # App-facing copy of the program IDL (refresh with npm run idl:sync)
 │   ├── validation.ts        # Shared per-field validation helpers
-│   └── wallet-name.ts       # Stable friendly wallet names (no raw pubkey in the UI)
+│   ├── use-mock-fetch.ts    # legacy mock-state helper — unreferenced (mock era leftover)
+│   └── wallet-name.ts / display-name.ts / greeting.ts / seeker.ts / skr.ts
 │
 ├── constants/
 │   ├── app-config.ts        # Cluster URLs, default cluster, rpcUrl()/buildCluster(), identity
-│   ├── data.ts              # Seed data for the UI (fields, events, escrow, weather)
+│   ├── data.ts              # Design-era seed/fixture data — asserted unrendered by the screens
 │   └── theme.ts             # Design tokens (dark + light palettes, Colors, sevFor, spacing, radii)
 │
 ├── features/
-│   ├── wallet/
-│   │   ├── types.ts                  # WalletConnectionState
-│   │   ├── useMobileWalletSetup.ts   # Friendly state + toggleConnection
-│   │   ├── useWalletMutation.ts      # Shared factory for tx mutations
-│   │   ├── WalletConnectButton.tsx   # Self-contained connect/disconnect button
-│   │   └── index.ts                  # Barrel export
-│   │
-│   ├── farm/                # Farm account, register_farm mutation, FarmCard
-│   ├── reports/             # ScoutReport, submit_scout_report mutation, ReportCard
-│   ├── harvest/             # HarvestBatch, submit_harvest_batch mutation, HarvestCard
+│   ├── wallet/              # useMobileWalletSetup, useWalletMutation, device verification (SIWS/SGT)
+│   ├── farm/                # Farm account, register/delete mutations, validation
+│   ├── reports/             # ScoutReport, submit/verify mutations, chain → UI event mapping
+│   ├── scout/               # Field derivation from reports, location helpers
+│   ├── harvest/             # HarvestBatch, submit_harvest_batch mutation
 │   ├── escrow/              # Escrow, create/release/cancel mutations, EscrowCard
-│   └── insurance/           # Policy + weather trigger types and helpers
+│   ├── insurance/           # Policy + weather trigger types, oracle reads, mutations
+│   ├── ai/                  # Photo classification client + verdict schema shared with api/
+│   ├── email/               # Verification-email client for the api/ proxy
+│   └── profile/             # Setup signals + profile types
 │
+├── api/                     # Vercel-style functions: AI classify (OpenAI/Gemini), SIWS, email, SAS
 ├── programs/
-│   └── indorse_program/             # Anchor workspace
-│       ├── programs/indorse_program/src/lib.rs   # Rust program
-│       └── tests/indorse_program.ts              # Anchor integration tests
+│   └── indorse_program/     # Anchor workspace (Rust program + integration tests + init-config cutover)
 │
-├── auth.test.tsx             # App lock: registration, wrong passcode + cooldown, biometrics, reset
-├── screens.test.tsx          # Render smoke tests for the four tab screens + notification sheet
-├── settings.test.tsx         # Settings stack: prefs gate the feed, language/theme, network, CSV export
-├── lib/csv.test.ts           # CSV escaping, column counts, row counts, file name
+├── *.test.tsx / **/*.test.ts  # 57 suites — see Build process → Test strategy
 ├── test/setup-mocks.ts       # Shared test mocks (icon set, expo-crypto digest)
+├── test/bundle-guard.test.ts # Fails if any test file lands under app/ (Metro would bundle it)
+├── test/smoke.test.ts        # Opt-in live-RPC round trip (SMOKE_RPC)
 ├── vitest.config.mts         # Vitest config (verbose reporter, vitest-native)
 └── package.json
 ```
@@ -182,16 +396,17 @@ const { account, client, connect, disconnect, sendTransactions, signMessages } =
 
 ## Settings
 
-The Profile tab's **Settings** card opens six routes under `app/settings/`:
+The Profile tab's **Settings** card opens seven routes under `app/settings/`:
 
-| Screen             | What it does                                                                                                              |
-| ------------------ | ------------------------------------------------------------------------------------------------------------------------- |
-| Notifications      | Push master switch, unread badge, per-category toggles (diagnosis / escrow / weather / system), quiet hours               |
-| Wallet & Security  | Session status, disconnect, app passcode (change / forgot), confirm-signatures / biometrics, **hide balances**, auto-lock |
-| Network            | mainnet / devnet / testnet / localnet / custom RPC with a real `getSlot` health check (latency + slot)                    |
-| Export Farm Record | Flat CSV preview with row counts → share via `expo-sharing` or copy to clipboard                                          |
-| Language           | English / Español / Français                                                                                              |
-| Theme              | System / Dark Field / Light Paper                                                                                         |
+| Screen             | What it does                                                                                                                       |
+| ------------------ | ---------------------------------------------------------------------------------------------------------------------------------- |
+| Notifications      | Push master switch, unread badge, per-category toggles (diagnosis / escrow / weather / system), quiet hours                        |
+| Wallet & Security  | Session status, disconnect, app passcode (change / forgot), confirm-signatures / biometrics, **hide balances**, auto-lock          |
+| Account            | Account & local data — spells out exactly what "delete" erases (on-device stores + wallet session; on-chain records are untouched) |
+| Network            | mainnet / devnet / testnet / localnet / custom RPC with a real `getSlot` health check (latency + slot)                             |
+| Export Farm Record | Live chain record → flat CSV preview with row counts → share via `expo-sharing` or copy to clipboard                               |
+| Language           | English / Español / Français                                                                                                       |
+| Theme              | System / Dark Field / Light Paper                                                                                                  |
 
 Everything the screens edit lives in `components/settings-provider.tsx` as one
 AsyncStorage document, so other parts of the app react to it: the notification
@@ -227,23 +442,38 @@ column (farm, field, scout_event, escrow, weather_policy), RFC 4180 quoting,
 ## Scripts
 
 ```bash
-npm run dev           # Start the dev server
-npm run android       # Build and run on a device or emulator
-npm run test          # Run the Vitest test suite (verbose pass/fail output)
-npm run test:watch    # Run tests in watch mode
-npm run test:coverage # Run tests with V8 coverage report
-npm run ci            # Type check + lint + format check + test + prebuild
+# Dev loop
+npm run dev             # Metro (clear cache, dev client)
+npm run android         # Build and run on a device or emulator
+npm run api:dev         # AI proxy + SIWS routes on localhost:3000
+
+# Quality gates (all four must be green before any handoff)
+npm run test            # Vitest, verbose pass/fail output
+npm run test:watch      # Run tests in watch mode
+npm run test:coverage   # Run tests with V8 coverage report
+npm run lint:check      # expo lint (npm run lint to autofix)
+npm run format:check    # prettier --check . (npm run format to write)
+npm run ci              # tsc + lint + format + test + Android prebuild
+
+# On-chain
+npm run idl:sync        # Copy the freshly built IDL into lib/idl/
+npm run sas:bootstrap   # Solana Attestation Service bootstrap
+
+# Misc
+npm run doctor          # expo-doctor
+npm run icons           # Regenerate the app icons
 ```
 
 ---
 
 ## Running Anchor tests
 
-The integration tests (16 cases: scouting, rewards, treasury-pool insurance,
-escrow cancel/retry) need a local validator and the Anchor CLI. Plain
-`anchor test` tries to drive Surfpool in Anchor 0.32; in environments where
-Surfpool does not start, run against `solana-test-validator` directly. Note
-that Agave ≥ 2.2 rejects _new_ loader-v3 programs on a local validator, so the
+The integration tests (21 cases: config authority rotation, program-treasury
+revoke/withdraw, scouting, rewards, treasury-pool insurance, escrow
+cancel/retry) need a local validator and the Anchor CLI. Plain `anchor test`
+tries to drive Surfpool in Anchor 0.32; in environments where Surfpool does
+not start, run against `solana-test-validator` directly. Note that
+Agave ≥ 2.2 rejects _new_ loader-v3 programs on a local validator, so the
 program is deployed with `program-v4`:
 
 ```bash

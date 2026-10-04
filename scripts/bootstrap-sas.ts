@@ -33,12 +33,13 @@ import { resolve } from 'node:path'
 import {
   address,
   appendTransactionMessageInstruction,
+  assertIsTransactionWithBlockhashLifetime,
+  assertIsTransactionWithinSizeLimit,
   createKeyPairFromBytes,
   createSignerFromKeyPair,
   createSolanaRpc,
   createSolanaRpcSubscriptions,
   createTransactionMessage,
-  getBase58Decoder,
   getBase58Encoder,
   pipe,
   sendAndConfirmTransactionFactory,
@@ -46,6 +47,9 @@ import {
   setTransactionMessageLifetimeUsingBlockhash,
   signTransactionMessageWithSigners,
   type Instruction,
+  type ReadonlyUint8Array,
+  type RpcSubscriptions,
+  type SolanaRpcSubscriptionsApi,
   type TransactionSigner,
 } from '@solana/kit'
 import {
@@ -56,6 +60,7 @@ import {
   credentialPda,
   schemaPda,
 } from '../lib/program/sas'
+import type { ProgramRpc } from '../lib/program/rpc'
 
 const DEFAULT_RPC_URL = 'https://api.devnet.solana.com'
 
@@ -78,7 +83,7 @@ function fail(message: string): never {
 }
 
 /** Decode a keypair from base58 or a `[1,2,…]` keygen JSON array. */
-function decodeSecretKey(raw: string): Uint8Array {
+function decodeSecretKey(raw: string): ReadonlyUint8Array {
   const trimmed = raw.trim()
   if (trimmed.startsWith('[')) {
     const parsed: unknown = JSON.parse(trimmed)
@@ -94,7 +99,7 @@ async function signerFromEnv(): Promise<TransactionSigner> {
     fail(
       'No authority key found. Set SAS_AUTHORITY_SECRET (or SAS_ISSUER_SECRET) to the base58\n' +
         '  secret key of the wallet that will own the SAS credential, e.g.\n' +
-        "    SAS_AUTHORITY_SECRET=$(cat ~/.config/solana/id.json | tr -d '[]\\n ') ...",
+        '    (the full base58 keypair, or the 64-number JSON array from solana-keygen)',
     )
   }
   const bytes = decodeSecretKey(raw)
@@ -113,19 +118,19 @@ function subscriptionsUrl(rpcUrl: string): string {
 }
 
 /** True when the account exists on chain. */
-async function accountExists(rpc: ReturnType<typeof createSolanaRpc>, account: string): Promise<boolean> {
+async function accountExists(rpc: ProgramRpc, account: string): Promise<boolean> {
   const res = await rpc.getAccountInfo(address(account), { encoding: 'base64', commitment: 'confirmed' }).send()
   return res.value !== null
 }
 
-async function rpcBalance(rpc: ReturnType<typeof createSolanaRpc>, owner: string): Promise<bigint> {
+async function rpcBalance(rpc: ProgramRpc, owner: string): Promise<bigint> {
   const { value } = await rpc.getBalance(address(owner), { commitment: 'confirmed' }).send()
   return value
 }
 
 async function send(
-  rpc: ReturnType<typeof createSolanaRpc>,
-  rpcSubscriptions: ReturnType<typeof createSolanaRpcSubscriptions>,
+  rpc: ProgramRpc,
+  rpcSubscriptions: RpcSubscriptions<SolanaRpcSubscriptionsApi>,
   signer: TransactionSigner,
   instruction: Instruction,
   label: string,
@@ -141,6 +146,8 @@ async function send(
   )
 
   const signed = await signTransactionMessageWithSigners(message)
+  assertIsTransactionWithBlockhashLifetime(signed)
+  assertIsTransactionWithinSizeLimit(signed)
   console.log(`  · sending ${label}…`)
   await sendAndConfirm(signed, { commitment: 'confirmed' })
   console.log(`  ✓ ${label} confirmed`)
@@ -162,8 +169,10 @@ async function main(): Promise<void> {
   const credential = await credentialPda(payer, credentialName)
   const schema = await schemaPda(credential, schemaName, INDORSE_EMAIL_SCHEMA.version)
 
-  const rpc = createSolanaRpc(rpcUrl)
-  const rpcSubscriptions = createSolanaRpcSubscriptions(subscriptionsUrl(rpcUrl))
+  const rpc: ProgramRpc = createSolanaRpc(rpcUrl)
+  const rpcSubscriptions: RpcSubscriptions<SolanaRpcSubscriptionsApi> = createSolanaRpcSubscriptions(
+    subscriptionsUrl(rpcUrl),
+  )
 
   console.log(`SAS bootstrap on ${rpcUrl}`)
   console.log(`  authority   ${payer}`)
@@ -176,10 +185,7 @@ async function main(): Promise<void> {
   if (!hasCredential || !hasSchema) {
     const balance = await rpcBalance(rpc, payer)
     if (balance === 0n) {
-      fail(
-        `${payer} has no SOL on ${rpcUrl}. Fund it first:\n` +
-          `  solana airdrop 1 ${payer} --url ${rpcUrl}`,
-      )
+      fail(`${payer} has no SOL on ${rpcUrl}. Fund it first:\n` + `  solana airdrop 1 ${payer} --url ${rpcUrl}`)
     }
   }
 

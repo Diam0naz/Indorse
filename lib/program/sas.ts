@@ -233,15 +233,20 @@ function asBigInt(value: unknown, field: string): bigint {
 function writeField(w: Writer, code: number, value: unknown, field: string): void {
   switch (code) {
     case SAS_SCHEMA_TYPE.u8:
-      return w.u8(Number(value))
+      w.u8(Number(value))
+      return
     case SAS_SCHEMA_TYPE.i64:
-      return w.i64(asBigInt(value, field))
+      w.i64(asBigInt(value, field))
+      return
     case SAS_SCHEMA_TYPE.u64:
-      return w.u64(asBigInt(value, field))
+      w.u64(asBigInt(value, field))
+      return
     case SAS_SCHEMA_TYPE.bool:
-      return w.u8(value ? 1 : 0)
+      w.u8(value ? 1 : 0)
+      return
     case SAS_SCHEMA_TYPE.string:
-      return w.string(String(value))
+      w.string(String(value))
+      return
     case SAS_SCHEMA_TYPE.vecU8: {
       const bytes = Uint8Array.from((value as ArrayLike<number>) ?? [])
       w.u32(bytes.length).raw(bytes)
@@ -318,14 +323,13 @@ export async function createSchemaInstruction(input: {
   version?: number
 }): Promise<Instruction> {
   if (input.layout.length !== input.fieldNames.length) {
-    throw new Error(`Schema "${input.name}" has ${input.layout.length} types but ${input.fieldNames.length} field names`)
+    throw new Error(
+      `Schema "${input.name}" has ${input.layout.length} types but ${input.fieldNames.length} field names`,
+    )
   }
   const schema = await schemaPda(input.credential, input.name, input.version ?? 1)
   const w = new Writer()
-  w.u8(SAS_INSTRUCTION.createSchema)
-    .string(input.name)
-    .string(input.description)
-    .bytes(Uint8Array.from(input.layout))
+  w.u8(SAS_INSTRUCTION.createSchema).string(input.name).string(input.description).bytes(Uint8Array.from(input.layout))
   w.u32(input.fieldNames.length)
   for (const field of input.fieldNames) w.string(field)
 

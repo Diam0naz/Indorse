@@ -5,15 +5,17 @@
  * so the read/unread state is shared through a small context provider that
  * wraps the tab navigator.
  *
- * The provider also honours the preferences from `SettingsProvider`: the
- * master push switch and the per-category switches decide which items reach
- * the feed, which is what the notification settings screen edits.
+ * The feed starts empty — no seeded items; entries only arrive from real
+ * events (e.g. the AI diagnosis after a scan). The provider also honours
+ * the preferences from `SettingsProvider`: the master push switch and the
+ * per-category switches decide which items reach the feed, which is what
+ * the notification settings screen edits.
  */
 
 import { createContext, useCallback, useContext, useMemo, useState, type PropsWithChildren } from 'react'
 import { Modal, Pressable, ScrollView, Text, View } from 'react-native'
 import { createStyles, fontSizes, fontWeights, notifColorsFor, radii, spacing, type Colors } from '@/constants/theme'
-import { NOTIFICATIONS, type Notification } from '@/constants/data'
+import type { Notification } from '@/constants/data'
 import { EmptyState } from '@/components/screen-kit'
 import { useTheme } from '@/components/theme-provider'
 import { useSettings, type NotificationPrefs } from '@/components/settings-provider'
@@ -31,8 +33,8 @@ interface NotificationsContextValue {
   enabled: boolean
   /**
    * Push a new item to the top of the feed (e.g. the AI diagnosis after a
-   * scan). It still passes through the same preference filter as the seeded
-   * items — type 'alert'/'scout' is gated by the diagnosis switch.
+   * scan). It passes through the same preference filter — type
+   * 'alert'/'scout' is gated by the diagnosis switch.
    */
   add: (draft: NotificationDraft) => string
   markRead: (id: string) => void
@@ -67,7 +69,7 @@ function categoryEnabled(prefs: NotificationPrefs, type: Notification['type']): 
 }
 
 export function NotificationsProvider({ children }: PropsWithChildren) {
-  const [items, setItems] = useState<Notification[]>(() => NOTIFICATIONS.map((n) => ({ ...n })))
+  const [items, setItems] = useState<Notification[]>([])
   const { notifications: prefs } = useSettings()
 
   const add = useCallback((draft: NotificationDraft) => {

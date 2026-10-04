@@ -186,6 +186,13 @@ describe('camera overlay — submit honesty', () => {
     expect(event.notes).toMatch(/^indorse:\/\/scout\/\d+\.jpg$/)
     expect(event.date).not.toBe('Sep 29')
 
+    // The outbox payload travels with the row, so a restart can still
+    // anchor this capture once a farm exists — same fields, nothing new.
+    expect(event.anchor?.photoHashHex).toBe(event.txSig)
+    expect(event.anchor?.uri).toBe(event.notes)
+    expect(event.anchor?.aiLabel).toBe('unclassified')
+    expect(event.anchor?.photoUris).toEqual([]) // simulated shots have no files
+
     // …placeholders out: no verdict → honest fields, no invented crop.
     expect(event.diagnosis).toBe('unclassified')
     expect(event.severity).toBe('none')

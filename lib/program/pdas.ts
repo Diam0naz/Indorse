@@ -110,6 +110,16 @@ export function rewardAuthorityPda(): Promise<Address> {
   return derive([encoder.encode('reward_authority')])
 }
 
+/** `["config"]` — the program's authority roles (admin/verifier/oracle). */
+export function configPda(): Promise<Address> {
+  return derive([encoder.encode('config')])
+}
+
+/** `["treasury"]` — program custody; its USDC ATA receives swept refunds. */
+export function treasuryPda(): Promise<Address> {
+  return derive([encoder.encode('treasury')])
+}
+
 /* ── SPL token accounts ────────────────────────────────────────────────────── */
 
 const TOKEN_PROGRAM_ID = address('TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA')

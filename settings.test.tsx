@@ -26,12 +26,14 @@ import ExportSettingsScreen from '@/app/settings/export'
 import LanguageSettingsScreen from '@/app/settings/language'
 import ThemeSettingsScreen from '@/app/settings/theme'
 import ProfileScreen from '@/app/(tabs)/rewards'
-import { NotificationsProvider, NotificationsSheet } from '@/components/notifications'
+import { NotificationsProvider, NotificationsSheet, useNotifications } from '@/components/notifications'
 import { AuthProvider } from '@/components/auth-provider'
 import { SettingsProvider } from '@/components/settings-provider'
 import { ThemeProvider, useTheme } from '@/components/theme-provider'
+import type { ChainReport } from '@/features/reports/useReportsQuery'
+import { buildFieldsFromReports } from '@/features/scout/fields'
 import { LanguageProvider, useI18n } from '@/lib/i18n'
-import { farmRecordRowCount } from '@/lib/csv'
+import { farmRecordRowCount, type FarmRecordInput } from '@/lib/csv'
 
 vi.mock('expo-haptics', () => ({
   impactAsync: vi.fn(),
@@ -51,11 +53,14 @@ vi.mock('@react-native-clipboard/clipboard', () => ({
   default: { setString: vi.fn() },
 }))
 
+// Address follows the export suite's scenario (reset to null before every
+// test in the beforeEach below, so the Profile/notification suites keep
+// seeing a guest). The export screen derives everything from this hook.
 vi.mock('@/features/wallet/useMobileWalletSetup', () => ({
   useMobileWalletSetup: () => ({
     wallet: {},
-    walletState: 'disconnected',
-    address: null,
+    walletState: exportScenario.address ? 'connected' : 'disconnected',
+    address: exportScenario.address,
     toggleConnection: vi.fn(),
     error: null,
     clearError: vi.fn(),
@@ -86,7 +91,35 @@ beforeEach(async () => {
   await AsyncStorage.clear()
 })
 
+/**
+ * The export suite's chain scenario is file-level state shared by its hook
+ * mocks; reset it before every test so neither later suites (ProfileScreen
+ * mounts the same hooks) nor Clipboard/Sharing call history leak across.
+ */
+beforeEach(() => {
+  vi.clearAllMocks()
+  exportScenario.address = null
+  exportScenario.farm = null
+  exportScenario.reports = []
+  exportScenario.escrow = null
+  exportScenario.policy = null
+  exportScenario.reading = null
+})
+
 /* ── Notification settings → feed ─────────────────────────────────────────── */
+
+/** Push one real item so the push-off filter has something to hide. */
+function PushEscrowItem() {
+  const { add } = useNotifications()
+  return (
+    <Text
+      testID="add-notif"
+      onPress={() => add({ type: 'escrow', title: 'Escrow funded', body: 'Deposited into escrow.' })}
+    >
+      add
+    </Text>
+  )
+}
 
 describe('notification settings', () => {
   it('turning push off empties the notification feed', async () => {
@@ -95,11 +128,15 @@ describe('notification settings', () => {
         <NotificationsProvider>
           <NotificationSettingsScreen />
           <NotificationsSheet visible onClose={() => {}} />
+          <PushEscrowItem />
         </NotificationsProvider>
       </SettingsProvider>,
     )
 
-    expect(screen.getByText('Escrow funded')).toBeTruthy()
+    // The feed starts empty — push a real item so there is something to hide.
+    expect(screen.getByText("You're all caught up")).toBeTruthy()
+    await fireEvent.press(screen.getByTestId('add-notif'))
+    await screen.findByText('Escrow funded', {}, LOAD)
 
     fireEvent(screen.getByLabelText('Push notifications'), 'valueChange', false)
 
@@ -245,30 +282,206 @@ describe('network settings', () => {
 
 /* ── Export ───────────────────────────────────────────────────────────────── */
 
+const exportScenario = vi.hoisted(() => ({
+  address: null as string | null,
+  farm: null as null | {
+    name: string
+    owner: string
+    latE6: number
+    lngE6: number
+    address?: string
+    reportCount: number
+    batchCount: number
+    policyCount: number
+  },
+  reports: [] as unknown[],
+  escrow: null as null | { buyer: string; amountUsdc: number; address?: string },
+  policy: null as null | {
+    coverageUsdc: number
+    premiumUsdc: number
+    triggerThresholdMm: number
+    seasonStart: number
+    seasonEnd: number
+    state: string
+    address?: string
+  },
+  reading: null as null | { totalRainfallMm: number; readingTimestamp: number },
+}))
+
+// The export screen reads through the same hooks the tabs use; this suite
+// simulates the chain at the hook boundary (the RPC level itself is
+// scout-chain.test's job).
+vi.mock('@wallet-ui/react-native-kit', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@wallet-ui/react-native-kit')>()
+  return {
+    ...actual,
+    useMobileWallet: () => ({
+      account: exportScenario.address ? { address: exportScenario.address } : null,
+      sendTransactions: vi.fn(),
+    }),
+  }
+})
+
+vi.mock('@/features/farm/useFarmQuery', () => ({
+  useFarmQuery: () => ({
+    farm: exportScenario.farm,
+    farmAddress: exportScenario.farm?.address ?? null,
+    state: 'ready' as const,
+    retry: vi.fn(),
+  }),
+}))
+
+vi.mock('@/features/reports/useReportsQuery', () => ({
+  useReportsQuery: () => ({ reports: exportScenario.reports, state: 'ready' as const, retry: vi.fn() }),
+}))
+
+vi.mock('@/features/escrow/useEscrowQuery', () => ({
+  useEscrowQuery: () => ({
+    escrow: exportScenario.escrow,
+    escrowAddress: exportScenario.escrow?.address ?? null,
+    batchAddress: null,
+    state: 'ready' as const,
+    retry: vi.fn(),
+  }),
+}))
+
+vi.mock('@/features/insurance/usePolicyQuery', () => ({
+  usePolicyQuery: () => ({
+    policy: exportScenario.policy,
+    policyAddress: exportScenario.policy?.address ?? null,
+    state: 'ready' as const,
+    retry: vi.fn(),
+  }),
+}))
+
+vi.mock('@/features/insurance/useWeatherOracleQuery', () => ({
+  useWeatherOracleQuery: () => ({ reading: exportScenario.reading, state: 'ready' as const, retry: vi.fn() }),
+}))
+
+const EXPORT_FARM = {
+  name: 'Red Creek Farm',
+  owner: 'Owner111111111111111111111111111111111111111',
+  latE6: 46_882_100,
+  lngE6: -98_702_300,
+  address: 'Farm111111111111111111111111111111111111111',
+  reportCount: 1,
+  batchCount: 1,
+  policyCount: 1,
+}
+
+const EXPORT_REPORT: ChainReport = {
+  farm: 'FarmAcc111111111111111111111111111111111111',
+  reporter: 'Owner111111111111111111111111111111111111111',
+  index: 0,
+  photoHash: [1, 2, 3],
+  uri: 'https://cdn.indorse.app/scout/fixture.jpg',
+  latE6: 46_882_110,
+  lngE6: -98_702_310,
+  aiLabel: 'Downy Mildew',
+  status: 'verified',
+  verifier: 'Verifier11111111111111111111111111111111111',
+  timestamp: 1_758_000_000,
+  bump: 250,
+  address: 'Report1111111111111111111111111111111111111',
+}
+
+const EXPORT_ESCROW = {
+  buyer: 'Buyer111111111111111111111111111111111111111',
+  amountUsdc: 45_200_000_000,
+  address: 'Escrow1111111111111111111111111111111111111',
+}
+
+const EXPORT_POLICY = {
+  coverageUsdc: 5_000_000,
+  premiumUsdc: 250_000,
+  triggerThresholdMm: 500,
+  seasonStart: Date.UTC(2026, 3, 1) / 1000,
+  seasonEnd: Date.UTC(2026, 9, 15) / 1000,
+  state: 'active',
+  address: 'Policy1111111111111111111111111111111111111',
+}
+
+const EXPORT_READING = { totalRainfallMm: 2_120, readingTimestamp: 1_758_100_000 }
+
+/** What the screen should assemble for the populated scenario. */
+const EXPORT_EXPECTED: FarmRecordInput = {
+  farm: EXPORT_FARM,
+  operator: '',
+  reports: [EXPORT_REPORT],
+  fields: buildFieldsFromReports([EXPORT_REPORT], EXPORT_FARM.name),
+  escrow: EXPORT_ESCROW,
+  policy: EXPORT_POLICY,
+  reading: EXPORT_READING,
+  exportedAt: new Date(),
+}
+
+function renderExport() {
+  const client = new QueryClient({ defaultOptions: { queries: { retry: false } } })
+  return render(
+    <QueryClientProvider client={client}>
+      <ExportSettingsScreen />
+    </QueryClientProvider>,
+  )
+}
+
 describe('export farm record', () => {
-  it('previews the CSV and copies it to the clipboard', async () => {
-    const screen = await render(<ExportSettingsScreen />)
+  function populateRecord() {
+    exportScenario.address = EXPORT_FARM.owner
+    exportScenario.farm = EXPORT_FARM
+    exportScenario.reports = [EXPORT_REPORT]
+    exportScenario.escrow = EXPORT_ESCROW
+    exportScenario.policy = EXPORT_POLICY
+    exportScenario.reading = EXPORT_READING
+  }
+
+  it('previews the chain record and copies it to the clipboard', async () => {
+    populateRecord()
+    const screen = await renderExport()
 
     // Header visible in the preview + the row count matches the builder.
     await screen.findByText(/record_type,farm_name/, {}, LOAD)
-    expect(screen.getByText(new RegExp(`^${farmRecordRowCount()} rows`))).toBeTruthy()
+    expect(screen.getByText(new RegExp(`^${farmRecordRowCount(EXPORT_EXPECTED)} rows`))).toBeTruthy()
+    expect(screen.queryByText('Connect a wallet to export')).toBeNull()
 
-    fireEvent.press(screen.getByLabelText('Copy CSV'))
-    expect(Clipboard.setString).toHaveBeenCalledWith(expect.stringContaining('Clearwater Ridge Farm'))
+    await fireEvent.press(screen.getByLabelText('Copy CSV'))
+    expect(Clipboard.setString).toHaveBeenCalledWith(expect.stringContaining('Red Creek Farm'))
+    expect(Clipboard.setString).toHaveBeenCalledWith(expect.stringContaining('Downy Mildew'))
   })
 
   it('writes the file and hands it to the share sheet', async () => {
-    const screen = await render(<ExportSettingsScreen />)
+    populateRecord()
+    const screen = await renderExport()
 
-    fireEvent.press(screen.getByLabelText('Share .csv file'))
+    await fireEvent.press(screen.getByLabelText('Share .csv file'))
 
     await waitFor(() => {
       expect(Sharing.shareAsync).toHaveBeenCalledWith(
-        expect.stringMatching(/\.csv$/),
+        expect.stringMatching(/red-creek-farm-\d{4}-\d{2}-\d{2}\.csv$/),
         expect.objectContaining({ mimeType: 'text/csv' }),
       )
     })
     expect(screen.queryByText('Could not share the file')).toBeNull()
+  })
+
+  it('states that a guest has nothing to export and blocks both actions', async () => {
+    const screen = await renderExport()
+
+    await screen.findByText('Connect a wallet to export', {}, LOAD)
+    expect((await screen.findAllByText(/^0 rows/)).length).toBeGreaterThan(0)
+
+    await fireEvent.press(screen.getByLabelText('Copy CSV'))
+    await fireEvent.press(screen.getByLabelText('Share .csv file'))
+    expect(Clipboard.setString).not.toHaveBeenCalled()
+    expect(Sharing.shareAsync).not.toHaveBeenCalled()
+  })
+
+  it('offers the empty state for a wallet with no registered farm', async () => {
+    exportScenario.address = EXPORT_FARM.owner
+    const screen = await renderExport()
+
+    await screen.findByText('Nothing to export yet', {}, LOAD)
+    expect(screen.queryByText('Connect a wallet to export')).toBeNull()
+    expect((await screen.findAllByText(/^0 rows/)).length).toBeGreaterThan(0)
   })
 })
 

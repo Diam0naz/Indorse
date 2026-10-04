@@ -12,7 +12,7 @@
  */
 
 import { describe, expect, it } from 'vitest'
-import { AccountRole, address, getBase58Encoder, getProgramDerivedAddress } from '@solana/kit'
+import { AccountRole, address, getBase58Encoder, getProgramDerivedAddress, type ReadonlyUint8Array } from '@solana/kit'
 import {
   INDORSE_CREDENTIAL_NAME,
   INDORSE_EMAIL_SCHEMA,
@@ -47,9 +47,11 @@ const encoder = new TextEncoder()
 class Reader {
   private view: DataView
   private offset = 0
+  private bytes: ReadonlyUint8Array
 
-  constructor(private bytes: Uint8Array) {
-    this.view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength)
+  constructor(bytes: ReadonlyUint8Array | undefined) {
+    this.bytes = bytes ?? new Uint8Array()
+    this.view = new DataView(this.bytes.buffer, this.bytes.byteOffset, this.bytes.byteLength)
   }
 
   u8(): number {
@@ -68,7 +70,7 @@ class Reader {
     return value
   }
 
-  raw(n: number): Uint8Array {
+  raw(n: number): ReadonlyUint8Array {
     const out = this.bytes.subarray(this.offset, this.offset + n)
     this.offset += n
     return out
@@ -105,7 +107,7 @@ describe('SAS program metadata', () => {
 })
 
 describe('PDA finders vs the IDL seed literals', () => {
-  async function derive(seeds: Uint8Array[]): Promise<string> {
+  async function derive(seeds: ReadonlyUint8Array[]): Promise<string> {
     const [pda] = await getProgramDerivedAddress({
       programAddress: address('22zoJMtdu4tQc2PzL74ZUT7FrwgB1Udec8DdW4yw4BdG'),
       seeds,
@@ -153,7 +155,7 @@ describe('createCredentialInstruction', () => {
     })
 
     expect(ix.programAddress).toBe(SAS_PROGRAM_ID)
-    expect(ix.accounts.map((a) => [a.address, a.role])).toEqual([
+    expect((ix.accounts ?? []).map((a) => [a.address, a.role])).toEqual([
       [PAYER, AccountRole.WRITABLE_SIGNER],
       [CREDENTIAL, AccountRole.WRITABLE],
       [AUTHORITY, AccountRole.READONLY_SIGNER],
@@ -188,7 +190,7 @@ describe('createSchemaInstruction', () => {
       ...INDORSE_EMAIL_SCHEMA,
     })
 
-    expect(ix.accounts.map((a) => [a.address, a.role])).toEqual([
+    expect((ix.accounts ?? []).map((a) => [a.address, a.role])).toEqual([
       [PAYER, AccountRole.WRITABLE_SIGNER],
       [AUTHORITY, AccountRole.READONLY_SIGNER],
       [CREDENTIAL, AccountRole.READONLY],
@@ -263,7 +265,7 @@ describe('createAttestationInstruction', () => {
       expiry: 1_800_000_000,
     })
 
-    expect(ix.accounts.map((a) => [a.address, a.role])).toEqual([
+    expect((ix.accounts ?? []).map((a) => [a.address, a.role])).toEqual([
       [PAYER, AccountRole.WRITABLE_SIGNER],
       [AUTHORITY, AccountRole.READONLY_SIGNER],
       [CREDENTIAL, AccountRole.READONLY],

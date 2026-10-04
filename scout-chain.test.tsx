@@ -6,8 +6,10 @@
  * → log rows. `fetch` is stubbed at the JSON-RPC level, so this exercises the
  * same code production runs (kit transport included) without a network.
  *
- * Three states: registered farm (on-chain log), unregistered wallet
- * (register prompt) and unreachable RPC (error + retry).
+ * Four states: registered farm (on-chain log), connected-but-unregistered
+ * (the 3-step setup card), unreachable RPC (error + retry) and disconnected
+ * (setup card again — nothing seeded, no fetch). A registered farm with no
+ * reports falls through to the plain empty log.
  */
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
@@ -43,6 +45,20 @@ vi.mock('@/features/wallet/useMobileWalletSetup', () => ({
     toggleConnection: vi.fn(),
     error: null,
     clearError: vi.fn(),
+  }),
+}))
+
+// The screen mounts the outbox flush through useSubmitReport, which reaches
+// useMobileWallet — no MobileWalletProvider exists here, and these tests
+// never queue an anchor, so the mutation stands in as a no-op.
+vi.mock('@/features/reports/useSubmitReport', () => ({
+  useSubmitReport: () => ({
+    isPending: false,
+    isError: false,
+    error: null,
+    mutate: vi.fn(),
+    mutateAsync: vi.fn(async () => 'Report11111111111111111111111111111111111111'),
+    reset: vi.fn(),
   }),
 }))
 
@@ -160,11 +176,15 @@ describe('scout tab — chain reads', () => {
 
     const screen = await renderScreen()
 
-    await screen.findByText('Scouting Log · 2 On-chain', {}, LOAD)
+    await screen.findByText('Scouting Log · 2', {}, LOAD)
     await screen.findByText('Downy Mildew', {}, LOAD)
     await screen.findByText('Powdery Mildew', {}, LOAD)
     await screen.findByText('Verified', {}, LOAD)
     await screen.findByText('Pending', {}, LOAD)
+
+    // Both reports round to the same coordinate zone → one non-clean field,
+    // so the attention banner counts exactly one.
+    await screen.findByText('1 fields need attention', {}, LOAD)
 
     // Newest report (index 1) is listed first.
     const diagnoses = screen.getAllByText(/Mildew$/)
@@ -179,14 +199,18 @@ describe('scout tab — chain reads', () => {
     await screen.findByText('Report PDA', {}, LOAD)
   })
 
-  it('offers the register-farm prompt when the wallet has no farm', async () => {
+  it('shows the setup card when the wallet has no farm', async () => {
     const fetchMock = stubRpc({ farm: null })
 
     const screen = await renderScreen()
 
-    await screen.findByText('Register your farm', {}, LOAD)
-    // Two matches are expected: the empty-state action button and the docked FAB pill.
+    // Step 1 is done (connected) → step 2 owns the card's CTA, and the
+    // dashboard's docked pills hide with the card that replaced them.
+    await screen.findByText('Set up in 3 steps', {}, LOAD)
+    expect(screen.getByText('Connect your wallet')).toBeTruthy()
+    expect(screen.getAllByText('Register your farm').length).toBeGreaterThan(0)
     await screen.findAllByText('Register farm', {}, LOAD)
+    expect(screen.queryByTestId('scout-actions')).toBeNull()
 
     // The reports query never fires without a farm.
     const methods = fetchMock.mock.calls.map(([, init]) => JSON.parse(String(init?.body ?? '{}')).method)
@@ -206,14 +230,32 @@ describe('scout tab — chain reads', () => {
     expect(fetchMock.mock.calls.length).toBeGreaterThanOrEqual(2)
   })
 
-  it('falls back to the sample log when the wallet is disconnected', async () => {
+  it('shows the setup card when disconnected — nothing seeded, no fetch', async () => {
     wallet.address = null
     const fetchMock = stubRpc({})
 
     const screen = await renderScreen()
 
-    await screen.findByText('Sclerotinia Head Rot', {}, LOAD)
-    await screen.findByText(/Sample log/, {}, LOAD)
+    // Guest entry: step 1 is the active step; no dashboard, no dock, no
+    // seeded rows — and no network traffic until a wallet connects.
+    await screen.findByText('Set up in 3 steps', {}, LOAD)
+    expect(screen.getByText('Connect wallet')).toBeTruthy()
+    expect(screen.queryByTestId('scout-actions')).toBeNull()
+    expect(screen.queryByText('Sclerotinia Head Rot')).toBeNull()
+    expect(screen.queryByText('All fields clear')).toBeNull()
     expect(fetchMock).not.toHaveBeenCalled()
+  })
+
+  it('shows the empty log for a registered farm with no reports yet', async () => {
+    stubRpc({ farm: encodeAccount('Farm', { ...FARM, reportCount: 0 }) })
+
+    const screen = await renderScreen()
+
+    // Farm registered, zero reports: the plain empty states — and still no
+    // invented all-clear, since there are no fields to call clear.
+    await screen.findByText('No scout events yet', {}, LOAD)
+    expect(screen.getByText('No fields registered')).toBeTruthy()
+    expect(screen.queryByText('All fields clear')).toBeNull()
+    expect(screen.queryByText(/fields need attention/)).toBeNull()
   })
 })

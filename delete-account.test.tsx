@@ -18,6 +18,7 @@ const stores = vi.hoisted(() => ({
   resetAuth: vi.fn(async () => undefined),
   clearProfile: vi.fn(),
   resetRegistry: vi.fn(),
+  resetScoutLog: vi.fn(),
   clearNotifications: vi.fn(),
 }))
 
@@ -57,6 +58,10 @@ vi.mock('@/components/farm-registry-provider', () => ({
   useFarmRegistry: () => ({ reset: stores.resetRegistry }),
 }))
 
+vi.mock('@/components/scout-log-provider', () => ({
+  useScoutLog: () => ({ reset: stores.resetScoutLog }),
+}))
+
 vi.mock('@/components/notifications', () => ({
   useNotifications: () => ({ clear: stores.clearNotifications }),
 }))
@@ -81,6 +86,7 @@ function renderScreen() {
 function expectAllStoresReset() {
   expect(stores.resetSettings).toHaveBeenCalledTimes(1)
   expect(stores.resetRegistry).toHaveBeenCalledTimes(1)
+  expect(stores.resetScoutLog).toHaveBeenCalledTimes(1)
   expect(stores.clearProfile).toHaveBeenCalledTimes(1)
   expect(stores.clearNotifications).toHaveBeenCalledTimes(1)
   expect(stores.resetAuth).toHaveBeenCalledTimes(1)
@@ -102,6 +108,7 @@ describe('account & local data', () => {
 
     await screen.findByText('What gets erased', {}, LOAD)
     expect(screen.getByText('Farm registry')).toBeTruthy()
+    expect(screen.getByText('Scouting log')).toBeTruthy()
     expect(screen.getByText('Operator profile')).toBeTruthy()
     expect(screen.getByText('Device verification')).toBeTruthy()
     expect(screen.getByText('Wallet session')).toBeTruthy()

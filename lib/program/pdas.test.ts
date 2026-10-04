@@ -17,6 +17,7 @@ import { IDL, IDL_PROGRAM_ID, instructionDef, type IdlSeed } from '@/lib/program
 import {
   ataPda,
   batchPda,
+  configPda,
   escrowPda,
   escrowVaultPda,
   farmPda,
@@ -24,6 +25,7 @@ import {
   policyPda,
   reportPda,
   rewardAuthorityPda,
+  treasuryPda,
   weatherOraclePda,
 } from '@/lib/program/pdas'
 import { PROGRAM_ID } from '@/constants/app-config'
@@ -144,6 +146,14 @@ describe('PDA helpers vs IDL seed metadata', () => {
 
   it('reward authority — single literal seed', async () => {
     expect(await rewardAuthorityPda()).toBe(await deriveFromIdl('reward_report', 'reward_authority', CTX))
+  })
+
+  it('config — single literal seed', async () => {
+    expect(await configPda()).toBe(await deriveFromIdl('init_config', 'config', CTX))
+  })
+
+  it('treasury — single literal seed', async () => {
+    expect(await treasuryPda()).toBe(await deriveFromIdl('withdraw_treasury', 'treasury', CTX))
   })
 
   it('report PDAs differ per index', async () => {

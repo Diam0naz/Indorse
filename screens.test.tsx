@@ -8,16 +8,16 @@
  * regressions.
  */
 
-import { describe, expect, it, vi } from 'vitest'
-import { fireEvent, render } from '@testing-library/react-native'
+import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { fireEvent, render, waitFor } from '@testing-library/react-native'
 import { Text } from 'react-native'
+import AsyncStorage from '@react-native-async-storage/async-storage'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import ScoutingScreen from '@/app/(tabs)/index'
 import WeatherScreen from '@/app/(tabs)/reports'
 import ProfileScreen from '@/app/(tabs)/rewards'
 import { NotificationsProvider, NotificationsSheet, useNotifications } from '@/components/notifications'
-import { SCOUT_EVENTS } from '@/constants/data'
-import { buildFieldsFromEvents } from '@/features/scout/fields'
+import { ScoutLogProvider } from '@/components/scout-log-provider'
 import { shortenAddress } from '@/lib/format'
 
 vi.mock('expo-haptics', () => ({
@@ -67,14 +67,69 @@ vi.mock('@/components/register-farm-modal', async () => {
   return { RegisterFarmModal: () => <Text testID="register-farm-modal">Register your farm</Text> }
 })
 
+/**
+ * The scout tab's entry state lives in `scoutSetup`: `address` picks the
+ * setup card's active step, `farm` decides dashboard vs setup card. The
+ * chain reads are stubbed at the hook level (same layering as the weather
+ * screen's policy reads) — the JSON-RPC path itself is exercised by
+ * scout-chain.test.tsx.
+ */
+const scoutSetup = vi.hoisted(() => ({
+  address: null as string | null,
+  farm: null as null | { name: string; reportCount: number },
+  toggleConnection: vi.fn(),
+}))
+
 vi.mock('@/features/wallet/useMobileWalletSetup', () => ({
   useMobileWalletSetup: () => ({
     wallet: {},
-    walletState: 'disconnected',
-    address: null,
-    toggleConnection: vi.fn(),
+    walletState: scoutSetup.address ? 'connected' : 'disconnected',
+    address: scoutSetup.address,
+    toggleConnection: scoutSetup.toggleConnection,
     error: null,
     clearError: vi.fn(),
+  }),
+}))
+
+vi.mock('@/features/farm/useFarmQuery', () => ({
+  useFarmQuery: () => ({
+    farm: scoutSetup.farm,
+    farmAddress: scoutSetup.farm ? 'FARMqVz2s1hQM4aq2GPJ5dJEG8vN3yXkpRCn1oS9Ku2' : null,
+    state: 'ready',
+    retry: vi.fn(),
+  }),
+}))
+
+vi.mock('@/features/reports/useReportsQuery', () => ({
+  useReportsQuery: () => ({ reports: [], state: 'ready', retry: vi.fn() }),
+}))
+
+// Pressing the setup card's scan entry mounts the real camera overlay: stub
+// the location fix and submit hook the same way camera-overlay.test.tsx does
+// (no submit is ever reached from these tests).
+vi.mock('@/features/scout/location', () => ({
+  getCurrentCoords: vi.fn(async () => ({ lat: 46.8821, lng: -98.7023, accuracy: 8 })),
+  // The setup-signal read asks for the current grant — a test guest has none.
+  getLocationPermission: vi.fn(async () => false),
+  requestLocationPermission: vi.fn(async () => false),
+}))
+
+/**
+ * The outbox flush drives this mutation directly; scenario-aware so the
+ * hydration test can both observe the anchoring call and land it.
+ */
+const submitScenario = vi.hoisted(() => ({
+  mutateAsync: vi.fn(async () => 'Report11111111111111111111111111111111111111'),
+}))
+
+vi.mock('@/features/reports/useSubmitReport', () => ({
+  useSubmitReport: () => ({
+    isPending: false,
+    isError: false,
+    error: null,
+    mutate: vi.fn(),
+    mutateAsync: submitScenario.mutateAsync,
+    reset: vi.fn(),
   }),
 }))
 
@@ -125,14 +180,28 @@ const LOAD = { timeout: 3000 }
 
 function renderWithProviders(ui: React.ReactElement) {
   // Queries (scout tab) need a QueryClient; retries stay off so a failed read
-  // surfaces the error path instead of re-fetching for the whole test.
+  // surfaces the error path instead of re-fetching for the whole test. The
+  // scout log provider mounts as production does — hydration starts empty
+  // unless a test seeds `indorse.scout.v1` first.
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } })
   return render(
     <QueryClientProvider client={client}>
-      <NotificationsProvider>{ui}</NotificationsProvider>
+      <NotificationsProvider>
+        <ScoutLogProvider>{ui}</ScoutLogProvider>
+      </NotificationsProvider>
     </QueryClientProvider>,
   )
 }
+
+/** Every test starts as a guest with no farm — later tests opt in. */
+beforeEach(async () => {
+  scoutSetup.address = null
+  scoutSetup.farm = null
+  scoutSetup.toggleConnection.mockClear()
+  submitScenario.mutateAsync.mockClear()
+  // Stored captures are per-test: a seeded log must not hydrate the next one.
+  await AsyncStorage.removeItem('indorse.scout.v1')
+})
 
 /** Demo policy fixture: 180 mm trigger, $96k cover, 30 days left of season. */
 const POLICY_ADDRESS = 'GVenujqgMJZCvYPKqMmPiAXQp7o3mwQbXw1nSBu3U5Ht'
@@ -154,23 +223,34 @@ function seasonReading() {
 }
 
 describe('screen redesign', () => {
-  it('renders the scouting log with every on-chain event', async () => {
+  it('shows the setup card instead of seeded data when no farm exists', async () => {
     const screen = await renderWithProviders(<ScoutingScreen />)
 
-    await screen.findByText('Sclerotinia Head Rot', {}, LOAD)
-    await screen.findByText('Gray Leaf Spot', {}, LOAD)
-    await screen.findByText('Scout Field', {}, LOAD)
-    for (const event of SCOUT_EVENTS) await screen.findByText(event.date, {}, LOAD)
-    // Disconnected: the field cards derive from the same sample log.
-    for (const field of buildFieldsFromEvents(SCOUT_EVENTS)) await screen.findByText(field.name, {}, LOAD)
+    // Farm-less entry: the 3-step setup card replaces the dashboard — and
+    // the docked action pills with it; the card carries the actions.
+    await screen.findByText('Set up in 3 steps', {}, LOAD)
+    expect(screen.queryByTestId('scout-actions')).toBeNull()
+    expect(screen.queryByText('No scout events yet')).toBeNull()
+    // The old sample rows, field cards and hint are gone for good.
+    expect(screen.queryByText('Sclerotinia Head Rot')).toBeNull()
+    expect(screen.queryByText('East Draw')).toBeNull()
+    expect(screen.queryByText(/Sample log/)).toBeNull()
   })
 
-  it('shows an attention banner matching the field alerts', async () => {
-    const screen = await renderWithProviders(<ScoutingScreen />)
-    // The banner counts non-clean fields of the same derivation the cards use.
-    const alerts = buildFieldsFromEvents(SCOUT_EVENTS).filter((f) => f.status !== 'clean').length
+  it('claims neither "all clear" nor attention when there is no data', async () => {
+    // A registered farm with no reports: the real empty states show, and
+    // with zero fields there is still nothing to call "clear".
+    scoutSetup.address = POLICY_ADDRESS
+    scoutSetup.farm = { name: 'Green Valley', reportCount: 0 }
 
-    await screen.findByText(alerts > 0 ? `${alerts} fields need attention` : 'All fields clear', {}, LOAD)
+    const screen = await renderWithProviders(<ScoutingScreen />)
+
+    await screen.findByText('No fields registered', {}, LOAD)
+    // The empty state waits for the stored log to hydrate before claiming
+    // there is nothing here — findBy covers that read.
+    expect(await screen.findByText('No scout events yet', {}, LOAD)).toBeTruthy()
+    expect(screen.queryByText('All fields clear')).toBeNull()
+    expect(screen.queryByText(/fields need attention/)).toBeNull()
   })
 
   it('surfaces the oracle failure first and recovers on retry', async () => {
@@ -250,74 +330,202 @@ describe('screen redesign', () => {
   it('exposes the camera action to screen readers', async () => {
     const screen = await renderWithProviders(<ScoutingScreen />)
 
-    await screen.findByText('Scout Field', {}, LOAD)
-    expect(screen.getByLabelText('Scout field')).toBeTruthy()
+    // Onboarding: the setup card's scan entry is the labelled camera action
+    // — scouting without a wallet starts here.
+    await screen.findByText('Try a scan now', {}, LOAD)
+    expect(screen.getByLabelText('Scout Field')).toBeTruthy()
+
+    // It mounts the real overlay, no wallet and no farm needed.
+    await fireEvent.press(screen.getByLabelText('Scout Field'))
+    await screen.findByLabelText('Capture a shot', {}, LOAD)
   })
 
-  it('docks Scout Field and Register farm in a fixed stack above the tab bar', async () => {
+  it('folds Scout Field and Register farm behind a circle above the tab bar', async () => {
+    // The dock belongs to the dashboard — it comes back once a farm exists.
+    scoutSetup.address = POLICY_ADDRESS
+    scoutSetup.farm = { name: 'Green Valley', reportCount: 0 }
+
     const screen = await renderWithProviders(<ScoutingScreen />)
 
-    await screen.findByText('Scout Field', {}, LOAD)
+    await screen.findAllByText('Scout Field', {}, LOAD)
 
     // The stack is pinned, not part of the scrolling content.
     const stack = screen.getByTestId('scout-actions')
     expect(stack.props.style).toMatchObject({ position: 'absolute', bottom: 16 })
 
-    // Both actions show regardless of wallet state.
+    // Both actions stay in the tree while folded — they animate, they don't
+    // unmount — so screen readers keep a stable order in either state.
     expect(screen.getByLabelText('Scout field')).toBeTruthy()
     expect(screen.getByLabelText('Register farm')).toBeTruthy()
 
-    // The register pill is what mounts the add-farm modal.
+    // Folded, the pills are inert: tapping where they sit must do nothing.
+    await fireEvent.press(screen.getByLabelText('Register farm'))
+    expect(screen.queryByTestId('register-farm-modal')).toBeNull()
+
+    // Unfolding the circle is what makes them live. Every press is awaited —
+    // the fold's pointerEvents flip lands in its own act flush (RNTL v14).
+    await fireEvent.press(screen.getByLabelText('Scouting actions'))
     await fireEvent.press(screen.getByLabelText('Register farm'))
     await screen.findByTestId('register-farm-modal', {}, LOAD)
+  })
+
+  it('drives setup from the card: connect, then register', async () => {
+    // Guest → step 1 is active and its CTA connects the wallet.
+    const guest = await renderWithProviders(<ScoutingScreen />)
+    await guest.findByText('Set up in 3 steps', {}, LOAD)
+    expect(guest.getByText('Connect your wallet')).toBeTruthy()
+    expect(guest.getByText('Register your farm')).toBeTruthy()
+
+    await fireEvent.press(guest.getByText('Connect wallet'))
+    expect(scoutSetup.toggleConnection).toHaveBeenCalledTimes(1)
+
+    // Connected → step 1 completes, step 2 owns the CTA → register modal.
+    scoutSetup.address = POLICY_ADDRESS
+    const connected = await renderWithProviders(<ScoutingScreen />)
+    await connected.findByText('Set up in 3 steps', {}, LOAD)
+    expect(connected.queryByTestId('scout-actions')).toBeNull()
+
+    await fireEvent.press(connected.getByText('Register farm'))
+    await connected.findByTestId('register-farm-modal', {}, LOAD)
+  })
+
+  it('hydrates scans captured in an earlier session and anchors them on retry', async () => {
+    // A capture from a previous session, parked as `failed` by an anchor
+    // attempt that did not land — payload intact, restart or not.
+    scoutSetup.address = POLICY_ADDRESS
+    scoutSetup.farm = { name: 'Green Valley', reportCount: 0 }
+    const stored = {
+      id: 'sc1712000000000',
+      date: 'Oct 4',
+      field: 'Unregistered area',
+      crop: '—',
+      diagnosis: 'Late blight',
+      confidence: 0.91,
+      severity: 'high',
+      txSig: 'ab'.repeat(32),
+      notes: 'Lesions on lower leaves.',
+      images: 1,
+      lat: 46.8821,
+      lng: -98.7023,
+      anchorStatus: 'failed',
+      anchor: {
+        photoHashHex: 'ab'.repeat(32),
+        uri: 'indorse://scout/1712000000000.jpg',
+        aiLabel: 'Late blight',
+        photoUris: [],
+      },
+    }
+    await AsyncStorage.setItem('indorse.scout.v1', JSON.stringify({ events: [stored] }))
+
+    const screen = await renderWithProviders(<ScoutingScreen />)
+
+    // The row renders from disk with its honest anchoring state — and a
+    // failed row never self-retries into a silent loop.
+    await screen.findByText('Late blight', {}, LOAD)
+    await screen.findByText('Anchor failed', {}, LOAD)
+    expect(submitScenario.mutateAsync).not.toHaveBeenCalled()
+
+    // Expanded: the detail calls the digest what it is, not an on-chain tx.
+    await fireEvent.press(screen.getByText('Late blight'))
+    expect(screen.getByText('Photo digest')).toBeTruthy()
+    expect(screen.getByText('1 captured')).toBeTruthy()
+
+    // The explicit retry re-arms the row; the outbox then anchors it with
+    // exactly what the capture stored — hash, uri, label, coordinates.
+    await fireEvent.press(screen.getByLabelText('Retry anchoring'))
+    await waitFor(() => expect(submitScenario.mutateAsync).toHaveBeenCalledTimes(1), LOAD)
+    expect(submitScenario.mutateAsync).toHaveBeenCalledWith({
+      farmAddress: 'FARMqVz2s1hQM4aq2GPJ5dJEG8vN3yXkpRCn1oS9Ku2',
+      photoHash: Array(32).fill(0xab),
+      uri: 'indorse://scout/1712000000000.jpg',
+      lat: 46.8821,
+      lng: -98.7023,
+      aiLabel: 'Late blight',
+    })
+
+    // The row became its on-chain identity: badge gone, payload released,
+    // report address stored as id and tx — all of it persisted.
+    await waitFor(() => expect(screen.queryByText('Anchor failed')).toBeNull(), LOAD)
+    await waitFor(async () => {
+      const doc = JSON.parse((await AsyncStorage.getItem('indorse.scout.v1')) ?? '{}') as {
+        events: { id: string; txSig: string; field: string; chainStatus: string; anchorStatus: string }[]
+      }
+      expect(doc.events[0]).toMatchObject({
+        id: 'Report11111111111111111111111111111111111111',
+        txSig: 'Report11111111111111111111111111111111111111',
+        field: 'Green Valley',
+        chainStatus: 'pending',
+        anchorStatus: 'anchored',
+      })
+      expect(doc.events[0]).not.toHaveProperty('anchor')
+    }, LOAD)
+    expect(screen.queryByLabelText('Retry anchoring')).toBeNull()
   })
 })
 
 /* ── Notification state ─────────────────────────────────────────────── */
 
-function UnreadCounter() {
-  const { unread, markAllRead } = useNotifications()
+/** Probe: the feed as the provider exposes it, plus a trigger for real items. */
+function FeedProbe() {
+  const { unread, add, markAllRead } = useNotifications()
+  const pushEscrow = () =>
+    add({ type: 'escrow', title: 'Escrow funded', body: 'Grain Partners Co-op deposited into escrow.' })
   return (
     <>
       <Text testID="unread">{String(unread)}</Text>
+      <Text testID="add" onPress={pushEscrow}>
+        add
+      </Text>
       <Text testID="mark-all" onPress={markAllRead}>
         mark all
       </Text>
+      <NotificationsSheet visible onClose={() => {}} />
     </>
   )
 }
 
 describe('notifications', () => {
-  it('starts with the two seeded unread items and clears them', async () => {
+  it('starts empty and tracks items added in the session', async () => {
     const screen = await render(
       <NotificationsProvider>
-        <UnreadCounter />
+        <FeedProbe />
       </NotificationsProvider>,
     )
 
-    expect(screen.getByTestId('unread').children).toContain('2')
+    expect(screen.getByTestId('unread').children).toContain('0')
+    await fireEvent.press(screen.getByTestId('add'))
+    expect(screen.getByTestId('unread').children).toContain('1')
     await fireEvent.press(screen.getByTestId('mark-all'))
     expect(screen.getByTestId('unread').children).toContain('0')
   })
 
-  it('lists the seeded notifications in the sheet', async () => {
+  it('lists only what actually happened, never seeded rows', async () => {
     const screen = await render(
       <NotificationsProvider>
-        <NotificationsSheet visible onClose={() => {}} />
+        <FeedProbe />
       </NotificationsProvider>,
     )
 
-    expect(screen.getByText('Escrow funded')).toBeTruthy()
-    expect(screen.getByText('High-severity diagnosis')).toBeTruthy()
-    expect(screen.getByText('2 unread')).toBeTruthy()
+    // Fresh feed: caught up, no unread badge, no seeded titles.
+    expect(screen.getByText("You're all caught up")).toBeTruthy()
+    expect(screen.queryByText('2 unread')).toBeNull()
+    expect(screen.queryByText('High-severity diagnosis')).toBeNull()
+
+    await fireEvent.press(screen.getByTestId('add'))
+    await screen.findByText('Escrow funded', {}, LOAD)
+    expect(screen.getByText('1 unread')).toBeTruthy()
+    expect(screen.getByText('just now')).toBeTruthy()
   })
 
-  it('shows the caught-up empty state once everything is cleared', async () => {
+  it('clears back to the caught-up empty state', async () => {
     const screen = await render(
       <NotificationsProvider>
-        <NotificationsSheet visible onClose={() => {}} />
+        <FeedProbe />
       </NotificationsProvider>,
     )
+
+    await fireEvent.press(screen.getByTestId('add'))
+    await screen.findByText('Escrow funded', {}, LOAD)
 
     await fireEvent.press(screen.getByText('Clear'))
     await screen.findByText("You're all caught up", {}, LOAD)

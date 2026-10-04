@@ -1,0 +1,1291 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=1920, height=1080" />
+    <title>Indorse — core utilities</title>
+    <script src="https://cdn.jsdelivr.net/npm/gsap@3.14.2/dist/gsap.min.js"></script>
+    <style>
+      * {
+        margin: 0;
+        padding: 0;
+        box-sizing: border-box;
+      }
+      html,
+      body {
+        margin: 0;
+        width: 1920px;
+        height: 1080px;
+        overflow: hidden;
+        background: #0e0d0b;
+      }
+
+      /* ---------- scene shell ---------- */
+      .scene {
+        position: absolute;
+        top: 0;
+        left: 0;
+        width: 1920px;
+        height: 1080px;
+        overflow: hidden;
+        background: #0e0d0b;
+        color: #f5f3ee;
+        font-family: Inter, ui-sans-serif, system-ui, sans-serif;
+        pointer-events: none; /* the visibility controller re-enables the active slide */
+      }
+
+      /* ---------- shared type ---------- */
+      .eyebrow {
+        position: absolute;
+        left: 120px;
+        top: 150px;
+        font-family: ui-monospace, Menlo, monospace;
+        font-size: 30px;
+        letter-spacing: 0.16em;
+        text-transform: uppercase;
+        color: #f2a340;
+      }
+      .h1 {
+        position: absolute;
+        left: 120px;
+        top: 214px;
+        width: 900px;
+        font-size: 76px;
+        font-weight: 700;
+        line-height: 1.07;
+        letter-spacing: -0.03em;
+        color: #f5f3ee;
+      }
+      .sub {
+        position: absolute;
+        left: 120px;
+        top: 560px;
+        width: 840px;
+        font-size: 46px;
+        font-weight: 400;
+        line-height: 1.34;
+        color: #9b968c;
+      }
+      .mono {
+        font-family: ui-monospace, Menlo, monospace;
+      }
+      .card {
+        background: #1a1815;
+        border: 1px solid #2e2a24;
+        border-radius: 28px;
+      }
+
+      /* ---------- 1 · hook ---------- */
+      #hk-h1 {
+        font-size: 84px;
+        width: 920px;
+      }
+      #hk-rule {
+        position: absolute;
+        left: 120px;
+        top: 520px;
+        width: 150px;
+        height: 6px;
+        background: #f2a340;
+        border-radius: 3px;
+      }
+      #hk-frag {
+        position: absolute;
+        left: 120px;
+        top: 572px;
+        width: 860px;
+        font-size: 46px;
+        line-height: 1.34;
+        color: #9b968c;
+      }
+
+      /* ---------- 2 · wallet ---------- */
+      #wa-card {
+        position: absolute;
+        left: 1130px;
+        top: 190px;
+        width: 650px;
+        padding: 40px;
+      }
+      .wa-title {
+        font-size: 40px;
+        font-weight: 700;
+        letter-spacing: -0.02em;
+        margin-bottom: 24px;
+      }
+      .wa-row {
+        display: flex;
+        align-items: center;
+        gap: 22px;
+        height: 92px;
+        padding: 0 28px;
+        background: #231f1a;
+        border: 1px solid #2e2a24;
+        border-radius: 18px;
+        font-size: 36px;
+        margin-bottom: 16px;
+      }
+      .wa-ico {
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        width: 52px;
+        height: 52px;
+        border-radius: 14px;
+        background: rgba(242, 163, 64, 0.15);
+        color: #f2a340;
+        font-size: 30px;
+        font-weight: 700;
+        flex: none;
+      }
+      #wa-btn {
+        height: 96px;
+        margin-top: 8px;
+        background: #f2a340;
+        border-radius: 20px;
+        color: #0e0d0b;
+        font-size: 36px;
+        font-weight: 700;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+      }
+      #wa-chip {
+        position: absolute;
+        left: 1130px;
+        top: 800px;
+        display: flex;
+        align-items: center;
+        gap: 14px;
+        font-family: ui-monospace, Menlo, monospace;
+        font-size: 34px;
+        color: #3dd6a0;
+      }
+      #wa-chip i {
+        width: 14px;
+        height: 14px;
+        border-radius: 50%;
+        background: #3dd6a0;
+      }
+
+      /* ---------- 3 · farm ---------- */
+      #fa-viz {
+        position: absolute;
+        left: 1140px;
+        top: 230px;
+        width: 560px;
+      }
+      .fa-gridwrap {
+        position: relative;
+        width: 560px;
+      }
+      #fa-pin {
+        position: absolute;
+        left: 172px;
+        top: -80px;
+        filter: drop-shadow(0 12px 18px rgba(0, 0, 0, 0.45));
+      }
+      #fa-label {
+        margin-top: 18px;
+        font-size: 30px;
+        letter-spacing: 0.1em;
+        color: #f2a340;
+      }
+      #fa-rec {
+        margin-top: 26px;
+        padding: 30px 34px;
+      }
+      .fa-rec-name {
+        font-size: 38px;
+        font-weight: 700;
+        letter-spacing: -0.02em;
+      }
+      .fa-rec-gps {
+        margin-top: 12px;
+        font-size: 30px;
+        color: #9b968c;
+      }
+
+      /* ---------- 4 · scout ---------- */
+      #sc-frag {
+        position: absolute;
+        left: 120px;
+        top: 700px;
+        width: 840px;
+        padding: 36px 40px;
+        background: rgba(242, 163, 64, 0.08);
+        border: 1px solid #f2a340;
+        border-radius: 24px;
+      }
+      .sc-frag-main {
+        font-size: 38px;
+        font-weight: 700;
+        letter-spacing: -0.01em;
+      }
+      .sc-frag-meta {
+        margin-top: 14px;
+        font-size: 32px;
+        color: #9b968c;
+      }
+
+      /* ---------- 5 · weather ---------- */
+      #we-card {
+        position: absolute;
+        left: 1130px;
+        top: 180px;
+        width: 650px;
+        padding: 40px;
+      }
+      .wx-head {
+        display: flex;
+        align-items: center;
+        gap: 28px;
+        margin-bottom: 26px;
+      }
+      .wx-temp {
+        font-size: 110px;
+        font-weight: 700;
+        letter-spacing: -0.04em;
+        line-height: 1;
+      }
+      .wx-cond {
+        font-size: 40px;
+        font-weight: 600;
+      }
+      .wx-where {
+        margin-top: 8px;
+        font-family: ui-monospace, Menlo, monospace;
+        font-size: 30px;
+        color: #9b968c;
+      }
+      .wx-row {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        height: 84px;
+        border-top: 1px solid #2e2a24;
+        font-size: 36px;
+      }
+      .wx-row span:first-child {
+        color: #9b968c;
+      }
+      #we-pill {
+        display: inline-flex;
+        align-items: center;
+        gap: 14px;
+        margin-top: 30px;
+        padding: 14px 28px;
+        background: rgba(52, 179, 126, 0.15);
+        border-radius: 999px;
+        color: #3dd6a0;
+        font-size: 34px;
+        font-weight: 600;
+      }
+      #we-pill i {
+        width: 14px;
+        height: 14px;
+        border-radius: 50%;
+        background: #3dd6a0;
+      }
+
+      /* ---------- 6 · provenance ---------- */
+      #pv-chain {
+        position: absolute;
+        left: 1100px;
+        top: 210px;
+        width: 700px;
+        padding-left: 44px;
+      }
+      #pv-line {
+        position: absolute;
+        left: 16px;
+        top: 8px;
+        bottom: 8px;
+        width: 3px;
+        background: linear-gradient(180deg, #f2a340, rgba(242, 163, 64, 0.15));
+        border-radius: 2px;
+      }
+      .pv-row {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        height: 120px;
+        padding: 0 32px;
+        margin-bottom: 28px;
+        background: #1a1815;
+        border: 1px solid #2e2a24;
+        border-radius: 20px;
+      }
+      .pv-row:last-child {
+        margin-bottom: 0;
+      }
+      .pv-hash {
+        font-family: ui-monospace, Menlo, monospace;
+        font-size: 32px;
+        color: #f5f3ee;
+      }
+      .pv-meta {
+        display: flex;
+        align-items: center;
+        gap: 12px;
+        font-family: ui-monospace, Menlo, monospace;
+        font-size: 28px;
+        color: #9b968c;
+      }
+      #pv-frag {
+        position: absolute;
+        left: 120px;
+        top: 700px;
+        width: 840px;
+        display: flex;
+        align-items: center;
+        gap: 34px;
+        padding: 36px 40px;
+        background: #1a1815;
+        border: 1px solid #2e2a24;
+        border-radius: 24px;
+      }
+      .pv-score {
+        font-size: 84px;
+        font-weight: 700;
+        letter-spacing: -0.04em;
+        color: #f2a340;
+        line-height: 1;
+      }
+      .pv-score-label {
+        font-size: 34px;
+        color: #9b968c;
+      }
+      .pv-score-status {
+        margin-top: 8px;
+        font-size: 32px;
+        color: #3dd6a0;
+      }
+
+      /* ---------- 8 · security ---------- */
+      #se-list {
+        position: absolute;
+        left: 1130px;
+        top: 170px;
+        width: 660px;
+      }
+      .se-row {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        height: 116px;
+        padding: 0 32px;
+        margin-bottom: 20px;
+        background: #1a1815;
+        border: 1px solid #2e2a24;
+        border-radius: 22px;
+        font-size: 36px;
+      }
+      .tg {
+        position: relative;
+        width: 84px;
+        height: 46px;
+        border-radius: 999px;
+        flex: none;
+      }
+      .tg.on {
+        background: #f2a340;
+      }
+      .tg.off {
+        background: #2e2a24;
+      }
+      .tg i {
+        position: absolute;
+        top: 4px;
+        width: 38px;
+        height: 38px;
+        border-radius: 50%;
+        background: #f5f3ee;
+      }
+      .tg.on i {
+        right: 4px;
+      }
+      .tg.off i {
+        left: 4px;
+        background: #9b968c;
+      }
+      .se-chev {
+        font-size: 42px;
+        color: #9b968c;
+        line-height: 1;
+      }
+      .se-net {
+        font-family: ui-monospace, Menlo, monospace;
+        font-size: 30px;
+        color: #f2a340;
+        border: 1px solid #f2a340;
+        border-radius: 999px;
+        padding: 8px 20px;
+      }
+      #se-frag {
+        position: absolute;
+        left: 120px;
+        top: 770px;
+        width: 880px;
+        display: flex;
+        align-items: center;
+        gap: 30px;
+        font-size: 44px;
+        line-height: 1.3;
+        color: #f5f3ee;
+      }
+
+      /* ---------- 9 · close ---------- */
+      #cl-mark {
+        position: absolute;
+        left: 0;
+        top: 300px;
+        width: 1920px;
+        text-align: center;
+      }
+      #cl-h1 {
+        position: absolute;
+        left: 0;
+        top: 470px;
+        width: 1920px;
+        text-align: center;
+        font-size: 96px;
+        font-weight: 700;
+        letter-spacing: -0.04em;
+        color: #f5f3ee;
+      }
+      #cl-kicker {
+        position: absolute;
+        left: 0;
+        top: 640px;
+        width: 1920px;
+        text-align: center;
+        font-family: ui-monospace, Menlo, monospace;
+        font-size: 32px;
+        letter-spacing: 0.24em;
+        color: #f2a340;
+      }
+      #cl-frag {
+        position: absolute;
+        left: 0;
+        top: 730px;
+        width: 1920px;
+        text-align: center;
+        font-size: 44px;
+        color: #9b968c;
+      }
+    </style>
+  </head>
+  <body>
+    <script type="application/hyperframes-slideshow+json">
+      {
+        "slides": [
+          {
+            "sceneId": "hook",
+            "notes": "Open with the one-line thesis: a photo of a leaf becomes an on-chain crop-health record. Name Indorse once (eyebrow), then move on.",
+            "fragments": [4.0]
+          },
+          {
+            "sceneId": "wallet",
+            "notes": "Stress that the wallet does the signing — Indorse never holds the private key. MWA is the standard Solana Mobile connection flow."
+          },
+          {
+            "sceneId": "farm",
+            "notes": "One farm record anchors everything: name, GPS plot, seasons. Register once, every later report points back here."
+          },
+          {
+            "sceneId": "scout",
+            "notes": "The core loop: camera, AI classification, severity + confidence. Let the scan gate lock before revealing the result card.",
+            "fragments": [30.0]
+          },
+          {
+            "sceneId": "weather",
+            "notes": "Weather is not decoration — the policy check uses conditions to open or close the scouting window."
+          },
+          {
+            "sceneId": "provenance",
+            "notes": "The trust story: hashes and merges stay auditable on-chain, summarized as the provenance score. Hold on the score before moving.",
+            "fragments": [46.0]
+          },
+          {
+            "sceneId": "profile",
+            "notes": "Profile identity is set up once in the setup wizard and follows the user across the app; the count-up is illustrative activity."
+          },
+          {
+            "sceneId": "security",
+            "notes": "Settings is where the user stays in control: app lock, local CSV export, own RPC choice. Pause on the lock note.",
+            "fragments": [63.0]
+          },
+          {
+            "sceneId": "close",
+            "notes": "Land the tagline, hold the Solana/Seeker line, then open for questions.",
+            "fragments": [70.5]
+          }
+        ],
+        "slideSequences": []
+      }
+    </script>
+
+    <!-- ============ 1 · hook (0–9) ============ -->
+    <div
+      data-hf-id="hf-aw81"
+      id="scene-hook"
+      class="scene"
+      data-composition-id="hook"
+      data-start="0"
+      data-duration="9"
+      data-label="The thesis"
+      data-width="1920"
+      data-height="1080"
+    >
+      <section
+        data-hf-id="hf-yjhh"
+        id="sec-hook"
+        class="clip"
+        data-start="0"
+        data-duration="9"
+        data-track-index="1"
+        style="position: absolute; inset: 0"
+      >
+        <div data-hf-id="hf-mr34" class="eyebrow" id="hk-eyebrow">Indorse · on-chain crop scouting</div>
+        <h1 data-hf-id="hf-qi5v" class="h1" id="hk-h1">A leaf photo becomes an on-chain crop-health record</h1>
+        <div data-hf-id="hf-d9fd" id="hk-rule"></div>
+        <p data-hf-id="hf-5x1v" id="hk-frag">No special hardware — just the phone in your pocket.</p>
+      </section>
+      <div
+        data-hf-id="hf-f4ro"
+        id="mount-device"
+        class="clip"
+        data-composition-id="device-frame-stage"
+        data-composition-src="compositions/components/device-frame-stage.html"
+        data-variable-values='{"device":"phone","cutout":"island","body":"graphite"}'
+        data-start="0"
+        data-duration="9"
+        data-track-index="2"
+        data-width="640"
+        data-height="920"
+        style="position: absolute; left: 1130px; top: 30px; width: 640px; height: 920px"
+      ></div>
+    </div>
+
+    <!-- ============ 2 · wallet (9–17) ============ -->
+    <div
+      data-hf-id="hf-f87h"
+      id="scene-wallet"
+      class="scene"
+      data-composition-id="wallet"
+      data-start="9"
+      data-duration="8"
+      data-label="Wallet"
+      data-width="1920"
+      data-height="1080"
+    >
+      <section
+        data-hf-id="hf-9o6t"
+        id="sec-wallet"
+        class="clip"
+        data-start="0"
+        data-duration="8"
+        data-track-index="1"
+        style="position: absolute; inset: 0"
+      >
+        <div data-hf-id="hf-why3" class="eyebrow" id="wa-eyebrow">01 — Wallet</div>
+        <h1 data-hf-id="hf-kpej" class="h1" id="wa-h1">
+          Connect a Solana wallet in one tap with Mobile Wallet Adapter
+        </h1>
+        <p data-hf-id="hf-9e6z" class="sub" id="wa-sub">
+          Your wallet signs every action — the private key never touches Indorse.
+        </p>
+        <div data-hf-id="hf-2r4v" id="wa-card" class="card">
+          <div data-hf-id="hf-a8ma" class="wa-title">Connect wallet</div>
+          <div data-hf-id="hf-1m30" class="wa-row"><span data-hf-id="hf-2liz" class="wa-ico">P</span>Phantom</div>
+          <div data-hf-id="hf-4dq1" class="wa-row"><span data-hf-id="hf-277y" class="wa-ico">S</span>Solflare</div>
+          <div data-hf-id="hf-oa2d" class="wa-row"><span data-hf-id="hf-85td" class="wa-ico">B</span>Backpack</div>
+          <div data-hf-id="hf-d99n" id="wa-btn">Continue</div>
+        </div>
+        <div data-hf-id="hf-xxfn" id="wa-chip"><i data-hf-id="hf-wt6k"></i>Wallet connected · devnet</div>
+      </section>
+    </div>
+
+    <!-- ============ 3 · farm (17–25) ============ -->
+    <div
+      data-hf-id="hf-3f4y"
+      id="scene-farm"
+      class="scene"
+      data-composition-id="farm"
+      data-start="17"
+      data-duration="8"
+      data-label="Farm record"
+      data-width="1920"
+      data-height="1080"
+    >
+      <section
+        data-hf-id="hf-pyip"
+        id="sec-farm"
+        class="clip"
+        data-start="0"
+        data-duration="8"
+        data-track-index="1"
+        style="position: absolute; inset: 0"
+      >
+        <div data-hf-id="hf-6nc5" class="eyebrow" id="fa-eyebrow">02 — Farms</div>
+        <h1 data-hf-id="hf-d3oc" class="h1" id="fa-h1">Register a farm once — every report anchors to its GPS plot</h1>
+        <p data-hf-id="hf-mqt0" class="sub" id="fa-sub">
+          One on-chain record carries your name, coordinates and seasons.
+        </p>
+        <div data-hf-id="hf-vo9y" id="fa-viz">
+          <div data-hf-id="hf-myiw" class="fa-gridwrap">
+            <svg data-hf-id="hf-k4ry" width="560" height="428" viewBox="0 0 560 428" fill="none">
+              <rect
+                data-hf-id="hf-bjdu"
+                class="plot"
+                x="0"
+                y="0"
+                width="128"
+                height="132"
+                rx="14"
+                fill="rgba(52,179,126,0.13)"
+                stroke="rgba(52,179,126,0.4)"
+                stroke-width="1.5"
+              />
+              <rect
+                data-hf-id="hf-vyhr"
+                class="plot plot-hi"
+                x="144"
+                y="0"
+                width="128"
+                height="132"
+                rx="14"
+                fill="rgba(242,163,64,0.18)"
+                stroke="#F2A340"
+                stroke-width="2"
+              />
+              <rect
+                data-hf-id="hf-236c"
+                class="plot"
+                x="288"
+                y="0"
+                width="128"
+                height="132"
+                rx="14"
+                fill="rgba(52,179,126,0.13)"
+                stroke="rgba(52,179,126,0.4)"
+                stroke-width="1.5"
+              />
+              <rect
+                data-hf-id="hf-zo6l"
+                class="plot"
+                x="432"
+                y="0"
+                width="128"
+                height="132"
+                rx="14"
+                fill="rgba(52,179,126,0.13)"
+                stroke="rgba(52,179,126,0.4)"
+                stroke-width="1.5"
+              />
+              <rect
+                data-hf-id="hf-7de7"
+                class="plot"
+                x="0"
+                y="148"
+                width="128"
+                height="132"
+                rx="14"
+                fill="rgba(52,179,126,0.13)"
+                stroke="rgba(52,179,126,0.4)"
+                stroke-width="1.5"
+              />
+              <rect
+                data-hf-id="hf-7u3u"
+                class="plot"
+                x="144"
+                y="148"
+                width="128"
+                height="132"
+                rx="14"
+                fill="rgba(52,179,126,0.13)"
+                stroke="rgba(52,179,126,0.4)"
+                stroke-width="1.5"
+              />
+              <rect
+                data-hf-id="hf-pdk1"
+                class="plot"
+                x="288"
+                y="148"
+                width="128"
+                height="132"
+                rx="14"
+                fill="rgba(52,179,126,0.13)"
+                stroke="rgba(52,179,126,0.4)"
+                stroke-width="1.5"
+              />
+              <rect
+                data-hf-id="hf-etk0"
+                class="plot"
+                x="432"
+                y="148"
+                width="128"
+                height="132"
+                rx="14"
+                fill="rgba(52,179,126,0.13)"
+                stroke="rgba(52,179,126,0.4)"
+                stroke-width="1.5"
+              />
+              <rect
+                data-hf-id="hf-4qod"
+                class="plot"
+                x="0"
+                y="296"
+                width="128"
+                height="132"
+                rx="14"
+                fill="rgba(52,179,126,0.13)"
+                stroke="rgba(52,179,126,0.4)"
+                stroke-width="1.5"
+              />
+              <rect
+                data-hf-id="hf-j3p0"
+                class="plot"
+                x="144"
+                y="296"
+                width="128"
+                height="132"
+                rx="14"
+                fill="rgba(52,179,126,0.13)"
+                stroke="rgba(52,179,126,0.4)"
+                stroke-width="1.5"
+              />
+              <rect
+                data-hf-id="hf-jio7"
+                class="plot"
+                x="288"
+                y="296"
+                width="128"
+                height="132"
+                rx="14"
+                fill="rgba(52,179,126,0.13)"
+                stroke="rgba(52,179,126,0.4)"
+                stroke-width="1.5"
+              />
+              <rect
+                data-hf-id="hf-2mve"
+                class="plot"
+                x="432"
+                y="296"
+                width="128"
+                height="132"
+                rx="14"
+                fill="rgba(52,179,126,0.13)"
+                stroke="rgba(52,179,126,0.4)"
+                stroke-width="1.5"
+              />
+            </svg>
+            <div data-hf-id="hf-n63s" id="fa-pin">
+              <svg data-hf-id="hf-eg1g" width="72" height="72" viewBox="0 0 24 24" fill="none">
+                <path data-hf-id="hf-8wck" d="M12 22s7-6.1 7-12A7 7 0 0 0 5 10c0 5.9 7 12 7 12Z" fill="#F2A340" />
+                <circle data-hf-id="hf-zx5i" cx="12" cy="10" r="2.6" fill="#0E0D0B" />
+              </svg>
+            </div>
+          </div>
+          <div data-hf-id="hf-u6np" class="mono" id="fa-label">PLOT 4C2E · 1.4 ha</div>
+          <div data-hf-id="hf-8726" class="card" id="fa-rec">
+            <div data-hf-id="hf-nxxs" class="fa-rec-name">Kigali Hill Farm</div>
+            <div data-hf-id="hf-eqib" class="fa-rec-gps mono">1.9446° S, 30.0617° E</div>
+          </div>
+        </div>
+      </section>
+    </div>
+
+    <!-- ============ 4 · scout (25–34) ============ -->
+    <div
+      data-hf-id="hf-nbqj"
+      id="scene-scout"
+      class="scene"
+      data-composition-id="scout"
+      data-start="25"
+      data-duration="9"
+      data-label="AI scout"
+      data-width="1920"
+      data-height="1080"
+    >
+      <section
+        data-hf-id="hf-zu57"
+        id="sec-scout"
+        class="clip"
+        data-start="0"
+        data-duration="9"
+        data-track-index="1"
+        style="position: absolute; inset: 0"
+      >
+        <div data-hf-id="hf-n3dg" class="eyebrow" id="sc-eyebrow">03 — Scout</div>
+        <h1 data-hf-id="hf-n0dm" class="h1" id="sc-h1">
+          Point the camera at a leaf and the AI names the disease in seconds
+        </h1>
+        <p data-hf-id="hf-gmwy" class="sub" id="sc-sub">Severity, confidence and location ride with every sample.</p>
+        <div data-hf-id="hf-1hto" id="sc-frag">
+          <div data-hf-id="hf-a9wn" class="sc-frag-main">Detected: Early blight · confidence 94%</div>
+          <div data-hf-id="hf-og4w" class="sc-frag-meta mono">Severity moderate · sample #4 · geotagged</div>
+        </div>
+      </section>
+      <div
+        data-hf-id="hf-89np"
+        id="mount-gate"
+        class="clip"
+        data-composition-id="camera-scan-gate"
+        data-composition-src="compositions/components/camera-scan-gate.html"
+        data-variable-values='{"scanColor":"#F2A340","targetLabel":"Early blight · 94%"}'
+        data-start="0"
+        data-duration="9"
+        data-track-index="2"
+        data-width="720"
+        data-height="820"
+        style="position: absolute; left: 1090px; top: 130px; width: 720px; height: 820px"
+      ></div>
+    </div>
+
+    <!-- ============ 5 · weather (34–42) ============ -->
+    <div
+      data-hf-id="hf-bjqj"
+      id="scene-weather"
+      class="scene"
+      data-composition-id="weather"
+      data-start="34"
+      data-duration="8"
+      data-label="Weather gate"
+      data-width="1920"
+      data-height="1080"
+    >
+      <section
+        data-hf-id="hf-0gxo"
+        id="sec-weather"
+        class="clip"
+        data-start="0"
+        data-duration="8"
+        data-track-index="1"
+        style="position: absolute; inset: 0"
+      >
+        <div data-hf-id="hf-g57x" class="eyebrow" id="we-eyebrow">04 — Weather</div>
+        <h1 data-hf-id="hf-nk00" class="h1" id="we-h1">Live weather decides when a scouting window opens</h1>
+        <p data-hf-id="hf-uxn3" class="sub" id="we-sub">
+          Conditions feed the policy check before you head out to the field.
+        </p>
+        <div data-hf-id="hf-b25f" id="we-card" class="card">
+          <div data-hf-id="hf-ocfk" class="wx-head">
+            <div data-hf-id="hf-ggha" class="wx-temp">24°</div>
+            <div data-hf-id="hf-yeow">
+              <div data-hf-id="hf-82w8" class="wx-cond">Partly cloudy</div>
+              <div data-hf-id="hf-rsvq" class="wx-where">Kigali · 14:20</div>
+            </div>
+          </div>
+          <div data-hf-id="hf-yo2e" class="wx-row">
+            <span data-hf-id="hf-zpcc">Humidity</span><span data-hf-id="hf-qteo">62%</span>
+          </div>
+          <div data-hf-id="hf-cfga" class="wx-row">
+            <span data-hf-id="hf-ye2z">Wind</span><span data-hf-id="hf-w5gu">8 km/h</span>
+          </div>
+          <div data-hf-id="hf-ctrb" class="wx-row">
+            <span data-hf-id="hf-scai">Rain risk</span><span data-hf-id="hf-je0p">12%</span>
+          </div>
+          <div data-hf-id="hf-wzbh" id="we-pill"><i data-hf-id="hf-zeb8"></i>Window open</div>
+        </div>
+      </section>
+    </div>
+
+    <!-- ============ 6 · provenance (42–51) ============ -->
+    <div
+      data-hf-id="hf-lzxb"
+      id="scene-provenance"
+      class="scene"
+      data-composition-id="provenance"
+      data-start="42"
+      data-duration="9"
+      data-label="Provenance"
+      data-width="1920"
+      data-height="1080"
+    >
+      <section
+        data-hf-id="hf-gufx"
+        id="sec-provenance"
+        class="clip"
+        data-start="0"
+        data-duration="9"
+        data-track-index="1"
+        style="position: absolute; inset: 0"
+      >
+        <div data-hf-id="hf-bsqn" class="eyebrow" id="pv-eyebrow">05 — Provenance</div>
+        <h1 data-hf-id="hf-awil" class="h1" id="pv-h1">
+          Every report lands on-chain with a provenance trail you can audit
+        </h1>
+        <p data-hf-id="hf-vrfw" class="sub" id="pv-sub">Hashes, merges and scores stay readable years later.</p>
+        <div data-hf-id="hf-650v" id="pv-chain">
+          <div data-hf-id="hf-23ua" id="pv-line"></div>
+          <div data-hf-id="hf-9p0p" class="pv-row">
+            <span data-hf-id="hf-8o9h" class="pv-hash">REP a91f…c2e1</span>
+            <span data-hf-id="hf-bmwd" class="pv-meta"
+              ><svg data-hf-id="hf-zioi" width="26" height="26" viewBox="0 0 24 24" fill="none">
+                <path
+                  data-hf-id="hf-nfrf"
+                  d="M5 13l4 4 10-10"
+                  stroke="#3DD6A0"
+                  stroke-width="2.6"
+                  fill="none"
+                  stroke-linecap="round"
+                  stroke-linejoin="round"
+                /></svg
+              >farm 4c2e · 2m</span
+            >
+          </div>
+          <div data-hf-id="hf-9sd9" class="pv-row">
+            <span data-hf-id="hf-tni5" class="pv-hash">REP 4c2e…9d07</span>
+            <span data-hf-id="hf-7zxj" class="pv-meta"
+              ><svg data-hf-id="hf-3lhy" width="26" height="26" viewBox="0 0 24 24" fill="none">
+                <path
+                  data-hf-id="hf-yqqz"
+                  d="M5 13l4 4 10-10"
+                  stroke="#3DD6A0"
+                  stroke-width="2.6"
+                  fill="none"
+                  stroke-linecap="round"
+                  stroke-linejoin="round"
+                /></svg
+              >merged · 11m</span
+            >
+          </div>
+          <div data-hf-id="hf-azac" class="pv-row">
+            <span data-hf-id="hf-o15e" class="pv-hash">REP 7b05…1af3</span>
+            <span data-hf-id="hf-6hv9" class="pv-meta"
+              ><svg data-hf-id="hf-3zsz" width="26" height="26" viewBox="0 0 24 24" fill="none">
+                <path
+                  data-hf-id="hf-ycfy"
+                  d="M5 13l4 4 10-10"
+                  stroke="#3DD6A0"
+                  stroke-width="2.6"
+                  fill="none"
+                  stroke-linecap="round"
+                  stroke-linejoin="round"
+                /></svg
+              >farm 4c2e · 1h</span
+            >
+          </div>
+        </div>
+        <div data-hf-id="hf-1fa8" id="pv-frag">
+          <div data-hf-id="hf-pq5c" class="pv-score">92</div>
+          <div data-hf-id="hf-y7yw">
+            <div data-hf-id="hf-k6bn" class="pv-score-label">Provenance score</div>
+            <div data-hf-id="hf-i2tl" class="pv-score-status">Full chain intact</div>
+          </div>
+        </div>
+      </section>
+    </div>
+
+    <!-- ============ 7 · profile (51–59) ============ -->
+    <div
+      data-hf-id="hf-b4nu"
+      id="scene-profile"
+      class="scene"
+      data-composition-id="profile"
+      data-start="51"
+      data-duration="8"
+      data-label="Profile"
+      data-width="1920"
+      data-height="1080"
+    >
+      <section
+        data-hf-id="hf-kj2g"
+        id="sec-profile"
+        class="clip"
+        data-start="0"
+        data-duration="8"
+        data-track-index="1"
+        style="position: absolute; inset: 0"
+      >
+        <div data-hf-id="hf-1vx0" class="eyebrow" id="pr-eyebrow">06 — Profile</div>
+        <h1 data-hf-id="hf-ec34" class="h1" id="pr-h1">Your profile follows you across every screen</h1>
+        <p data-hf-id="hf-k8lh" class="sub" id="pr-sub">
+          Photo, name and wallet — set up once in the wizard, used everywhere.
+        </p>
+      </section>
+      <div
+        data-hf-id="hf-0c0d"
+        id="mount-stat"
+        class="clip"
+        data-composition-id="mk-progress-stat"
+        data-composition-src="compositions/mk-progress-stat.html"
+        data-start="0"
+        data-duration="9"
+        data-track-index="2"
+        data-width="1920"
+        data-height="1080"
+        style="position: absolute; inset: 0"
+      ></div>
+    </div>
+
+    <!-- ============ 8 · security (59–67) ============ -->
+    <div
+      data-hf-id="hf-jbs2"
+      id="scene-security"
+      class="scene"
+      data-composition-id="security"
+      data-start="59"
+      data-duration="8"
+      data-label="Settings & security"
+      data-width="1920"
+      data-height="1080"
+    >
+      <section
+        data-hf-id="hf-toyh"
+        id="sec-security"
+        class="clip"
+        data-start="0"
+        data-duration="8"
+        data-track-index="1"
+        style="position: absolute; inset: 0"
+      >
+        <div data-hf-id="hf-bli1" class="eyebrow" id="se-eyebrow">07 — Settings</div>
+        <h1 data-hf-id="hf-2bjy" class="h1" id="se-h1">Lock the app, export your data locally, pick your own RPC</h1>
+        <p data-hf-id="hf-bvun" class="sub" id="se-sub">Your keys and data stay under your control.</p>
+        <div data-hf-id="hf-tlze" id="se-list">
+          <div data-hf-id="hf-tmxp" class="se-row">
+            App lock<span data-hf-id="hf-6ku5" class="tg on"><i data-hf-id="hf-y7e5"></i></span>
+          </div>
+          <div data-hf-id="hf-p2g4" class="se-row">
+            Hide balances<span data-hf-id="hf-w1jl" class="tg off"><i data-hf-id="hf-ylp6"></i></span>
+          </div>
+          <div data-hf-id="hf-qu2t" class="se-row">Export CSV<span data-hf-id="hf-g64o" class="se-chev">›</span></div>
+          <div data-hf-id="hf-b663" class="se-row">Network<span data-hf-id="hf-ofyx" class="se-net">Devnet</span></div>
+        </div>
+        <div data-hf-id="hf-hx7i" id="se-frag">
+          <svg data-hf-id="hf-joct" width="56" height="56" viewBox="0 0 24 24" fill="none" style="flex: none">
+            <rect data-hf-id="hf-aneb" x="4" y="10" width="16" height="11" rx="3" fill="#F2A340" />
+            <path data-hf-id="hf-d0kr" d="M8 10V7.5a4 4 0 0 1 8 0V10" stroke="#F2A340" stroke-width="2" fill="none" />
+            <circle data-hf-id="hf-67nd" cx="12" cy="15.5" r="1.8" fill="#0E0D0B" />
+          </svg>
+          <span data-hf-id="hf-91pd">Passcode or biometrics open the app before anything else.</span>
+        </div>
+      </section>
+    </div>
+
+    <!-- ============ 9 · close (67–75) ============ -->
+    <div
+      data-hf-id="hf-hm9w"
+      id="scene-close"
+      class="scene"
+      data-composition-id="close"
+      data-start="67"
+      data-duration="8"
+      data-label="Close"
+      data-width="1920"
+      data-height="1080"
+    >
+      <section
+        data-hf-id="hf-esr8"
+        id="sec-close"
+        class="clip"
+        data-start="0"
+        data-duration="8"
+        data-track-index="1"
+        style="position: absolute; inset: 0"
+      >
+        <div data-hf-id="hf-vpl2" id="cl-mark">
+          <svg data-hf-id="hf-ynfe" width="130" height="130" viewBox="0 0 24 24" fill="none">
+            <path data-hf-id="hf-qtrk" d="M12 21c0-6 3-10 8-12-1 7-4 10-8 12Z" fill="#F2A340" />
+            <path data-hf-id="hf-0xlk" d="M12 21C7 19 4 15 4 8c6 2 8 7 8 13Z" fill="#34B37E" />
+            <path data-hf-id="hf-nr20" d="M12 21v-8" stroke="#9B968C" stroke-width="1.6" stroke-linecap="round" />
+          </svg>
+        </div>
+        <h1 data-hf-id="hf-cvxa" id="cl-h1">From leaf to ledger.</h1>
+        <div data-hf-id="hf-035m" id="cl-kicker">INDORSE — ON-CHAIN CROP INTELLIGENCE</div>
+        <p data-hf-id="hf-crj2" id="cl-frag">Built on Solana — ready for Seeker.</p>
+      </section>
+    </div>
+
+    <!-- invisible clock composition: the slide visibility controller's time source -->
+    <div
+      data-hf-id="hf-q5ff"
+      id="deck-clock"
+      data-composition-id="deck-clock"
+      data-root="true"
+      data-start="0"
+      data-duration="75"
+      data-track-index="0"
+      data-width="1920"
+      data-height="1080"
+      style="position: absolute; top: 0; left: 0; width: 1920px; height: 1080px; opacity: 0; pointer-events: none"
+    ></div>
+
+    <script>
+      window.__timelines = window.__timelines || {}
+
+      function newScene(id) {
+        var tl = gsap.timeline({ paused: true })
+        window.__timelines[id] = tl
+        return tl
+      }
+
+      /* 1 · hook (0–9) — fragment hold @ 4.0 */
+      var hook = newScene('hook')
+      hook.fromTo('#hk-eyebrow', { opacity: 0, y: 14 }, { opacity: 1, y: 0, duration: 0.5, ease: 'power3.out' }, 0.3)
+      hook.fromTo('#hk-h1', { opacity: 0, y: 30 }, { opacity: 1, y: 0, duration: 0.7, ease: 'power3.out' }, 0.6)
+      hook.fromTo(
+        '#hk-rule',
+        { scaleX: 0 },
+        { scaleX: 1, duration: 0.6, ease: 'power2.out', transformOrigin: 'left center' },
+        1.1,
+      )
+      hook.fromTo('#hk-frag', { opacity: 0, y: 20 }, { opacity: 1, y: 0, duration: 0.6, ease: 'power3.out' }, 3.4)
+
+      /* 2 · wallet (9–17) — local positions (tl seeks to t − data-start) */
+      var wallet = newScene('wallet')
+      wallet.fromTo('#wa-eyebrow', { opacity: 0, y: 14 }, { opacity: 1, y: 0, duration: 0.5, ease: 'power3.out' }, 0.3)
+      wallet.fromTo('#wa-h1', { opacity: 0, y: 30 }, { opacity: 1, y: 0, duration: 0.7, ease: 'power3.out' }, 0.55)
+      wallet.fromTo('#wa-card', { opacity: 0, y: 34 }, { opacity: 1, y: 0, duration: 0.6, ease: 'power3.out' }, 0.9)
+      wallet.fromTo('#wa-sub', { opacity: 0, y: 20 }, { opacity: 1, y: 0, duration: 0.6, ease: 'power3.out' }, 1.0)
+      wallet.fromTo(
+        '.wa-row',
+        { opacity: 0, x: 26 },
+        { opacity: 1, x: 0, duration: 0.5, stagger: 0.18, ease: 'power3.out' },
+        1.5,
+      )
+      wallet.fromTo('#wa-btn', { opacity: 0, y: 16 }, { opacity: 1, y: 0, duration: 0.45, ease: 'power3.out' }, 2.3)
+      wallet.fromTo('#wa-chip', { opacity: 0, y: 14 }, { opacity: 1, y: 0, duration: 0.5, ease: 'power3.out' }, 2.9)
+
+      /* 3 · farm (17–25) */
+      var farm = newScene('farm')
+      farm.fromTo('#fa-eyebrow', { opacity: 0, y: 14 }, { opacity: 1, y: 0, duration: 0.5, ease: 'power3.out' }, 0.3)
+      farm.fromTo('#fa-h1', { opacity: 0, y: 30 }, { opacity: 1, y: 0, duration: 0.7, ease: 'power3.out' }, 0.55)
+      farm.fromTo('#fa-sub', { opacity: 0, y: 20 }, { opacity: 1, y: 0, duration: 0.6, ease: 'power3.out' }, 1.0)
+      farm.fromTo(
+        '.plot',
+        { opacity: 0, scale: 0.9 },
+        {
+          opacity: 1,
+          scale: 1,
+          duration: 0.45,
+          stagger: 0.05,
+          ease: 'power2.out',
+          transformOrigin: '50% 50%',
+        },
+        0.8,
+      )
+      farm.fromTo('#fa-pin', { opacity: 0, y: -70 }, { opacity: 1, y: 0, duration: 0.5, ease: 'power3.out' }, 1.7)
+      farm.fromTo('#fa-label', { opacity: 0 }, { opacity: 1, duration: 0.4 }, 2.0)
+      farm.fromTo('#fa-rec', { opacity: 0, y: 24 }, { opacity: 1, y: 0, duration: 0.55, ease: 'power3.out' }, 2.2)
+
+      /* 4 · scout (25–34) — fragment hold @ 30.0 (local 5.0) */
+      var scout = newScene('scout')
+      scout.fromTo('#sc-eyebrow', { opacity: 0, y: 14 }, { opacity: 1, y: 0, duration: 0.5, ease: 'power3.out' }, 0.3)
+      scout.fromTo('#sc-h1', { opacity: 0, y: 30 }, { opacity: 1, y: 0, duration: 0.7, ease: 'power3.out' }, 0.55)
+      scout.fromTo('#sc-sub', { opacity: 0, y: 20 }, { opacity: 1, y: 0, duration: 0.6, ease: 'power3.out' }, 1.0)
+      scout.fromTo('#sc-frag', { opacity: 0, y: 24 }, { opacity: 1, y: 0, duration: 0.7, ease: 'power3.out' }, 4.3)
+
+      /* 5 · weather (34–42) */
+      var weather = newScene('weather')
+      weather.fromTo('#we-eyebrow', { opacity: 0, y: 14 }, { opacity: 1, y: 0, duration: 0.5, ease: 'power3.out' }, 0.3)
+      weather.fromTo('#we-h1', { opacity: 0, y: 30 }, { opacity: 1, y: 0, duration: 0.7, ease: 'power3.out' }, 0.55)
+      weather.fromTo('#we-card', { opacity: 0, y: 34 }, { opacity: 1, y: 0, duration: 0.6, ease: 'power3.out' }, 0.9)
+      weather.fromTo('#we-sub', { opacity: 0, y: 20 }, { opacity: 1, y: 0, duration: 0.6, ease: 'power3.out' }, 1.0)
+      weather.fromTo(
+        '.wx-row',
+        { opacity: 0, x: 22 },
+        { opacity: 1, x: 0, duration: 0.45, stagger: 0.16, ease: 'power3.out' },
+        1.6,
+      )
+      weather.fromTo('#we-pill', { opacity: 0, y: 14 }, { opacity: 1, y: 0, duration: 0.45, ease: 'power3.out' }, 2.4)
+
+      /* 6 · provenance (42–51) — fragment hold @ 46.0 (local 4.0) */
+      var provenance = newScene('provenance')
+      provenance.fromTo(
+        '#pv-eyebrow',
+        { opacity: 0, y: 14 },
+        { opacity: 1, y: 0, duration: 0.5, ease: 'power3.out' },
+        0.3,
+      )
+      provenance.fromTo('#pv-h1', { opacity: 0, y: 30 }, { opacity: 1, y: 0, duration: 0.7, ease: 'power3.out' }, 0.55)
+      provenance.fromTo('#pv-sub', { opacity: 0, y: 20 }, { opacity: 1, y: 0, duration: 0.6, ease: 'power3.out' }, 1.0)
+      provenance.fromTo(
+        '#pv-line',
+        { scaleY: 0 },
+        { scaleY: 1, duration: 0.9, ease: 'power2.out', transformOrigin: 'left top' },
+        0.6,
+      )
+      provenance.fromTo(
+        '.pv-row',
+        { opacity: 0, x: 30 },
+        { opacity: 1, x: 0, duration: 0.5, stagger: 0.22, ease: 'power3.out' },
+        1.0,
+      )
+      provenance.fromTo('#pv-frag', { opacity: 0, y: 24 }, { opacity: 1, y: 0, duration: 0.7, ease: 'power3.out' }, 3.3)
+
+      /* 7 · profile (51–59) — stat count-up rides the mounted block's own timeline */
+      var profile = newScene('profile')
+      profile.fromTo('#pr-eyebrow', { opacity: 0, y: 14 }, { opacity: 1, y: 0, duration: 0.5, ease: 'power3.out' }, 0.3)
+      profile.fromTo('#pr-h1', { opacity: 0, y: 30 }, { opacity: 1, y: 0, duration: 0.7, ease: 'power3.out' }, 0.55)
+      profile.fromTo('#pr-sub', { opacity: 0, y: 20 }, { opacity: 1, y: 0, duration: 0.6, ease: 'power3.out' }, 1.0)
+
+      /* 8 · security (59–67) — fragment hold @ 63.0 (local 4.0) */
+      var security = newScene('security')
+      security.fromTo(
+        '#se-eyebrow',
+        { opacity: 0, y: 14 },
+        { opacity: 1, y: 0, duration: 0.5, ease: 'power3.out' },
+        0.3,
+      )
+      security.fromTo('#se-h1', { opacity: 0, y: 30 }, { opacity: 1, y: 0, duration: 0.7, ease: 'power3.out' }, 0.55)
+      security.fromTo('#se-sub', { opacity: 0, y: 20 }, { opacity: 1, y: 0, duration: 0.6, ease: 'power3.out' }, 1.0)
+      security.fromTo(
+        '.se-row',
+        { opacity: 0, x: 26 },
+        { opacity: 1, x: 0, duration: 0.5, stagger: 0.16, ease: 'power3.out' },
+        1.4,
+      )
+      security.fromTo('#se-frag', { opacity: 0, y: 20 }, { opacity: 1, y: 0, duration: 0.7, ease: 'power3.out' }, 3.3)
+
+      /* 9 · close (67–75) — fragment hold @ 70.5 (local 3.5) */
+      var close = newScene('close')
+      close.fromTo('#cl-mark', { opacity: 0, y: -18 }, { opacity: 1, y: 0, duration: 0.6, ease: 'power3.out' }, 0.3)
+      close.fromTo('#cl-h1', { opacity: 0, y: 30 }, { opacity: 1, y: 0, duration: 0.8, ease: 'power3.out' }, 0.6)
+      close.fromTo('#cl-kicker', { opacity: 0 }, { opacity: 1, duration: 0.6 }, 1.3)
+      close.fromTo('#cl-frag', { opacity: 0, y: 18 }, { opacity: 1, y: 0, duration: 0.7, ease: 'power3.out' }, 2.8)
+
+      /* ---- slide visibility controller ----
+         Scenes are absolute-stacked and hidden at rest. One root clock spans
+         the whole deck; its onUpdate shows only the scene whose [start, end)
+         contains the playhead, so every seek path (engine, player, snapshot)
+         lands on the correct slide. */
+      var rootTl = gsap.timeline({ paused: true })
+      rootTl.to({}, { duration: 75 })
+      window.__timelines['deck-clock'] = rootTl
+
+      var SLIDES = [
+        { id: 'scene-hook', start: 0, end: 9 },
+        { id: 'scene-wallet', start: 9, end: 17 },
+        { id: 'scene-farm', start: 17, end: 25 },
+        { id: 'scene-scout', start: 25, end: 34 },
+        { id: 'scene-weather', start: 34, end: 42 },
+        { id: 'scene-provenance', start: 42, end: 51 },
+        { id: 'scene-profile', start: 51, end: 59 },
+        { id: 'scene-security', start: 59, end: 67 },
+        { id: 'scene-close', start: 67, end: 75 },
+      ]
+
+      function updateVisibility(t) {
+        for (var i = 0; i < SLIDES.length; i++) {
+          var s = SLIDES[i]
+          var el = document.getElementById(s.id)
+          if (!el) continue
+          var active = t >= s.start && t < s.end
+          el.style.opacity = active ? '1' : '0'
+          el.style.visibility = active ? 'visible' : 'hidden'
+          el.style.pointerEvents = active ? 'auto' : 'none'
+        }
+      }
+
+      window.__hfSetTime = updateVisibility
+      updateVisibility(0)
+      rootTl.eventCallback('onUpdate', function () {
+        updateVisibility(rootTl.time())
+      })
+    </script>
+  </body>
+</html>

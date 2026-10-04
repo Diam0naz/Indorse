@@ -45,6 +45,32 @@ export interface ScoutEvent {
    * because the chain stores the review status, not a model probability.
    */
   chainStatus?: 'pending' | 'verified' | 'rejected' | 'rewarded'
+  /**
+   * Where a locally captured row stands with the chain — absent on rows read
+   * from the chain, whose lifecycle is `chainStatus` alone. `queued` is
+   * captured and waiting for a farm to anchor it, `failed` an anchor attempt
+   * that did not land (kept, with its payload, for an explicit retry), and
+   * `anchored` a row that now lives on-chain (`id` is its report address).
+   */
+  anchorStatus?: 'queued' | 'anchored' | 'failed'
+  /**
+   * The outbox payload — exactly the fields an anchor flush sends in
+   * `submit_scout_report`. Present only while the row is un-anchored, so a
+   * restart can finish what the capture started without inventing anything.
+   */
+  anchor?: ScoutAnchorPayload
+}
+
+/** What an anchor flush submits for a queued capture (all strings serialisable). */
+export interface ScoutAnchorPayload {
+  /** SHA-256 hex (64 chars) of the captured bytes — the on-chain photo_hash. */
+  photoHashHex: string
+  /** Photo URI field, ≤128 bytes on-chain (a deterministic placeholder today). */
+  uri: string
+  /** Classifier label the chain row should carry, ≤32 bytes. */
+  aiLabel: string
+  /** Local file URIs of the real shots — best-effort evidence for re-hashing. */
+  photoUris: string[]
 }
 
 export const SCOUT_EVENTS: ScoutEvent[] = [
@@ -190,49 +216,6 @@ export interface Notification {
   time: string
   read: boolean
 }
-
-export const NOTIFICATIONS: Notification[] = [
-  {
-    id: 'n1',
-    type: 'alert',
-    title: 'High-severity diagnosis',
-    body: 'Sclerotinia confirmed on East Draw. Tx anchored.',
-    time: '2h ago',
-    read: false,
-  },
-  {
-    id: 'n2',
-    type: 'escrow',
-    title: 'Escrow funded',
-    body: 'Grain Partners Co-op deposited $1,001,180 into escrow.',
-    time: '8h ago',
-    read: false,
-  },
-  {
-    id: 'n3',
-    type: 'weather',
-    title: 'Policy period ends in 2 days',
-    body: 'Weather cover WP-2026-ND-CC-0047 expires Sep 30.',
-    time: '1d ago',
-    read: true,
-  },
-  {
-    id: 'n4',
-    type: 'scout',
-    title: 'Scout event confirmed',
-    body: 'Gray Leaf Spot on River Bottom — tx 5nHs2r…BtRf',
-    time: '4d ago',
-    read: true,
-  },
-  {
-    id: 'n5',
-    type: 'system',
-    title: 'Wallet connected',
-    body: 'Mobile Wallet Adapter session established on devnet.',
-    time: '5d ago',
-    read: true,
-  },
-]
 
 export interface ActivityItem {
   label: string

@@ -1,14 +1,81 @@
 /**
  * lib/csv.ts — Farm record export
  *
- * Turns the on-chain farm record (farm details, fields, scout events,
- * escrow and the weather policy) into a single RFC 4180 style CSV: one
- * header row, one row per record, blank cells where a record type does not
- * use a column. That shape drops straight into Sheets/Excel or a pandas
- * `read_csv`.
+ * Turns the live farm record (the farm account, zone fields, scout reports,
+ * the latest escrow and the weather policy) into a single RFC 4180 style
+ * CSV: one header row, one row per record, blank cells where a record type
+ * does not use a column — or where the chain stores no such value (acres,
+ * commodity, confidence … stay empty and are never invented). That shape
+ * drops straight into Sheets/Excel or a pandas `read_csv`.
+ *
+ * Every row derives from `FarmRecordInput`, which the export screen
+ * assembles from the chain queries: no wallet or no farm → an honest
+ * header-only document with zero rows.
  */
 
-import { ESCROW, FARM, FIELDS, SCOUT_EVENTS, USER, WEATHER } from '@/constants/data'
+import type { Field } from '@/constants/data'
+import { fromE6 } from '@/lib/format'
+
+/* ── Input ────────────────────────────────────────────────────────────────── */
+
+/** Structural slices of the chain records the export writes. */
+export interface FarmRecordFarm {
+  name: string
+  owner: string
+  latE6: number
+  lngE6: number
+  address?: string
+}
+
+export interface FarmRecordReport {
+  /** Unix seconds. */
+  timestamp: number
+  latE6: number
+  lngE6: number
+  aiLabel: string
+  /** Review status as the codec decodes it (verified / pending / …). */
+  status: string
+  /** The report PDA — the row's stable on-chain identity. */
+  address: string
+}
+
+export interface FarmRecordEscrow {
+  /** Buyer wallet address — the chain stores no display name. */
+  buyer: string
+  /** USDC lamports (6 decimals, so 45_200_000_000 = 45,200 USDC). */
+  amountUsdc: number
+  address?: string
+}
+
+export interface FarmRecordPolicy {
+  coverageUsdc: number
+  premiumUsdc: number
+  /** Rainfall shortfall trigger in mm × 10. */
+  triggerThresholdMm: number
+  seasonStart: number
+  seasonEnd: number
+  state: string
+  address?: string
+}
+
+export interface FarmRecordReading {
+  totalRainfallMm: number
+  readingTimestamp: number
+}
+
+export interface FarmRecordInput {
+  farm: FarmRecordFarm | null
+  /** Operator display name (profile); falls back to the farm owner. */
+  operator: string
+  reports: FarmRecordReport[]
+  fields: Field[]
+  escrow: FarmRecordEscrow | null
+  policy: FarmRecordPolicy | null
+  reading: FarmRecordReading | null
+  exportedAt: Date
+}
+
+/* ── Schema ───────────────────────────────────────────────────────────────── */
 
 /** Union of every column any record type writes, in export order. */
 export const FARM_CSV_COLUMNS = [
@@ -37,6 +104,8 @@ export const FARM_CSV_COLUMNS = [
   'longitude',
   'tx_signature',
   'notes',
+  'report_pda',
+  'report_status',
   // escrow
   'buyer',
   'buyer_pubkey',
@@ -64,6 +133,8 @@ export type FarmCsvColumn = (typeof FARM_CSV_COLUMNS)[number]
 /** A row is a sparse map of column → value; missing columns export as empty. */
 export type FarmCsvRow = Partial<Record<FarmCsvColumn, string | number>>
 
+/* ── Rendering ────────────────────────────────────────────────────────────── */
+
 /** RFC 4180: quote fields containing comma/quote/newline, double the quotes. */
 export function csvEscape(value: string | number | undefined): string {
   if (value === undefined) return ''
@@ -76,92 +147,111 @@ function toCsvLine(row: FarmCsvRow): string {
   return FARM_CSV_COLUMNS.map((column) => csvEscape(row[column])).join(',')
 }
 
+const isoDay = (unixSeconds: number): string => new Date(unixSeconds * 1000).toISOString().slice(0, 10)
+const isoInstant = (unixSeconds: number): string => new Date(unixSeconds * 1000).toISOString()
+
 export type FarmCsvSectionKey = 'farm' | 'fields' | 'events' | 'escrow' | 'weather'
 
 /** Row counts per section, used by the export screen's contents summary. */
-export function farmRecordSections(): { key: FarmCsvSectionKey; count: number }[] {
+export function farmRecordSections(input: FarmRecordInput): { key: FarmCsvSectionKey; count: number }[] {
   return [
-    { key: 'farm', count: 1 },
-    { key: 'fields', count: FIELDS.length },
-    { key: 'events', count: SCOUT_EVENTS.length },
-    { key: 'escrow', count: 1 },
-    { key: 'weather', count: 1 },
+    { key: 'farm', count: input.farm ? 1 : 0 },
+    { key: 'fields', count: input.fields.length },
+    { key: 'events', count: input.reports.length },
+    { key: 'escrow', count: input.escrow ? 1 : 0 },
+    { key: 'weather', count: input.policy ? 1 : 0 },
   ]
 }
 
 /** Record rows (header row not counted). */
-export function farmRecordRowCount(): number {
-  return 1 + FIELDS.length + SCOUT_EVENTS.length + 1 + 1
+export function farmRecordRowCount(input: FarmRecordInput): number {
+  return farmRecordSections(input).reduce((total, section) => total + section.count, 0)
 }
 
 /** Build the full farm record CSV document (header + every record row). */
-export function buildFarmRecordCsv(exportedAt: Date = new Date()): string {
-  const rows: FarmCsvRow[] = [
-    {
+export function buildFarmRecordCsv(input: FarmRecordInput): string {
+  const { farm, operator, reports, fields, escrow, policy, reading, exportedAt } = input
+  const rows: FarmCsvRow[] = []
+
+  if (farm) {
+    rows.push({
       record_type: 'farm',
-      farm_name: FARM.name,
-      operator: USER.name,
-      season: FARM.season,
-      location: FARM.location,
-      total_acres: FARM.totalAcres,
-      record_pda: FARM.recordPDA,
+      farm_name: farm.name,
+      operator: operator || farm.owner,
+      season: policy ? String(new Date(policy.seasonStart * 1000).getUTCFullYear()) : '',
+      location: `${fromE6(farm.latE6)}, ${fromE6(farm.lngE6)}`,
+      // total_acres: the farm account stores no acreage — the cell stays
+      // empty rather than carrying the old seed's invented number.
+      record_pda: farm.address ?? '',
       exported_at: exportedAt.toISOString(),
-    },
-    ...FIELDS.map<FarmCsvRow>((field) => ({
+    })
+  }
+
+  for (const field of fields) {
+    rows.push({
       record_type: 'field',
       field_name: field.name,
-      acres: field.acres,
-      crop: field.crop,
+      // Chain-derived zones carry no acreage/crop — the derivation's
+      // placeholders (0 / '—') export as empty cells, not fake values.
+      acres: field.acres > 0 ? field.acres : '',
+      crop: field.crop === '—' ? '' : field.crop,
       status: field.status,
       risk_pct: Math.round(field.risk * 100),
-    })),
-    ...SCOUT_EVENTS.map<FarmCsvRow>((event) => ({
+    })
+  }
+
+  for (const report of reports) {
+    rows.push({
       record_type: 'scout_event',
-      event_date: event.date,
-      diagnosis: event.diagnosis,
-      confidence: event.confidence,
-      severity: event.severity,
-      images: event.images,
-      latitude: event.lat,
-      longitude: event.lng,
-      tx_signature: event.txSig,
-      notes: event.notes,
-    })),
-    {
+      event_date: isoDay(report.timestamp),
+      diagnosis: report.aiLabel,
+      // confidence / severity / images / notes: never stored on chain, and
+      // an account read carries no transaction signature — all empty.
+      latitude: fromE6(report.latE6),
+      longitude: fromE6(report.lngE6),
+      report_pda: report.address,
+      report_status: report.status,
+    })
+  }
+
+  if (escrow) {
+    rows.push({
       record_type: 'escrow',
-      buyer: ESCROW.buyer,
-      buyer_pubkey: ESCROW.buyerPubkey,
-      commodity: ESCROW.commodity,
-      quantity: ESCROW.quantity,
-      total_value_usd: ESCROW.totalValue,
-      escrow_pda: ESCROW.escrowPDA,
-      provenance_score: ESCROW.provenanceScore,
-    },
-    {
+      // The chain stores no buyer display name, commodity or quantity on
+      // this account — only the wallet and the locked amount.
+      buyer_pubkey: escrow.buyer,
+      total_value_usd: escrow.amountUsdc / 1e6,
+      escrow_pda: escrow.address ?? '',
+    })
+  }
+
+  if (policy) {
+    const secondsLeft = policy.seasonEnd - exportedAt.getTime() / 1000
+    rows.push({
       record_type: 'weather_policy',
-      policy_id: WEATHER.policyId,
-      coverage: WEATHER.coverage,
-      trigger_period: WEATHER.triggerPeriod,
-      premium_usd: WEATHER.premium,
-      max_payout_usd: WEATHER.maxPayout,
-      policy_status: WEATHER.status,
-      rainfall_mm: WEATHER.totalRainfallMm / 10,
-      trigger_mm: WEATHER.triggerThresholdMm / 10,
-      precip_pct: Math.round((WEATHER.totalRainfallMm / WEATHER.normalRainfallMm) * 100),
-      days_remaining: WEATHER.daysRemaining,
-      last_update: WEATHER.lastUpdate,
-    },
-  ]
+      policy_id: policy.address ?? '',
+      coverage: policy.coverageUsdc / 1e6,
+      trigger_period: `${isoDay(policy.seasonStart)} to ${isoDay(policy.seasonEnd)}`,
+      premium_usd: policy.premiumUsdc / 1e6,
+      policy_status: policy.state,
+      rainfall_mm: reading ? reading.totalRainfallMm / 10 : '',
+      trigger_mm: policy.triggerThresholdMm / 10,
+      days_remaining: Math.max(0, Math.ceil(secondsLeft / 86_400)),
+      last_update: reading ? isoInstant(reading.readingTimestamp) : '',
+      // max_payout / precip baseline: no such value on chain → empty.
+    })
+  }
 
   return [FARM_CSV_COLUMNS.join(','), ...rows.map(toCsvLine)].join('\n')
 }
 
-/** Suggested file name, e.g. `clearwater-ridge-2026-09-28.csv`. */
-export function farmRecordFileName(at: Date = new Date()): string {
-  const slug = FARM.name
-    .toLowerCase()
-    .replace(/[^a-z0-9]+/g, '-')
-    .replace(/^-|-$/g, '')
+/** Suggested file name, e.g. `red-creek-farm-2026-09-28.csv`. */
+export function farmRecordFileName(farmName: string | null, at: Date): string {
+  const slug =
+    farmName
+      ?.toLowerCase()
+      .replace(/[^a-z0-9]+/g, '-')
+      .replace(/^-|-$/g, '') || 'farm-record'
   const day = at.toISOString().slice(0, 10)
-  return `${slug}-${FARM.season}-${day}.csv`
+  return `${slug}-${day}.csv`
 }

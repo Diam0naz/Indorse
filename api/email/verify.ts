@@ -19,6 +19,7 @@
 import { isValidAddress } from '../_lib/address'
 import { OTP_LENGTH, emailOtpStore, normalizeEmail, otpKey } from '../_lib/otp-store'
 import { issueEmailAttestation, sasConfigFromEnv } from '../_lib/sas'
+import { kitAttestationIssuer } from '../_lib/sas-issuer'
 import { parseBody, type ProxyRequest, type ProxyResponse } from '../_lib/proxy'
 
 const CODE_RE = new RegExp(`^\\d{${OTP_LENGTH}}$`)
@@ -44,7 +45,7 @@ export default async function handler(req: ProxyRequest, res: ProxyResponse): Pr
   if (outcome === 'ok') {
     const issued = await issueEmailAttestation(
       { subject: wallet, email, verifiedAt: Math.floor(Date.now() / 1000) },
-      { config: sasConfigFromEnv(), pepper: process.env.SAS_EMAIL_PEPPER },
+      { config: sasConfigFromEnv(), issuer: kitAttestationIssuer, pepper: process.env.SAS_EMAIL_PEPPER },
     )
     res.status(200).json({
       verified: true,

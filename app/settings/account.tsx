@@ -16,6 +16,7 @@ import { useAuth } from '@/components/auth-provider'
 import { useFarmRegistry } from '@/components/farm-registry-provider'
 import { useNotifications } from '@/components/notifications'
 import { useProfile } from '@/components/profile-provider'
+import { useScoutLog } from '@/components/scout-log-provider'
 import { useSettings } from '@/components/settings-provider'
 import { useMobileWalletSetup } from '@/features/wallet/useMobileWalletSetup'
 import { useT } from '@/lib/i18n'
@@ -26,6 +27,7 @@ export default function AccountSettingsScreen() {
   const { reset: resetAuth } = useAuth()
   const { clearProfile } = useProfile()
   const { reset: resetRegistry } = useFarmRegistry()
+  const { reset: resetScoutLog } = useScoutLog()
   const { clear: clearNotifications } = useNotifications()
   const { walletState, toggleConnection } = useMobileWalletSetup()
 
@@ -36,6 +38,7 @@ export default function AccountSettingsScreen() {
     // Device stores first — nothing here ever reaches the chain.
     resetSettings()
     resetRegistry()
+    resetScoutLog()
     clearProfile()
     clearNotifications()
     await resetAuth()
@@ -46,6 +49,7 @@ export default function AccountSettingsScreen() {
 
   const stores: { title: string; description: string }[] = [
     { title: t('account.farms'), description: t('account.farmsBody') },
+    { title: t('account.scout'), description: t('account.scoutBody') },
     { title: t('account.profile'), description: t('account.profileBody') },
     { title: t('account.settings'), description: t('account.settingsBody') },
     { title: t('account.security'), description: t('account.securityBody') },

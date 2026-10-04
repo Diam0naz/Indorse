@@ -11,7 +11,7 @@
  * this app is pinned to `@solana/kit` v7. Rather than force a version bump
  * through the whole app for one POC feature, the actual `CreateAttestation`
  * send is modelled as an injectable `AttestationIssuer`. Deploy-time wires the
- * SDK-backed issuer (see `scripts/bootstrap-sas.mjs`); tests inject a fake.
+ * SDK-backed issuer (see `scripts/bootstrap-sas.ts`); tests inject a fake.
  * Until an issuer is provided, issuance reports `issuer-missing` and email
  * verification still succeeds — a verified email never depends on the chain.
  *

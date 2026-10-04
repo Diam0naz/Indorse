@@ -8,8 +8,8 @@
  *                           1-decimal (~11 km) lat/lng grid, since the chain
  *                           stores no field name. Risk comes from the
  *                           classifier label; rejected reports read clean.
- *   buildFieldsFromEvents   the seeded sample log (disconnected fallback) —
- *                           one field per event field, worst severity wins.
+ *   buildFieldsFromEvents   the seeded sample log — one field per event
+ *                           field, worst severity wins (seed/test fixtures).
  *
  * Kept out of the screen so both the UI and the tests derive from the same
  * code path.
