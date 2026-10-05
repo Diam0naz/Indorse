@@ -14,12 +14,31 @@
  *
  * The verifier is a salted SHA-256 in expo-secure-store (Android Keystore
  * backs the file at rest) with a bounded attempt counter and a 30-second
- * cooldown after five wrong tries. Biometric unlock only short-circuits the
- * passcode after the *device* has authenticated the user.
+ * cooldown after five wrong tries. Next to it sits the recovery email, hashed
+ * the same way (its own salt, never the address itself), so a forgotten
+ * passcode can be recovered by proving control of that inbox — see
+ * `matchRecoveryEmail` and the gate's email loop.
+ *
+ * Biometric unlock only short-circuits the passcode after the *device* has
+ * authenticated the user, and it never hands off to the OS credential screen:
+ * `disableDeviceFallback` keeps Android's "forgot password → reset your
+ * device password" surface out of this app entirely. Finally, a session idle
+ * for six months (`INACTIVITY_LIMIT_MS`) is warned about and signed back out —
+ * wallet keys are never involved.
  */
 
-import { createContext, useCallback, useContext, useEffect, useMemo, useState, type PropsWithChildren } from 'react'
-import { AppState, type AppStateStatus } from 'react-native'
+import {
+  createContext,
+  useCallback,
+  useContext,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type PropsWithChildren,
+} from 'react'
+import { Alert, AppState, type AppStateStatus } from 'react-native'
+import AsyncStorage from '@react-native-async-storage/async-storage'
 import * as Crypto from 'expo-crypto'
 import * as LocalAuthentication from 'expo-local-authentication'
 import * as SecureStore from 'expo-secure-store'
@@ -27,16 +46,24 @@ import { useSettings } from '@/components/settings-provider'
 import { useT } from '@/lib/i18n'
 
 const STORE_KEY = 'indorse.auth.v1'
+const LAST_ACTIVE_KEY = 'indorse.lastActive.v1'
 const MAX_ATTEMPTS = 5
 const COOLDOWN_MS = 30_000
 /** Minimum passcode length — enforced by the register form. */
 export const MIN_LENGTH = 6
+/** Six months of silence, and the next open signs the session out again. */
+export const INACTIVITY_LIMIT_MS = 180 * 24 * 60 * 60 * 1000
 
 export type AuthStatus = 'loading' | 'unregistered' | 'locked' | 'unlocked'
 
 interface Verifier {
   salt: string
   hash: string
+  /** Salted SHA-256 of the recovery email — the address is never stored. */
+  emailSalt?: string
+  emailHash?: string
+  /** True once a code emailed to that address has actually been proven. */
+  emailVerified?: boolean
 }
 
 interface AuthValue {
@@ -52,18 +79,48 @@ interface AuthValue {
   attemptsLeft: number
   /** Epoch ms until which attempts are refused; null when not cooling down. */
   cooldownEndsAt: number | null
-  register: (passcode: string) => Promise<void>
+  /** A hashed recovery email is on file — gates the email reset loop. */
+  recoveryEmailOnFile: boolean
+  /** The on-file recovery email was proven by a code at least once. */
+  recoveryEmailVerified: boolean
+  register: (passcode: string, email?: string, emailVerified?: boolean) => Promise<void>
   verify: (passcode: string) => Promise<boolean>
   unlockWithBiometrics: () => Promise<boolean>
   lock: () => void
-  /** Forget the passcode entirely (Forgot passcode / change passcode). */
+  /** Forget the passcode entirely (change passcode / no-email fallback). */
   reset: () => Promise<void>
+  /** Does this typed address hash to the one on file? Gates the reset send. */
+  matchRecoveryEmail: (email: string) => Promise<boolean>
+  /** Hash a proven address onto the verifier (register, Settings verify). */
+  setRecoveryEmail: (email: string, emailVerified?: boolean) => Promise<void>
+  /** Replace the passcode after an email-proven recovery; keeps the email. */
+  resetPasscode: (passcode: string, provenEmail?: string) => Promise<void>
 }
 
 const AuthContext = createContext<AuthValue | null>(null)
 
+/** Lower-cased and trimmed, mirroring `api/_lib/otp-store.ts`. */
+export function normalizeEmail(email: string): string {
+  return email.trim().toLowerCase()
+}
+
+/** Deliberately loose — deliverability is the provider's job, not a regex battle. */
+export function isValidEmail(email: string): boolean {
+  return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(normalizeEmail(email))
+}
+
+/** Has this app been untouched for six months? `null` = never opened yet. */
+export function isInactive(lastActiveAt: number | null, now = Date.now()): boolean {
+  return lastActiveAt !== null && now - lastActiveAt >= INACTIVITY_LIMIT_MS
+}
+
 async function hashPasscode(passcode: string, salt: string): Promise<string> {
   return Crypto.digestStringAsync(Crypto.CryptoDigestAlgorithm.SHA256, `${salt}:${passcode}`)
+}
+
+/** Same construction as the passcode hash, over the normalized address. */
+async function hashEmail(email: string, salt: string): Promise<string> {
+  return Crypto.digestStringAsync(Crypto.CryptoDigestAlgorithm.SHA256, `${salt}:${normalizeEmail(email)}`)
 }
 
 async function readVerifier(): Promise<Verifier | null> {
@@ -72,9 +129,26 @@ async function readVerifier(): Promise<Verifier | null> {
     if (!raw) return null
     const parsed = JSON.parse(raw) as Partial<Verifier>
     if (typeof parsed.salt === 'string' && typeof parsed.hash === 'string') {
-      return { salt: parsed.salt, hash: parsed.hash }
+      const hasEmail = typeof parsed.emailSalt === 'string' && typeof parsed.emailHash === 'string'
+      return {
+        salt: parsed.salt,
+        hash: parsed.hash,
+        ...(hasEmail
+          ? { emailSalt: parsed.emailSalt, emailHash: parsed.emailHash, emailVerified: parsed.emailVerified === true }
+          : {}),
+      }
     }
     return null
+  } catch {
+    return null
+  }
+}
+
+async function readLastActive(): Promise<number | null> {
+  try {
+    const raw = await AsyncStorage.getItem(LAST_ACTIVE_KEY)
+    const parsed = raw === null ? Number.NaN : Number(raw)
+    return Number.isFinite(parsed) ? parsed : null
   } catch {
     return null
   }
@@ -89,19 +163,36 @@ export function AuthProvider({ children }: PropsWithChildren) {
   const [biometricsAvailable, setBiometricsAvailable] = useState(false)
   const [attemptsLeft, setAttemptsLeft] = useState(MAX_ATTEMPTS)
   const [cooldownEndsAt, setCooldownEndsAt] = useState<number | null>(null)
+  const lastActiveRef = useRef<number | null>(null)
 
-  // Boot: stored verifier?
+  /** Remember "the app was used just now" — feeds the six-month check. */
+  const touchLastActive = useCallback(() => {
+    const now = Date.now()
+    lastActiveRef.current = now
+    void AsyncStorage.setItem(LAST_ACTIVE_KEY, String(now)).catch(() => undefined)
+  }, [])
+
+  const warnInactive = useCallback(() => {
+    Alert.alert(t('auth.inactive.title'), t('auth.inactive.body'), [{ text: t('auth.inactive.ok') }])
+  }, [t])
+
+  // Boot: stored verifier? Still dormant?
   useEffect(() => {
     let active = true
-    void readVerifier().then((stored) => {
+    void Promise.all([readVerifier(), readLastActive()]).then(([stored, lastActive]) => {
       if (!active) return
+      lastActiveRef.current = lastActive
       setVerifier(stored)
       setStatus(stored ? 'locked' : 'unregistered')
+      // Six months away: warn, then leave them at the lock screen (auto-lock
+      // preferences never keep a dormant session alive).
+      if (stored && isInactive(lastActive)) warnInactive()
+      touchLastActive()
     })
     return () => {
       active = false
     }
-  }, [])
+  }, [touchLastActive, warnInactive])
 
   // Can we offer biometrics?
   useEffect(() => {
@@ -135,6 +226,15 @@ export function AuthProvider({ children }: PropsWithChildren) {
       if (next !== 'active' || backgroundedAt === null) return
       const elapsed = Date.now() - backgroundedAt
       backgroundedAt = null
+      // Dormancy beats every auto-lock grace, including "never": a session
+      // idle for six months is warned about and signed straight out.
+      const dormant = isInactive(lastActiveRef.current)
+      touchLastActive()
+      if (dormant) {
+        setStatus((s) => (s === 'unlocked' ? 'locked' : s))
+        warnInactive()
+        return
+      }
       const graceMs =
         security.autoLock === 'never'
           ? Number.POSITIVE_INFINITY
@@ -145,18 +245,28 @@ export function AuthProvider({ children }: PropsWithChildren) {
     }
     const subscription = AppState.addEventListener('change', onChange)
     return () => subscription.remove()
-  }, [security.autoLock])
+  }, [security.autoLock, touchLastActive, warnInactive])
 
-  const register = useCallback(async (passcode: string) => {
-    const salt = Crypto.randomUUID()
-    const hash = await hashPasscode(passcode, salt)
-    const next: Verifier = { salt, hash }
-    await SecureStore.setItemAsync(STORE_KEY, JSON.stringify(next))
-    setVerifier(next)
-    setAttemptsLeft(MAX_ATTEMPTS)
-    setCooldownEndsAt(null)
-    setStatus('unlocked')
-  }, [])
+  const register = useCallback(
+    async (passcode: string, email?: string, emailVerified?: boolean) => {
+      const salt = Crypto.randomUUID()
+      const hash = await hashPasscode(passcode, salt)
+      const next: Verifier = { salt, hash }
+      if (email && isValidEmail(email)) {
+        const emailSalt = Crypto.randomUUID()
+        next.emailSalt = emailSalt
+        next.emailHash = await hashEmail(email, emailSalt)
+        next.emailVerified = emailVerified === true
+      }
+      await SecureStore.setItemAsync(STORE_KEY, JSON.stringify(next))
+      setVerifier(next)
+      setAttemptsLeft(MAX_ATTEMPTS)
+      setCooldownEndsAt(null)
+      setStatus('unlocked')
+      touchLastActive()
+    },
+    [touchLastActive],
+  )
 
   const verify = useCallback(
     async (passcode: string) => {
@@ -169,6 +279,7 @@ export function AuthProvider({ children }: PropsWithChildren) {
         setAttemptsLeft(MAX_ATTEMPTS)
         setCooldownEndsAt(null)
         setStatus('unlocked')
+        touchLastActive()
         return true
       }
 
@@ -180,7 +291,7 @@ export function AuthProvider({ children }: PropsWithChildren) {
       }
       return false
     },
-    [attemptsLeft, cooldownEndsAt, verifier],
+    [attemptsLeft, cooldownEndsAt, verifier, touchLastActive],
   )
 
   const unlockWithBiometrics = useCallback(async () => {
@@ -189,16 +300,22 @@ export function AuthProvider({ children }: PropsWithChildren) {
       const result = await LocalAuthentication.authenticateAsync({
         promptMessage: t('auth.unlock.biometricPrompt'),
         cancelLabel: t('auth.unlock.passcode'),
+        // No OS credential fallback: Android's device-credential screen is
+        // where "reset your device password" lives, and that question has no
+        // answer inside this app. Failed biometrics simply fall back to the
+        // passcode field below.
+        disableDeviceFallback: true,
       })
       if (result.success) {
         setStatus('unlocked')
+        touchLastActive()
         return true
       }
       return false
     } catch {
       return false
     }
-  }, [biometricsAvailable, t])
+  }, [biometricsAvailable, t, touchLastActive])
 
   const lock = useCallback(() => setStatus((s) => (s === 'unlocked' ? 'locked' : s)), [])
 
@@ -210,6 +327,61 @@ export function AuthProvider({ children }: PropsWithChildren) {
     setStatus('unregistered')
   }, [])
 
+  const matchRecoveryEmail = useCallback(
+    async (email: string) => {
+      if (!verifier?.emailSalt || !verifier.emailHash) return false
+      if (!isValidEmail(email)) return false
+      return (await hashEmail(email, verifier.emailSalt)) === verifier.emailHash
+    },
+    [verifier],
+  )
+
+  const setRecoveryEmail = useCallback(
+    async (email: string, emailVerified = true) => {
+      if (!verifier || !isValidEmail(email)) return
+      const emailSalt = Crypto.randomUUID()
+      const next: Verifier = {
+        ...verifier,
+        emailSalt,
+        emailHash: await hashEmail(email, emailSalt),
+        emailVerified,
+      }
+      await SecureStore.setItemAsync(STORE_KEY, JSON.stringify(next))
+      setVerifier(next)
+    },
+    [verifier],
+  )
+
+  /**
+   * The recovery outcome: a new passcode with the recovery email kept (or a
+   * freshly proven one hashed on), straight through to an unlocked session —
+   * no detour through a wipe.
+   */
+  const resetPasscode = useCallback(
+    async (passcode: string, provenEmail?: string) => {
+      const salt = Crypto.randomUUID()
+      const hash = await hashPasscode(passcode, salt)
+      const next: Verifier = { salt, hash }
+      if (provenEmail !== undefined && isValidEmail(provenEmail)) {
+        const emailSalt = Crypto.randomUUID()
+        next.emailSalt = emailSalt
+        next.emailHash = await hashEmail(provenEmail, emailSalt)
+        next.emailVerified = true
+      } else if (verifier?.emailSalt && verifier.emailHash) {
+        next.emailSalt = verifier.emailSalt
+        next.emailHash = verifier.emailHash
+        next.emailVerified = verifier.emailVerified === true
+      }
+      await SecureStore.setItemAsync(STORE_KEY, JSON.stringify(next))
+      setVerifier(next)
+      setAttemptsLeft(MAX_ATTEMPTS)
+      setCooldownEndsAt(null)
+      setStatus('unlocked')
+      touchLastActive()
+    },
+    [verifier, touchLastActive],
+  )
+
   const value = useMemo<AuthValue>(
     () => ({
       status,
@@ -217,11 +389,16 @@ export function AuthProvider({ children }: PropsWithChildren) {
       biometricsAvailable,
       attemptsLeft,
       cooldownEndsAt,
+      recoveryEmailOnFile: verifier?.emailHash !== undefined,
+      recoveryEmailVerified: verifier?.emailVerified === true,
       register,
       verify,
       unlockWithBiometrics,
       lock,
       reset,
+      matchRecoveryEmail,
+      setRecoveryEmail,
+      resetPasscode,
     }),
     [
       status,
@@ -229,11 +406,15 @@ export function AuthProvider({ children }: PropsWithChildren) {
       biometricsAvailable,
       attemptsLeft,
       cooldownEndsAt,
+      verifier,
       register,
       verify,
       unlockWithBiometrics,
       lock,
       reset,
+      matchRecoveryEmail,
+      setRecoveryEmail,
+      resetPasscode,
     ],
   )
 

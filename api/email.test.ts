@@ -225,3 +225,55 @@ describe('POST /api/email/verify', () => {
     expect(key).toBe('grower@example.com|' + WALLET)
   })
 })
+
+describe('passcode-recovery codes (wallet-less)', () => {
+  async function startRecovery(email = EMAIL) {
+    const res = mockRes()
+    await startHandler({ method: 'POST', body: { email } }, res)
+    return res
+  }
+
+  async function verifyRecovery(code: string, email = EMAIL) {
+    const res = mockRes()
+    await verifyHandler({ method: 'POST', body: { email, code } }, res)
+    return res
+  }
+
+  it('sends a code without a wallet (lock-screen recovery)', async () => {
+    stubFetch()
+    const res = await startRecovery()
+
+    expect(res.statusCode).toBe(200)
+    expect(res.payload).toMatchObject({ sent: true, expiresAt: expect.any(Number) })
+    expect(lastEmail().to).toBe(EMAIL)
+    expect(codeFromLastEmail()).toMatch(/^\d{6}$/)
+  })
+
+  it('verifies it with { verified: true } alone — no address, no attestation', async () => {
+    stubFetch()
+    await startRecovery()
+
+    const res = await verifyRecovery(codeFromLastEmail())
+    expect(res.statusCode).toBe(200)
+    expect(res.payload).toEqual({ verified: true })
+  })
+
+  it('keeps the wallet-bound pair on its own key', async () => {
+    stubFetch()
+    await start() // issued against (email, wallet)
+
+    // The same code, replayed without the wallet, must find nothing.
+    const res = await verifyRecovery(codeFromLastEmail())
+    expect(res.statusCode).toBe(400)
+    expect(res.payload).toMatchObject({ code: 'missing' })
+  })
+
+  it('still refuses a malformed wallet when one is sent', async () => {
+    stubFetch()
+    const res = mockRes()
+    await startHandler({ method: 'POST', body: { email: EMAIL, wallet: 'not-a-key' } }, res)
+
+    expect(res.statusCode).toBe(400)
+    expect(sent).toBeNull()
+  })
+})

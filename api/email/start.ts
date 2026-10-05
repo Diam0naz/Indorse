@@ -1,13 +1,20 @@
 /**
  * api/email/start.ts — send a verification code (step 1 of 2)
  *
- * Binds an email to a wallet: the code is stored against the (email, wallet)
- * pair and emailed to the address. `api/email/verify.ts` checks it back. The
- * address is required so a code cannot be replayed against a different wallet,
- * and only ever a salted digest of the code is kept server-side.
+ * Usually binds an email to a wallet: the code is stored against the
+ * (email, wallet) pair and emailed to the address, and `api/email/verify.ts`
+ * checks it back. The address is required so a code cannot be replayed against
+ * a different wallet, and only ever a salted digest of the code is kept
+ * server-side.
+ *
+ * The lock screen runs before any wallet session exists, so `wallet` may be
+ * omitted (passcode-recovery codes): the key then falls back to the email
+ * alone. The client gates that mode by matching a local salted hash of the
+ * address first, and no attestation is issued for a wallet-less code (see
+ * verify.ts). A code issued for one key can never verify against the other.
  *
  *   POST /api/email/start
- *   { email, wallet }
+ *   { email, wallet? }
  *   → 200 { sent: true, expiresAt }
  *   → 400 malformed email/address · 500 misconfigured · 502 provider failure
  *
@@ -38,7 +45,9 @@ export default async function handler(req: ProxyRequest, res: ProxyResponse): Pr
     res.status(400).json({ error: 'A valid email address is required.' })
     return
   }
-  if (!isValidAddress(wallet)) {
+  // Wallet-less sends are the lock-screen recovery mode; a malformed address
+  // is still refused so a bound pair can never be silently downgraded.
+  if (wallet && !isValidAddress(wallet)) {
     res.status(400).json({ error: 'Malformed wallet address.' })
     return
   }

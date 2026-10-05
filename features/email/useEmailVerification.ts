@@ -7,8 +7,9 @@
  *
  * The server decides; the hook only exposes the state machine and the errors,
  * so the UI can show a busy button and an honest message. The wallet address is
- * read from `useMobileWalletSetup` — codes are always bound to a connected
- * wallet, never a bare email.
+ * read from `useMobileWalletSetup` — here codes are always bound to a
+ * connected wallet. The lock screen's passcode recovery has no wallet session,
+ * so it calls `emailApi` directly with a wallet-less code instead.
  */
 
 import { useCallback, useState } from 'react'

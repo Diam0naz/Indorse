@@ -10,9 +10,10 @@
  * two inputs and renders the busy / sent / verified states.
  */
 
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { Modal, Pressable, ScrollView, Text, TextInput, View } from 'react-native'
 import { useSafeAreaInsets } from 'react-native-safe-area-context'
+import { useAuth } from '@/components/auth-provider'
 import { useTheme } from '@/components/theme-provider'
 import { createStyles, fontSizes, fontWeights, radii, spacing, type Colors } from '@/constants/theme'
 import { useEmailVerification } from '@/features/email/useEmailVerification'
@@ -32,22 +33,29 @@ export function VerifyEmailModal({ onClose, onVerified }: VerifyEmailModalProps)
   const t = useT()
   const insets = useSafeAreaInsets()
   const { walletState, address: walletAddress } = useMobileWalletSetup()
+  const { setRecoveryEmail } = useAuth()
   const connected = walletState === 'connected'
 
   const { status, email, error, verified, sendCode, confirmCode } = useEmailVerification()
   const [emailInput, setEmailInput] = useState('')
   const [code, setCode] = useState('')
+  const hashed = useRef(false)
 
   const sending = status === 'sending'
   const verifying = status === 'verifying'
   const sent = status === 'sent' || verifying || verified
   const busy = sending || verifying
 
+  // Remember the pair on device, and hash the proven address onto the
+  // verifier too — so passcode recovery can email this address later without
+  // a wallet session. The ref keeps this a one-shot write per verification.
   useEffect(() => {
-    if (!verified || !email || !walletAddress) return
+    if (!verified || !email || !walletAddress || hashed.current) return
+    hashed.current = true
     void saveVerifiedEmail(email, walletAddress)
+    void setRecoveryEmail(email, true)
     onVerified?.(email)
-  }, [verified, email, walletAddress, onVerified])
+  }, [verified, email, walletAddress, onVerified, setRecoveryEmail])
 
   return (
     <Modal visible animationType="slide" statusBarTranslucent onRequestClose={onClose}>

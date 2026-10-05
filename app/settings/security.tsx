@@ -34,7 +34,7 @@ import { useT } from '@/lib/i18n'
 
 export default function SecuritySettingsScreen() {
   const { security, setSecurity, reset } = useSettings()
-  const { reset: resetPasscode } = useAuth()
+  const { reset: forgetAppPasscode, recoveryEmailOnFile, recoveryEmailVerified } = useAuth()
   const { walletState, address, toggleConnection } = useMobileWalletSetup()
   const verification = useDeviceVerification()
   const { colors } = useTheme()
@@ -118,7 +118,7 @@ export default function SecuritySettingsScreen() {
       {
         text: t('security.confirm'),
         onPress: () => {
-          void resetPasscode()
+          void forgetAppPasscode()
         },
       },
     ])
@@ -207,6 +207,16 @@ export default function SecuritySettingsScreen() {
       </SettingsGroup>
 
       <SettingsGroup label={t('auth.unlock.passcode')}>
+        <SettingRow
+          title={t('security.recoveryEmail')}
+          description={
+            !recoveryEmailOnFile
+              ? t('security.recoveryEmailNone')
+              : recoveryEmailVerified
+                ? t('security.recoveryEmailVerified')
+                : t('security.recoveryEmailOnFile')
+          }
+        />
         <SettingRow
           title={t('security.changePasscode')}
           description={t('security.changePasscodeBody')}

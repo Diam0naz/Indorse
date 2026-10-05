@@ -5,6 +5,11 @@
  * turns the server's `{ error, code }` bodies into one `EmailApiError`. The
  * origin is derived from `EXPO_PUBLIC_AI_CLASSIFY_URL` (see lib/api-origin), so
  * the POC keeps a single URL to configure.
+ *
+ * `wallet` is optional throughout: pass it to bind the code to an address
+ * (Settings → verify email), omit it for passcode recovery at the lock screen,
+ * which runs before any wallet session exists. The server keys the two apart,
+ * and no attestation comes back without a wallet.
  */
 
 import { getApiOrigin } from '@/lib/api-origin'
@@ -56,9 +61,9 @@ async function post(path: string, body: unknown, options: EmailCallOptions): Pro
   return payload
 }
 
-/** Ask the server to email a code to `email`, bound to `wallet`. */
-export async function requestEmailCode(email: string, wallet: string, options: EmailCallOptions = {}): Promise<void> {
-  await post('/api/email/start', { email, wallet }, options)
+/** Ask the server to email a code to `email`, bound to `wallet` when given. */
+export async function requestEmailCode(email: string, wallet?: string, options: EmailCallOptions = {}): Promise<void> {
+  await post('/api/email/start', { email, ...(wallet ? { wallet } : {}) }, options)
 }
 
 export interface VerifiedEmail {
@@ -70,10 +75,10 @@ export interface VerifiedEmail {
 /** Confirm the code; resolves when the server accepts it. */
 export async function verifyEmailCode(
   email: string,
-  wallet: string,
+  wallet: string | undefined,
   code: string,
   options: EmailCallOptions = {},
 ): Promise<VerifiedEmail> {
-  const payload = await post('/api/email/verify', { email, wallet, code }, options)
+  const payload = await post('/api/email/verify', { email, ...(wallet ? { wallet } : {}), code }, options)
   return { verified: payload.verified === true, attestation: payload.attestation as VerifiedEmail['attestation'] }
 }

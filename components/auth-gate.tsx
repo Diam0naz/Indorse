@@ -6,19 +6,25 @@
  * settings) survives a lock and there is no flash of app content on launch —
  * during `loading` the gate is an empty field-coloured screen.
  *
- * First launch shows the register form (passcode + the biometric opt-in when
- * the device can offer biometrics, enrolled or not), later returns show the
- * unlock form (biometric prompt first when enabled, password fallback with
- * attempts + cooldown).
+ * First launch shows the register form (recovery email + passcode + the
+ * biometric opt-in when the device can offer biometrics, enrolled or not);
+ * with an API configured, an optional emailed-code step confirms the address
+ * before the account exists. Later returns show the unlock form (biometric
+ * prompt first when enabled, passcode fallback with attempts + cooldown).
+ *
+ * "Forgot passcode?" is the password-loss path: when any recovery email is on
+ * file it opens the email verification loop (prove the inbox, choose a new
+ * passcode — the wallet is never involved). The destructive local wipe is the
+ * legacy fallback for installs that never saved an email.
  */
 
-import { useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { ActivityIndicator, Alert, Modal, Pressable, ScrollView, Switch, Text, TextInput, View } from 'react-native'
 import { useSettings } from '@/components/settings-provider'
 import { useTheme } from '@/components/theme-provider'
-import { MIN_LENGTH, useAuth } from '@/components/auth-provider'
+import { MIN_LENGTH, isValidEmail, normalizeEmail, useAuth } from '@/components/auth-provider'
 import { fontSizes, fontWeights, radii, spacing, createStyles, type Colors } from '@/constants/theme'
-import { requestEmailCode, verifyEmailCode } from '@/features/email/emailApi'
+import { isEmailEndpointConfigured, requestEmailCode, verifyEmailCode } from '@/features/email/emailApi'
 import { getVerifiedEmail, type VerifiedEmailRecord } from '@/features/email/verifiedEmailStore'
 import { useT } from '@/lib/i18n'
 
@@ -38,7 +44,7 @@ export function AuthGate() {
   )
 }
 
-/* ── Shared field ────────────────────────────────────────────────────────── */
+/* ── Shared fields ───────────────────────────────────────────────────────── */
 
 interface FieldProps {
   label: string
@@ -76,6 +82,34 @@ function PasscodeField({ label, value, onChangeText, onSubmit, error, autoFocus,
         <Pressable onPress={() => setHidden((h) => !h)} hitSlop={8} accessibilityRole="button">
           <Text style={styles.reveal}>{hidden ? 'Show' : 'Hide'}</Text>
         </Pressable>
+      </View>
+    </View>
+  )
+}
+
+function EmailField({ label, value, onChangeText, onSubmit, error, autoFocus, testID }: FieldProps) {
+  const t = useT()
+  const { colors } = useTheme()
+  const styles = makeStyles(colors)
+
+  return (
+    <View style={styles.field}>
+      <Text style={styles.fieldLabel}>{label}</Text>
+      <View style={[styles.inputWrap, error && styles.inputWrapError]}>
+        <TextInput
+          testID={testID}
+          value={value}
+          onChangeText={onChangeText}
+          onSubmitEditing={onSubmit}
+          keyboardType="email-address"
+          autoCapitalize="none"
+          autoCorrect={false}
+          autoFocus={autoFocus}
+          placeholder={t('email.placeholder')}
+          placeholderTextColor={colors.textDim}
+          style={styles.input}
+          accessibilityLabel={label}
+        />
       </View>
     </View>
   )
@@ -127,32 +161,168 @@ function RegisterForm() {
   const { security, setSecurity } = useSettings()
   const styles = makeStyles(colors)
 
+  const [phase, setPhase] = useState<'details' | 'verify'>('details')
   const [passcode, setPasscode] = useState('')
   const [confirm, setConfirm] = useState('')
+  const [email, setEmail] = useState('')
+  const [code, setCode] = useState('')
+  const [sent, setSent] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [busy, setBusy] = useState(false)
+  const autoSent = useRef(false)
 
   const tooShort = passcode.length < MIN_LENGTH
   const mismatch = confirm.length > 0 && confirm !== passcode
-  const canSubmit = !tooShort && confirm.length > 0 && !mismatch && !busy
+  const emailOk = isValidEmail(email)
+  const canSubmit = !tooShort && confirm.length > 0 && !mismatch && emailOk && !busy
 
-  async function submit() {
+  /** Step 1 → 2. With an API configured, confirm the email before the lock. */
+  async function submitDetails() {
     if (!canSubmit) {
-      setError(tooShort ? t('auth.create.hint') : mismatch ? t('auth.create.mismatch') : null)
+      setError(
+        tooShort
+          ? t('auth.create.hint')
+          : mismatch
+            ? t('auth.create.mismatch')
+            : !emailOk
+              ? t('auth.create.emailInvalid')
+              : null,
+      )
       return
     }
+    if (!isEmailEndpointConfigured()) {
+      setBusy(true)
+      try {
+        await register(passcode, email)
+      } finally {
+        setBusy(false)
+      }
+      return
+    }
+    setPhase('verify')
+  }
+
+  const sendCode = useCallback(async () => {
     setBusy(true)
+    setError(null)
     try {
-      await register(passcode)
+      await requestEmailCode(email)
+      setSent(true)
+    } catch (e) {
+      setError(e instanceof Error ? e.message : t('auth.create.emailSendError'))
     } finally {
       setBusy(false)
     }
+  }, [email, t])
+
+  // Entering step 2: send the first code straight away. The user can resend
+  // or skip — the passcode they just typed is still in state either way.
+  useEffect(() => {
+    if (phase !== 'verify' || autoSent.current) return
+    autoSent.current = true
+    void sendCode()
+  }, [phase, sendCode])
+
+  const verifyCode = useCallback(async () => {
+    setBusy(true)
+    setError(null)
+    try {
+      await verifyEmailCode(email, undefined, code.trim())
+      await register(passcode, email, true)
+    } catch (e) {
+      setError(e instanceof Error ? e.message : t('auth.code.error'))
+    } finally {
+      setBusy(false)
+    }
+  }, [code, email, passcode, register, t])
+
+  const skip = useCallback(() => {
+    void register(passcode, email)
+  }, [passcode, email, register])
+
+  if (phase === 'verify') {
+    return (
+      <ScrollView contentContainerStyle={styles.content} keyboardShouldPersistTaps="handled">
+        <Text style={styles.title}>{t('email.title')}</Text>
+        <Text style={styles.subtitle}>{t('auth.create.verifyLead', { email })}</Text>
+
+        {sent ? (
+          <View style={styles.inputWrap}>
+            <TextInput
+              testID="register-code"
+              value={code}
+              onChangeText={setCode}
+              keyboardType="number-pad"
+              maxLength={6}
+              placeholder="123456"
+              placeholderTextColor={colors.textDim}
+              accessibilityLabel={t('email.code')}
+              style={styles.input}
+            />
+          </View>
+        ) : null}
+
+        {error ? <Text style={styles.error}>{error}</Text> : null}
+
+        {sent ? (
+          <>
+            <PrimaryButton
+              label={busy ? t('email.verifying') : t('email.confirm')}
+              onPress={() => void verifyCode()}
+              disabled={code.trim().length === 0}
+              busy={busy}
+              testID="register-verify"
+            />
+            <Pressable
+              onPress={() => void sendCode()}
+              disabled={busy}
+              accessibilityRole="button"
+              style={styles.forgot}
+              hitSlop={8}
+            >
+              <Text style={styles.forgotLabel}>{t('email.resend')}</Text>
+            </Pressable>
+          </>
+        ) : (
+          <PrimaryButton
+            label={busy ? t('email.sending') : t('email.send')}
+            onPress={() => void sendCode()}
+            busy={busy}
+            testID="register-send"
+          />
+        )}
+
+        <Pressable
+          onPress={skip}
+          disabled={busy}
+          accessibilityRole="button"
+          accessibilityLabel={t('auth.create.skip')}
+          style={styles.forgot}
+          hitSlop={8}
+        >
+          <Text style={styles.forgotLabel}>{t('auth.create.skip')}</Text>
+        </Pressable>
+      </ScrollView>
+    )
   }
 
   return (
     <ScrollView contentContainerStyle={styles.content} keyboardShouldPersistTaps="handled">
       <Text style={styles.title}>{t('auth.create.title')}</Text>
       <Text style={styles.subtitle}>{t('auth.create.subtitle')}</Text>
+
+      <EmailField
+        label={t('auth.create.email')}
+        value={email}
+        onChangeText={(text) => {
+          setEmail(text)
+          setError(null)
+        }}
+        onSubmit={() => void submitDetails()}
+        error={error === t('auth.create.emailInvalid')}
+        testID="register-email"
+      />
+      <Text style={styles.hint}>{t('auth.create.emailHint')}</Text>
 
       <PasscodeField
         label={t('auth.create.passcode')}
@@ -161,7 +331,7 @@ function RegisterForm() {
           setPasscode(text)
           setError(null)
         }}
-        onSubmit={() => confirm.length > 0 && void submit()}
+        onSubmit={() => confirm.length > 0 && void submitDetails()}
         error={error === t('auth.create.hint')}
         autoFocus
         testID="register-passcode"
@@ -173,7 +343,7 @@ function RegisterForm() {
           setConfirm(text)
           setError(null)
         }}
-        onSubmit={() => void submit()}
+        onSubmit={() => void submitDetails()}
         error={mismatch}
         testID="register-confirm"
       />
@@ -198,7 +368,7 @@ function RegisterForm() {
 
       <PrimaryButton
         label={t('auth.create.cta')}
-        onPress={() => void submit()}
+        onPress={() => void submitDetails()}
         disabled={!canSubmit}
         busy={busy}
         testID="register-submit"
@@ -212,7 +382,15 @@ function RegisterForm() {
 function UnlockForm() {
   const t = useT()
   const { colors } = useTheme()
-  const { verify, unlockWithBiometrics, reset, attemptsLeft, cooldownEndsAt, biometricsAvailable } = useAuth()
+  const {
+    verify,
+    unlockWithBiometrics,
+    reset,
+    attemptsLeft,
+    cooldownEndsAt,
+    biometricsAvailable,
+    recoveryEmailOnFile,
+  } = useAuth()
   const { security } = useSettings()
   const styles = makeStyles(colors)
 
@@ -221,6 +399,8 @@ function UnlockForm() {
   const [busy, setBusy] = useState(false)
   const [now, setNow] = useState(() => Date.now())
   const [recovering, setRecovering] = useState(false)
+  // undefined = still loading the remembered Settings pair; null = none.
+  const [savedPair, setSavedPair] = useState<VerifiedEmailRecord | null | undefined>(undefined)
   const triedBiometrics = useRef(false)
 
   const cooling = cooldownEndsAt !== null && cooldownEndsAt > now
@@ -239,6 +419,20 @@ function UnlockForm() {
     triedBiometrics.current = true
     void unlockWithBiometrics()
   }, [security.biometrics, biometricsAvailable, unlockWithBiometrics])
+
+  useEffect(() => {
+    let cancelled = false
+    getVerifiedEmail()
+      .then((record) => {
+        if (!cancelled) setSavedPair(record ?? null)
+      })
+      .catch(() => {
+        if (!cancelled) setSavedPair(null)
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [])
 
   async function submit() {
     if (cooling || busy) return
@@ -266,11 +460,17 @@ function UnlockForm() {
   }
 
   /**
-   * Confirm first — this is an irreversible local wipe with no recovery step,
+   * Password loss goes to the email loop whenever any recovery email exists —
+   * the hashed one from sign-up, or a pair proven in Settings. Only legacy
+   * installs without either get the irreversible local wipe, confirmed first
    * so it matches the Security screen's confirm-then-act pattern.
    */
   function forgot() {
     if (busy) return
+    if (recoveryEmailOnFile || savedPair) {
+      setRecovering(true)
+      return
+    }
     Alert.alert(t('auth.unlock.forgotConfirm'), t('auth.unlock.forgotConfirmBody'), [
       { text: t('security.cancel'), style: 'cancel' },
       { text: t('auth.unlock.forgotConfirmCta'), style: 'destructive', onPress: () => void performForgot() },
@@ -323,33 +523,28 @@ function UnlockForm() {
       >
         <Text style={styles.forgotLabel}>{t('auth.unlock.forgot')}</Text>
       </Pressable>
-
-      <Pressable
-        onPress={() => setRecovering(true)}
-        disabled={busy}
-        accessibilityRole="button"
-        accessibilityLabel={t('auth.unlock.recover')}
-        style={styles.forgot}
-        hitSlop={8}
-      >
-        <Text style={styles.forgotLabel}>{t('auth.unlock.recover')}</Text>
-      </Pressable>
     </ScrollView>
   )
 }
 
-/* ── Recover (email) ─────────────────────────────────────────────────────── */
+/* ── Recover (email verification loop) ───────────────────────────────────── */
+
+type RecoverStep = 'request' | 'code' | 'newPasscode'
 
 function RecoverForm({ onBack }: { onBack: () => void }) {
   const t = useT()
   const { colors } = useTheme()
-  const { reset } = useAuth()
+  const { resetPasscode, matchRecoveryEmail, recoveryEmailOnFile } = useAuth()
   const styles = makeStyles(colors)
 
   // undefined = still loading the remembered pair; null = none on this device.
   const [saved, setSaved] = useState<VerifiedEmailRecord | null | undefined>(undefined)
+  const [step, setStep] = useState<RecoverStep>('request')
+  const [emailInput, setEmailInput] = useState('')
+  const [targetEmail, setTargetEmail] = useState('')
   const [code, setCode] = useState('')
-  const [sent, setSent] = useState(false)
+  const [newPasscode, setNewPasscode] = useState('')
+  const [confirmPasscode, setConfirmPasscode] = useState('')
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
 
@@ -367,29 +562,78 @@ function RecoverForm({ onBack }: { onBack: () => void }) {
     }
   }, [])
 
-  /** Email a code. No wallet session is needed — the pair was proven earlier. */
+  // The hashed sign-up email is the primary source (retyped and hash-checked
+  // here); a pair proven in Settings is the fallback for accounts that
+  // predate it. undefined = still resolving the fallback.
+  const source: 'hash' | 'pair' | null | undefined = recoveryEmailOnFile
+    ? 'hash'
+    : saved === undefined
+      ? undefined
+      : saved
+        ? 'pair'
+        : null
+
+  /** Step 1: prove which address, then email a code to it. */
   async function send() {
-    if (!saved || busy) return
+    if (busy) return
     setBusy(true)
     setError(null)
     try {
-      await requestEmailCode(saved.email, saved.wallet)
-      setSent(true)
+      let next: string
+      if (source === 'hash') {
+        // Gate the send on a local hash match — the app never emails an
+        // address that is not the one already on file.
+        if (!(await matchRecoveryEmail(emailInput))) {
+          setError(t('auth.unlock.recoverMismatch'))
+          return
+        }
+        next = normalizeEmail(emailInput)
+        await requestEmailCode(next)
+      } else if (source === 'pair' && saved) {
+        next = saved.email
+        await requestEmailCode(next, saved.wallet)
+      } else {
+        return
+      }
+      setTargetEmail(next)
+      setStep('code')
     } catch (e) {
-      setError(e instanceof Error ? e.message : t('auth.unlock.recoverSend'))
+      setError(e instanceof Error ? e.message : t('auth.create.emailSendError'))
     } finally {
       setBusy(false)
     }
   }
 
-  /** Confirm the code, then wipe the passcode — the gate drops into register. */
-  async function confirm() {
-    if (!saved || busy) return
+  /** Step 2: check the code back — inbox control, wallet or not. */
+  async function submitCode() {
+    if (busy) return
     setBusy(true)
     setError(null)
     try {
-      await verifyEmailCode(saved.email, saved.wallet, code.trim())
-      await reset()
+      await verifyEmailCode(targetEmail, source === 'pair' && saved ? saved.wallet : undefined, code.trim())
+      setStep('newPasscode')
+    } catch (e) {
+      setError(e instanceof Error ? e.message : t('auth.code.error'))
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  /** Step 3: new passcode, same account — the recovery email stays on file. */
+  async function finish() {
+    if (busy) return
+    if (newPasscode.length < MIN_LENGTH) {
+      setError(t('auth.create.hint'))
+      return
+    }
+    if (confirmPasscode !== newPasscode) {
+      setError(t('auth.create.mismatch'))
+      return
+    }
+    setBusy(true)
+    setError(null)
+    try {
+      await resetPasscode(newPasscode, targetEmail)
     } catch (e) {
       setError(e instanceof Error ? e.message : t('auth.unlock.error'))
     } finally {
@@ -399,50 +643,120 @@ function RecoverForm({ onBack }: { onBack: () => void }) {
 
   return (
     <ScrollView contentContainerStyle={styles.content} keyboardShouldPersistTaps="handled">
-      <Text style={styles.title}>{t('auth.unlock.recoverTitle')}</Text>
+      <Text style={styles.title}>
+        {step === 'newPasscode' ? t('auth.unlock.newPasscode') : t('auth.unlock.recoverTitle')}
+      </Text>
 
-      {saved === undefined ? (
+      {source === undefined ? (
         <ActivityIndicator size="small" color={colors.textMuted} />
-      ) : saved === null ? (
+      ) : source === null ? (
         <Text style={styles.subtitle}>{t('auth.unlock.recoverNone')}</Text>
-      ) : (
+      ) : step === 'request' ? (
         <>
-          <Text style={styles.subtitle}>{t('auth.unlock.recoverLead', { email: saved.email })}</Text>
-
-          {sent ? (
-            <View style={styles.inputWrap}>
-              <TextInput
-                style={styles.input}
-                value={code}
-                onChangeText={setCode}
-                keyboardType="number-pad"
-                maxLength={6}
-                placeholder="123456"
-                placeholderTextColor={colors.textDim}
-                accessibilityLabel={t('email.code')}
-                testID="recover-code"
+          {source === 'pair' && saved ? (
+            <Text style={styles.subtitle}>{t('auth.unlock.recoverLead', { email: saved.email })}</Text>
+          ) : (
+            <>
+              <Text style={styles.subtitle}>{t('auth.unlock.recoverEmailLead')}</Text>
+              <EmailField
+                label={t('auth.unlock.recoverEmailLabel')}
+                value={emailInput}
+                onChangeText={(text) => {
+                  setEmailInput(text)
+                  setError(null)
+                }}
+                onSubmit={() => void send()}
+                error={error === t('auth.unlock.recoverMismatch')}
+                testID="recover-email"
               />
-            </View>
-          ) : null}
+            </>
+          )}
 
           {error ? <Text style={styles.error}>{error}</Text> : null}
 
-          {sent ? (
-            <PrimaryButton
-              label={busy ? t('email.verifying') : t('auth.unlock.recoverConfirm')}
-              onPress={() => void confirm()}
-              disabled={code.trim().length === 0}
-              busy={busy}
-              testID="recover-submit"
+          <PrimaryButton
+            label={busy ? t('email.sending') : t('auth.unlock.recoverSend')}
+            onPress={() => void send()}
+            disabled={source === 'hash' && !isValidEmail(emailInput)}
+            busy={busy}
+            testID="recover-send"
+          />
+        </>
+      ) : step === 'code' ? (
+        <>
+          <Text style={styles.subtitle}>{t('email.sent', { email: targetEmail })}</Text>
+
+          <View style={styles.inputWrap}>
+            <TextInput
+              testID="recover-code"
+              value={code}
+              onChangeText={setCode}
+              keyboardType="number-pad"
+              maxLength={6}
+              placeholder="123456"
+              placeholderTextColor={colors.textDim}
+              accessibilityLabel={t('email.code')}
+              style={styles.input}
             />
-          ) : (
-            <PrimaryButton
-              label={busy ? t('email.sending') : t('auth.unlock.recoverSend')}
-              onPress={() => void send()}
-              busy={busy}
-              testID="recover-send"
-            />
-          )}
+          </View>
+
+          {error ? <Text style={styles.error}>{error}</Text> : null}
+
+          <PrimaryButton
+            label={busy ? t('email.verifying') : t('email.confirm')}
+            onPress={() => void submitCode()}
+            disabled={code.trim().length === 0}
+            busy={busy}
+            testID="recover-submit"
+          />
+
+          <Pressable
+            onPress={() => void send()}
+            disabled={busy}
+            accessibilityRole="button"
+            style={styles.forgot}
+            hitSlop={8}
+          >
+            <Text style={styles.forgotLabel}>{t('email.resend')}</Text>
+          </Pressable>
+        </>
+      ) : (
+        <>
+          <Text style={styles.subtitle}>{t('auth.unlock.newPasscodeLead')}</Text>
+
+          <PasscodeField
+            label={t('auth.create.passcode')}
+            value={newPasscode}
+            onChangeText={(text) => {
+              setNewPasscode(text)
+              setError(null)
+            }}
+            onSubmit={() => confirmPasscode.length > 0 && void finish()}
+            error={error === t('auth.create.hint')}
+            autoFocus
+            testID="recover-passcode"
+          />
+          <PasscodeField
+            label={t('auth.create.confirm')}
+            value={confirmPasscode}
+            onChangeText={(text) => {
+              setConfirmPasscode(text)
+              setError(null)
+            }}
+            onSubmit={() => void finish()}
+            error={confirmPasscode.length > 0 && confirmPasscode !== newPasscode}
+            testID="recover-confirm"
+          />
+
+          {error ? <Text style={styles.error}>{error}</Text> : <Text style={styles.hint}>{t('auth.create.hint')}</Text>}
+
+          <PrimaryButton
+            label={t('auth.unlock.newPasscodeCta')}
+            onPress={() => void finish()}
+            disabled={newPasscode.length === 0 || confirmPasscode.length === 0}
+            busy={busy}
+            testID="recover-finish"
+          />
         </>
       )}
 

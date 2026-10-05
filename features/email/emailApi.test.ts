@@ -23,6 +23,14 @@ describe('requestEmailCode', () => {
     expect(JSON.parse(init.body as string)).toEqual({ email: 'grower@example.com', wallet: WALLET })
   })
 
+  it('omits the wallet entirely for a lock-screen recovery send', async () => {
+    const mock = stubFetch(true, 200, { sent: true, expiresAt: 1 })
+    await requestEmailCode('grower@example.com', undefined, { origin: ORIGIN })
+
+    const [, init] = mock.mock.calls[0] as unknown as [string, RequestInit]
+    expect(JSON.parse(init.body as string)).toEqual({ email: 'grower@example.com' })
+  })
+
   it('surfaces the server error and code', async () => {
     stubFetch(false, 429, { error: 'Too many attempts. Request a new code.', code: 'locked' })
     await expect(requestEmailCode('a@b.com', WALLET, { origin: ORIGIN })).rejects.toMatchObject({
@@ -43,6 +51,15 @@ describe('verifyEmailCode', () => {
     const result = await verifyEmailCode('a@b.com', WALLET, '123456', { origin: ORIGIN })
 
     expect(result).toEqual({ verified: true, attestation: { address: 'att', signature: 'sig' } })
+  })
+
+  it('verifies a recovery code without a wallet — and without an address', async () => {
+    const mock = stubFetch(true, 200, { verified: true })
+    const result = await verifyEmailCode('grower@example.com', undefined, '123456', { origin: ORIGIN })
+
+    expect(result).toEqual({ verified: true })
+    const [, init] = mock.mock.calls[0] as unknown as [string, RequestInit]
+    expect(JSON.parse(init.body as string)).toEqual({ email: 'grower@example.com', code: '123456' })
   })
 
   it('rejects an invalid code', async () => {
