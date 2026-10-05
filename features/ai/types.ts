@@ -43,11 +43,20 @@ export interface ClassificationResult {
   notes: string
 }
 
-export interface ClassifyPhotoInput {
+/** One photo in a (possibly multi-shot) classification call. */
+export interface ImageInput {
   /** Base64-encoded image bytes (a `data:` prefix is tolerated and stripped). */
   imageBase64: string
   /** Image MIME type. Defaults to `image/jpeg`. */
   mimeType?: string
+}
+
+export interface ClassifyPhotoInput {
+  /**
+   * Every shot the scout took of the plant — 1..5 photos that ride to the
+   * model in a single call, so one verdict weighs all the angles together.
+   */
+  images: ImageInput[]
 }
 
 export type ClassificationErrorCode = 'bad-request' | 'unauthorized' | 'upstream' | 'network' | 'timeout' | 'malformed'

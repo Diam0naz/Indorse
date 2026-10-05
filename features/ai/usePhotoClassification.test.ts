@@ -30,7 +30,7 @@ describe('usePhotoClassification', () => {
     const { result } = await renderHook(() => usePhotoClassification())
 
     await act(async () => {
-      await expect(result.current.classify('ZmFrZQ==')).resolves.toBeNull()
+      await expect(result.current.classify(['ZmFrZQ=='])).resolves.toBeNull()
     })
 
     expect(result.current.classifying).toBe(false)
@@ -42,7 +42,7 @@ describe('usePhotoClassification', () => {
     const { result } = await renderHook(() => usePhotoClassification())
 
     await act(async () => {
-      await expect(result.current.classify('   ')).resolves.toBeNull()
+      await expect(result.current.classify(['   '])).resolves.toBeNull()
     })
 
     expect(result.current.classifying).toBe(false)
@@ -56,7 +56,7 @@ describe('usePhotoClassification', () => {
 
     let started!: Promise<ClassificationResult | null>
     await act(async () => {
-      started = result.current.classify('ZmFrZQ==')
+      started = result.current.classify(['ZmFrZQ=='])
     })
     expect(result.current.classifying).toBe(true)
     expect(result.current.classification).toBeNull()
@@ -85,7 +85,7 @@ describe('usePhotoClassification', () => {
     const { result } = await renderHook(() => usePhotoClassification())
 
     await act(async () => {
-      await expect(result.current.classify('ZmFrZQ==')).resolves.toBeNull()
+      await expect(result.current.classify(['ZmFrZQ=='])).resolves.toBeNull()
     })
 
     expect(result.current.classification).toBeNull()
@@ -99,7 +99,7 @@ describe('usePhotoClassification', () => {
 
     let started!: Promise<ClassificationResult | null>
     await act(async () => {
-      started = result.current.classify('ZmFrZQ==')
+      started = result.current.classify(['ZmFrZQ=='])
     })
 
     await act(async () => {
@@ -114,5 +114,20 @@ describe('usePhotoClassification', () => {
 
     expect(result.current.classification).toBeNull()
     expect(result.current.classifying).toBe(false)
+  })
+
+  it('sends every shot to the proxy in a single classifyPhoto call', async () => {
+    vi.mocked(classifyPhoto).mockResolvedValue({ label: 'Leaf Rust', confidence: 0.7, severity: 'low', notes: 'x' })
+    const { result } = await renderHook(() => usePhotoClassification())
+
+    await act(async () => {
+      await result.current.classify(['ZmFrZQ==', 'b3RoZXI='])
+    })
+
+    expect(classifyPhoto).toHaveBeenCalledTimes(1)
+    expect(vi.mocked(classifyPhoto)).toHaveBeenCalledWith(
+      { images: [{ imageBase64: 'ZmFrZQ==' }, { imageBase64: 'b3RoZXI=' }] },
+      expect.objectContaining({ endpoint: 'https://example.com/api/classify' }),
+    )
   })
 })

@@ -1,17 +1,18 @@
 /**
  * features/ai/classify.ts — on-device classification client
  *
- * Standalone POC: takes a base64 field photo, POSTs it to the serverless
- * proxy (`api/classify.ts`) and returns the typed `{ label, confidence,
- * severity, notes }` verdict. The proxy owns the vision-model API key; the
- * app never sees it.
+ * Standalone POC: takes the scout's base64 field photos, POSTs them to the
+ * serverless proxy (`api/classify.ts`) as one `images[]` payload and returns
+ * the typed `{ label, confidence, severity, notes }` verdict — a single model
+ * call weighs every shot of the plant together. The proxy owns the
+ * vision-model API key; the app never sees it.
  *
  * This is deliberately transport-only. Wiring the result into
  * `submit_scout_report` (`aiLabel`) happens later, once the native camera /
  * location modules are rebuilt and the program is deployed.
  *
  *   const { label, confidence, severity, notes } = await classifyPhoto(
- *     { imageBase64: await capturePhoto() },
+ *     { images: [{ imageBase64: await capturePhoto() }] },
  *     { endpoint: getClassifyEndpoint()! },
  *   )
  */
@@ -53,8 +54,9 @@ export async function classifyPhoto(
 ): Promise<ClassificationResult> {
   const { endpoint, fetchImpl = fetch, timeoutMs = DEFAULT_TIMEOUT_MS, signal } = options
 
-  if (!input.imageBase64 || input.imageBase64.trim().length === 0) {
-    throw new ClassificationError('bad-request', 'classifyPhoto requires imageBase64 bytes')
+  const images = input.images ?? []
+  if (images.length === 0 || images.some((image) => !image?.imageBase64 || image.imageBase64.trim().length === 0)) {
+    throw new ClassificationError('bad-request', 'classifyPhoto requires image bytes for every shot')
   }
   if (!endpoint) {
     throw new ClassificationError('bad-request', 'classifyPhoto requires a proxy endpoint')
@@ -76,8 +78,10 @@ export async function classifyPhoto(
       method: 'POST',
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify({
-        imageBase64: input.imageBase64,
-        mimeType: input.mimeType ?? DEFAULT_MIME_TYPE,
+        images: images.map((image) => ({
+          imageBase64: image.imageBase64,
+          mimeType: image.mimeType ?? DEFAULT_MIME_TYPE,
+        })),
       }),
       signal: controller.signal,
     })

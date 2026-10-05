@@ -20,7 +20,7 @@ describe('classifyPhoto', () => {
     const fetchImpl = okFetch(verdict('Gray Leaf Spot', 0.82))
 
     const result = await classifyPhoto(
-      { imageBase64: 'ZmFrZQ==', mimeType: 'image/png' },
+      { images: [{ imageBase64: 'ZmFrZQ==', mimeType: 'image/png' }] },
       { endpoint: 'https://example.com/api/classify', fetchImpl },
     )
 
@@ -36,38 +36,70 @@ describe('classifyPhoto', () => {
     expect((init as RequestInit).method).toBe('POST')
     expect((init as Record<string, unknown>).headers).toEqual({ 'content-type': 'application/json' })
     expect(JSON.parse((init as RequestInit).body as string)).toEqual({
-      imageBase64: 'ZmFrZQ==',
-      mimeType: 'image/png',
+      images: [{ imageBase64: 'ZmFrZQ==', mimeType: 'image/png' }],
     })
   })
 
   it('defaults the mime type to image/jpeg', async () => {
     const fetchImpl = okFetch(verdict('Leaf Rust', 0.5))
-    await classifyPhoto({ imageBase64: 'ZmFrZQ==' }, { endpoint: 'https://example.com/api/classify', fetchImpl })
+    await classifyPhoto(
+      { images: [{ imageBase64: 'ZmFrZQ==' }] },
+      { endpoint: 'https://example.com/api/classify', fetchImpl },
+    )
 
     const [, init] = (fetchImpl as unknown as ReturnType<typeof vi.fn>).mock.calls[0]
-    expect(JSON.parse((init as RequestInit).body as string).mimeType).toBe('image/jpeg')
+    expect(JSON.parse((init as RequestInit).body as string).images[0].mimeType).toBe('image/jpeg')
+  })
+
+  it('serializes every shot into one images[] payload, in order', async () => {
+    const fetchImpl = okFetch(verdict('Gray Leaf Spot', 0.82))
+    await classifyPhoto(
+      { images: [{ imageBase64: 'b25l' }, { imageBase64: 'dHdv', mimeType: 'image/png' }] },
+      { endpoint: 'https://example.com/api/classify', fetchImpl },
+    )
+
+    const [, init] = (fetchImpl as unknown as ReturnType<typeof vi.fn>).mock.calls[0]
+    expect(JSON.parse((init as RequestInit).body as string)).toEqual({
+      images: [
+        { imageBase64: 'b25l', mimeType: 'image/jpeg' },
+        { imageBase64: 'dHdv', mimeType: 'image/png' },
+      ],
+    })
+  })
+
+  it('throws bad-request with no shots', async () => {
+    await expect(
+      classifyPhoto({ images: [] }, { endpoint: 'https://example.com', fetchImpl: okFetch({}) }),
+    ).rejects.toMatchObject({ code: 'bad-request' })
   })
 
   it('throws bad-request without image bytes', async () => {
     await expect(
-      classifyPhoto({ imageBase64: '  ' }, { endpoint: 'https://example.com', fetchImpl: okFetch({}) }),
+      classifyPhoto({ images: [{ imageBase64: '  ' }] }, { endpoint: 'https://example.com', fetchImpl: okFetch({}) }),
     ).rejects.toMatchObject({ code: 'bad-request' })
   })
 
   it('throws bad-request without an endpoint', async () => {
-    await expect(classifyPhoto({ imageBase64: 'x' }, { endpoint: '' })).rejects.toBeInstanceOf(ClassificationError)
+    await expect(classifyPhoto({ images: [{ imageBase64: 'x' }] }, { endpoint: '' })).rejects.toBeInstanceOf(
+      ClassificationError,
+    )
   })
 
   it('maps a 401 to unauthorized', async () => {
     await expect(
-      classifyPhoto({ imageBase64: 'x' }, { endpoint: 'https://example.com', fetchImpl: errorFetch(401) }),
+      classifyPhoto(
+        { images: [{ imageBase64: 'x' }] },
+        { endpoint: 'https://example.com', fetchImpl: errorFetch(401) },
+      ),
     ).rejects.toMatchObject({ code: 'unauthorized', status: 401 })
   })
 
   it('maps a 500 to upstream', async () => {
     await expect(
-      classifyPhoto({ imageBase64: 'x' }, { endpoint: 'https://example.com', fetchImpl: errorFetch(500) }),
+      classifyPhoto(
+        { images: [{ imageBase64: 'x' }] },
+        { endpoint: 'https://example.com', fetchImpl: errorFetch(500) },
+      ),
     ).rejects.toMatchObject({ code: 'upstream', status: 500 })
   })
 
@@ -77,7 +109,7 @@ describe('classifyPhoto', () => {
     }) as unknown as typeof fetch
 
     await expect(
-      classifyPhoto({ imageBase64: 'x' }, { endpoint: 'https://example.com', fetchImpl }),
+      classifyPhoto({ images: [{ imageBase64: 'x' }] }, { endpoint: 'https://example.com', fetchImpl }),
     ).rejects.toMatchObject({ code: 'network' })
   })
 
@@ -94,13 +126,19 @@ describe('classifyPhoto', () => {
     }) as unknown as typeof fetch
 
     await expect(
-      classifyPhoto({ imageBase64: 'x' }, { endpoint: 'https://example.com', fetchImpl: hanging, timeoutMs: 10 }),
+      classifyPhoto(
+        { images: [{ imageBase64: 'x' }] },
+        { endpoint: 'https://example.com', fetchImpl: hanging, timeoutMs: 10 },
+      ),
     ).rejects.toMatchObject({ code: 'timeout' })
   })
 
   it('surfaces a malformed proxy payload', async () => {
     await expect(
-      classifyPhoto({ imageBase64: 'x' }, { endpoint: 'https://example.com', fetchImpl: okFetch({ label: '' }) }),
+      classifyPhoto(
+        { images: [{ imageBase64: 'x' }] },
+        { endpoint: 'https://example.com', fetchImpl: okFetch({ label: '' }) },
+      ),
     ).rejects.toMatchObject({ code: 'malformed' })
   })
 })

@@ -21,6 +21,7 @@ import {
   parseClassification,
   DEFAULT_MIME_TYPE,
   type ClassificationResult,
+  type ImageInput,
 } from '@/features/ai/types'
 import { EVENT_DIAGNOSIS_SCHEMA, VISION_PROMPT } from './prompt'
 
@@ -56,12 +57,18 @@ interface DiagnosisStream {
   refused: boolean
 }
 
-/** Call the OpenAI vision model and return a validated classification. */
+/**
+ * Call the OpenAI vision model and return a validated classification.
+ * Every image rides in one Responses call as consecutive `input_image`
+ * parts, so a single verdict weighs all the scout's shots together.
+ */
 export async function classifyWithOpenAI(
-  imageBase64: string,
-  mimeType: string | undefined,
+  images: ImageInput[],
   deps: OpenAIClassifyDeps,
 ): Promise<ClassificationResult> {
+  if (images.length === 0) {
+    throw new ClassificationError('bad-request', 'classifyWithOpenAI requires at least one image')
+  }
   if (!deps.apiKey) {
     throw new ClassificationError('unauthorized', 'OPENAI_API_KEY is not configured')
   }
@@ -80,8 +87,15 @@ export async function classifyWithOpenAI(
         {
           role: 'user',
           content: [
-            { type: 'input_image', image_url: toDataUrl(imageBase64, mimeType ?? DEFAULT_MIME_TYPE), detail: 'high' },
-            { type: 'input_text', text: 'Diagnose this field photo.' },
+            ...images.map((image) => ({
+              type: 'input_image',
+              image_url: toDataUrl(image.imageBase64, image.mimeType ?? DEFAULT_MIME_TYPE),
+              detail: 'high',
+            })),
+            {
+              type: 'input_text',
+              text: images.length > 1 ? 'Diagnose these field photos of the same plant.' : 'Diagnose this field photo.',
+            },
           ],
         },
       ],

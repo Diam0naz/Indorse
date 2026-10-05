@@ -34,9 +34,11 @@ export const CROP_DISEASE_LABELS = [
 
 export const VISION_PROMPT = [
   'You are an agronomy vision classifier for field crops.',
-  'Given a single field photograph, identify the most likely disease, pest or stress issue',
+  'Given one or more field photographs of the same plant, identify the most likely disease, pest or stress issue',
   'and return the structured verdict described by the response schema.',
   'Rules:',
+  '- When several photos are provided they are shots of one plant — weigh every angle together and',
+  'answer for that plant as a whole, not per photo.',
   `- "label" is short and free-form but at most 32 ASCII characters, for example: ${CROP_DISEASE_LABELS.slice(1, 6).join(', ')}.`,
   '- When no crop is visible use "No Crop Detected"; when the photo is too blurry, dark or close',
   'to judge use "Unclear Image"; when the plant looks unaffected use "Healthy".',

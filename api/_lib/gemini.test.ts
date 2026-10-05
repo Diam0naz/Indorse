@@ -44,7 +44,10 @@ describe('classifyWithGemini', () => {
   it('posts a schema-constrained generateContent request and parses the verdict', async () => {
     const { fetchImpl, calls } = capturingFetch(geminiResponse(GRAY_LEAF_SPOT))
 
-    const result = await classifyWithGemini('ZmFrZQ==', 'image/jpeg', { ...DEPS, fetchImpl })
+    const result = await classifyWithGemini([{ imageBase64: 'ZmFrZQ==', mimeType: 'image/jpeg' }], {
+      ...DEPS,
+      fetchImpl,
+    })
 
     expect(result).toEqual(GRAY_LEAF_SPOT)
     expect(calls).toHaveLength(1)
@@ -65,10 +68,30 @@ describe('classifyWithGemini', () => {
     expect(body.generationConfig.responseSchema.type).toBe('OBJECT')
   })
 
+  it('sends every photo as consecutive parts in one request', async () => {
+    const { fetchImpl, calls } = capturingFetch(geminiResponse(GRAY_LEAF_SPOT))
+
+    await classifyWithGemini([{ imageBase64: 'b25l' }, { imageBase64: 'dHdv', mimeType: 'image/png' }], {
+      ...DEPS,
+      fetchImpl,
+    })
+
+    const body = JSON.parse(String(calls[0].init.body))
+    expect(body.contents[0].parts).toEqual([
+      { inlineData: { mimeType: 'image/jpeg', data: 'b25l' } },
+      { inlineData: { mimeType: 'image/png', data: 'dHdv' } },
+      { text: 'Diagnose these field photos of the same plant.' },
+    ])
+  })
+
   it('honours a model override', async () => {
     const { fetchImpl, calls } = capturingFetch(geminiResponse(GRAY_LEAF_SPOT))
 
-    await classifyWithGemini('ZmFrZQ==', 'image/jpeg', { ...DEPS, model: 'gemini-3.8-flash', fetchImpl })
+    await classifyWithGemini([{ imageBase64: 'ZmFrZQ==', mimeType: 'image/jpeg' }], {
+      ...DEPS,
+      model: 'gemini-3.8-flash',
+      fetchImpl,
+    })
 
     expect(calls[0].url).toContain('/models/gemini-3.8-flash:generateContent')
   })
@@ -76,9 +99,9 @@ describe('classifyWithGemini', () => {
   it('throws unauthorized without an API key and never calls the network', async () => {
     const fetchImpl = vi.fn() as unknown as typeof fetch
 
-    await expect(classifyWithGemini('ZmFrZQ==', 'image/jpeg', { apiKey: '', fetchImpl })).rejects.toThrow(
-      ClassificationError,
-    )
+    await expect(
+      classifyWithGemini([{ imageBase64: 'ZmFrZQ==', mimeType: 'image/jpeg' }], { apiKey: '', fetchImpl }),
+    ).rejects.toThrow(ClassificationError)
     expect(fetchImpl).not.toHaveBeenCalled()
   })
 
@@ -87,10 +110,10 @@ describe('classifyWithGemini', () => {
     const badGateway = { ok: false, status: 502, json: async () => ({}) } as Response
 
     await expect(
-      classifyWithGemini('a', undefined, { ...DEPS, retryDelayMs: 0, fetchImpl: fetchOf(forbidden) }),
+      classifyWithGemini([{ imageBase64: 'a' }], { ...DEPS, retryDelayMs: 0, fetchImpl: fetchOf(forbidden) }),
     ).rejects.toThrow(/401/)
     await expect(
-      classifyWithGemini('a', undefined, { ...DEPS, retryDelayMs: 0, fetchImpl: fetchOf(badGateway) }),
+      classifyWithGemini([{ imageBase64: 'a' }], { ...DEPS, retryDelayMs: 0, fetchImpl: fetchOf(badGateway) }),
     ).rejects.toMatchObject({ code: 'upstream' })
   })
 
@@ -102,7 +125,11 @@ describe('classifyWithGemini', () => {
       return calls === 1 ? busy : geminiResponse(GRAY_LEAF_SPOT)
     }) as unknown as typeof fetch
 
-    const result = await classifyWithGemini('a', 'image/jpeg', { ...DEPS, retryDelayMs: 0, fetchImpl })
+    const result = await classifyWithGemini([{ imageBase64: 'a', mimeType: 'image/jpeg' }], {
+      ...DEPS,
+      retryDelayMs: 0,
+      fetchImpl,
+    })
 
     expect(result).toEqual(GRAY_LEAF_SPOT)
     expect(calls).toBe(2)
@@ -112,7 +139,9 @@ describe('classifyWithGemini', () => {
     const busy = { ok: false, status: 503, json: async () => ({}) } as Response
     const fetchImpl = vi.fn(async () => busy) as unknown as typeof fetch
 
-    await expect(classifyWithGemini('a', 'image/jpeg', { ...DEPS, retryDelayMs: 0, fetchImpl })).rejects.toMatchObject({
+    await expect(
+      classifyWithGemini([{ imageBase64: 'a', mimeType: 'image/jpeg' }], { ...DEPS, retryDelayMs: 0, fetchImpl }),
+    ).rejects.toMatchObject({
       code: 'upstream',
     })
     expect(fetchImpl).toHaveBeenCalledTimes(1 + GEMINI_MAX_RETRIES)
@@ -122,7 +151,9 @@ describe('classifyWithGemini', () => {
     const bad = { ok: false, status: 400, json: async () => ({}) } as Response
     const fetchImpl = vi.fn(async () => bad) as unknown as typeof fetch
 
-    await expect(classifyWithGemini('a', 'image/jpeg', { ...DEPS, retryDelayMs: 0, fetchImpl })).rejects.toMatchObject({
+    await expect(
+      classifyWithGemini([{ imageBase64: 'a', mimeType: 'image/jpeg' }], { ...DEPS, retryDelayMs: 0, fetchImpl }),
+    ).rejects.toMatchObject({
       code: 'upstream',
     })
     expect(fetchImpl).toHaveBeenCalledTimes(1)
@@ -131,7 +162,9 @@ describe('classifyWithGemini', () => {
   it('reports a blocked request as a refusal', async () => {
     const { fetchImpl } = capturingFetch(geminiResponse({}, { promptFeedback: { blockReason: 'SAFETY' } }))
 
-    await expect(classifyWithGemini('a', 'image/jpeg', { ...DEPS, fetchImpl })).rejects.toMatchObject({
+    await expect(
+      classifyWithGemini([{ imageBase64: 'a', mimeType: 'image/jpeg' }], { ...DEPS, fetchImpl }),
+    ).rejects.toMatchObject({
       code: 'malformed',
       message: expect.stringContaining('SAFETY'),
     })
@@ -140,7 +173,9 @@ describe('classifyWithGemini', () => {
   it('rejects an empty candidates list', async () => {
     const { fetchImpl } = capturingFetch({ ok: true, status: 200, json: async () => ({ candidates: [] }) } as Response)
 
-    await expect(classifyWithGemini('a', 'image/jpeg', { ...DEPS, fetchImpl })).rejects.toMatchObject({
+    await expect(
+      classifyWithGemini([{ imageBase64: 'a', mimeType: 'image/jpeg' }], { ...DEPS, fetchImpl }),
+    ).rejects.toMatchObject({
       code: 'malformed',
       message: expect.stringContaining('no diagnosis text'),
     })
@@ -153,7 +188,9 @@ describe('classifyWithGemini', () => {
       json: async () => ({ candidates: [{ content: { parts: [{ text: 'sorry, no' }] } }] }),
     } as Response)
 
-    await expect(classifyWithGemini('a', 'image/jpeg', { ...DEPS, fetchImpl })).rejects.toMatchObject({
+    await expect(
+      classifyWithGemini([{ imageBase64: 'a', mimeType: 'image/jpeg' }], { ...DEPS, fetchImpl }),
+    ).rejects.toMatchObject({
       code: 'malformed',
       message: expect.stringContaining('non-JSON'),
     })
@@ -168,7 +205,9 @@ describe('classifyWithGemini', () => {
       }),
     } as Response)
 
-    await expect(classifyWithGemini('a', 'image/jpeg', { ...DEPS, fetchImpl })).rejects.toMatchObject({
+    await expect(
+      classifyWithGemini([{ imageBase64: 'a', mimeType: 'image/jpeg' }], { ...DEPS, fetchImpl }),
+    ).rejects.toMatchObject({
       code: 'malformed',
       message: expect.stringContaining('truncated'),
     })
@@ -177,7 +216,9 @@ describe('classifyWithGemini', () => {
   it('passes results through the shared parseClassification contract', async () => {
     const { fetchImpl } = capturingFetch(geminiResponse({ ...GRAY_LEAF_SPOT, label: 'x'.repeat(33) }))
 
-    await expect(classifyWithGemini('a', 'image/jpeg', { ...DEPS, fetchImpl })).rejects.toMatchObject({
+    await expect(
+      classifyWithGemini([{ imageBase64: 'a', mimeType: 'image/jpeg' }], { ...DEPS, fetchImpl }),
+    ).rejects.toMatchObject({
       code: 'malformed',
     })
   })

@@ -212,4 +212,41 @@ describe('POST /api/classify-gemini', () => {
     expect(res.statusCode).toBe(500)
     expect(res.payload).toEqual({ error: 'Classification failed' })
   })
+
+  it('sends every shot as parts of one request', async () => {
+    scriptVerdict(GRAY_LEAF_SPOT)
+    const res = mockRes()
+
+    await handler(
+      {
+        method: 'POST',
+        body: { images: [{ imageBase64: 'b25l' }, { imageBase64: 'dHdv', mimeType: 'image/png' }] },
+      },
+      res,
+    )
+
+    expect(res.statusCode).toBe(200)
+    expect(res.payload).toEqual(GRAY_LEAF_SPOT)
+    const body = JSON.parse(h2.state.requests[0].body)
+    expect(body.contents[0].parts).toEqual([
+      { inlineData: { mimeType: 'image/jpeg', data: 'b25l' } },
+      { inlineData: { mimeType: 'image/png', data: 'dHdv' } },
+      { text: 'Diagnose these field photos of the same plant.' },
+    ])
+  })
+
+  it('rejects more than five shots before dialling the model', async () => {
+    const res = mockRes()
+
+    await handler(
+      {
+        method: 'POST',
+        body: { images: Array.from({ length: 6 }, (_, i) => ({ imageBase64: `aGk${i}` })) },
+      },
+      res,
+    )
+
+    expect(res.statusCode).toBe(400)
+    expect(h2.state.connects).toHaveLength(0)
+  })
 })

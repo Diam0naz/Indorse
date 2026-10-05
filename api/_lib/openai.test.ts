@@ -63,7 +63,10 @@ describe('classifyWithOpenAI', () => {
   it('sends a streamed Responses request with a strict json_schema verdict', async () => {
     const fetchImpl = streamFetch(JSON.stringify(VERDICT))
 
-    const result = await classifyWithOpenAI('ZmFrZQ==', 'image/png', { apiKey: 'sk-test', fetchImpl })
+    const result = await classifyWithOpenAI([{ imageBase64: 'ZmFrZQ==', mimeType: 'image/png' }], {
+      apiKey: 'sk-test',
+      fetchImpl,
+    })
 
     expect(result).toEqual(VERDICT)
 
@@ -98,21 +101,36 @@ describe('classifyWithOpenAI', () => {
     expect(image.detail).toBe('high')
   })
 
+  it('sends every photo as consecutive input_image parts, in order', async () => {
+    const fetchImpl = streamFetch(JSON.stringify(VERDICT))
+    await classifyWithOpenAI([{ imageBase64: 'b25l' }, { imageBase64: 'dHdv', mimeType: 'image/png' }], {
+      apiKey: 'sk-test',
+      fetchImpl,
+    })
+
+    const [, init] = (fetchImpl as unknown as ReturnType<typeof vi.fn>).mock.calls[0]
+    const content = JSON.parse((init as RequestInit).body as string).input[0].content
+    expect(content.map((part: { type: string }) => part.type)).toEqual(['input_image', 'input_image', 'input_text'])
+    expect(content[0].image_url).toBe('data:image/jpeg;base64,b25l')
+    expect(content[1].image_url).toBe('data:image/png;base64,dHdv')
+    expect(content[2].text).toBe('Diagnose these field photos of the same plant.')
+  })
+
   it('reassembles deltas that straddle JSON boundaries', async () => {
     const fetchImpl = streamFetch(JSON.stringify(VERDICT))
-    const result = await classifyWithOpenAI('x', undefined, { apiKey: 'k', fetchImpl })
+    const result = await classifyWithOpenAI([{ imageBase64: 'x' }], { apiKey: 'k', fetchImpl })
     expect(result).toEqual(VERDICT)
   })
 
   it('reads a buffered reply when the host stripped the stream', async () => {
     const fetchImpl = bufferedFetch(VERDICT)
-    const result = await classifyWithOpenAI('x', undefined, { apiKey: 'k', fetchImpl })
+    const result = await classifyWithOpenAI([{ imageBase64: 'x' }], { apiKey: 'k', fetchImpl })
     expect(result).toEqual(VERDICT)
   })
 
   it('honours a model override', async () => {
     const fetchImpl = streamFetch(JSON.stringify(VERDICT))
-    await classifyWithOpenAI('x', undefined, { apiKey: 'k', model: 'gpt-4o', fetchImpl })
+    await classifyWithOpenAI([{ imageBase64: 'x' }], { apiKey: 'k', model: 'gpt-4o', fetchImpl })
 
     const [, init] = (fetchImpl as unknown as ReturnType<typeof vi.fn>).mock.calls[0]
     expect(JSON.parse((init as RequestInit).body as string).model).toBe('gpt-4o')
@@ -120,26 +138,26 @@ describe('classifyWithOpenAI', () => {
 
   it('rejects a missing API key without calling the network', async () => {
     const fetchImpl = vi.fn() as unknown as typeof fetch
-    await expect(classifyWithOpenAI('x', undefined, { apiKey: '', fetchImpl })).rejects.toMatchObject({
+    await expect(classifyWithOpenAI([{ imageBase64: 'x' }], { apiKey: '', fetchImpl })).rejects.toMatchObject({
       code: 'unauthorized',
     })
     expect(fetchImpl).not.toHaveBeenCalled()
   })
 
   it('maps 401 to unauthorized and 500 to upstream', async () => {
-    await expect(classifyWithOpenAI('x', undefined, { apiKey: 'k', fetchImpl: errorFetch(401) })).rejects.toMatchObject(
-      { code: 'unauthorized', status: 401 },
-    )
-    await expect(classifyWithOpenAI('x', undefined, { apiKey: 'k', fetchImpl: errorFetch(500) })).rejects.toMatchObject(
-      { code: 'upstream', status: 500 },
-    )
+    await expect(
+      classifyWithOpenAI([{ imageBase64: 'x' }], { apiKey: 'k', fetchImpl: errorFetch(401) }),
+    ).rejects.toMatchObject({ code: 'unauthorized', status: 401 })
+    await expect(
+      classifyWithOpenAI([{ imageBase64: 'x' }], { apiKey: 'k', fetchImpl: errorFetch(500) }),
+    ).rejects.toMatchObject({ code: 'upstream', status: 500 })
   })
 
   it('surfaces a failed stream as an upstream error', async () => {
     const fetchImpl = streamFetch(JSON.stringify(VERDICT), [
       { type: 'response.failed', response: { error: { message: 'model overloaded' } } },
     ])
-    await expect(classifyWithOpenAI('x', undefined, { apiKey: 'k', fetchImpl })).rejects.toMatchObject({
+    await expect(classifyWithOpenAI([{ imageBase64: 'x' }], { apiKey: 'k', fetchImpl })).rejects.toMatchObject({
       code: 'upstream',
       message: 'model overloaded',
     })
@@ -148,7 +166,7 @@ describe('classifyWithOpenAI', () => {
   it('reports a truncated stream as malformed', async () => {
     const events = [{ type: 'response.output_text.delta', delta: '{"label":' }, { type: 'response.incomplete' }]
     const fetchImpl = vi.fn(async () => ({ ok: true, status: 200, body: streamOf(events) })) as unknown as typeof fetch
-    await expect(classifyWithOpenAI('x', undefined, { apiKey: 'k', fetchImpl })).rejects.toMatchObject({
+    await expect(classifyWithOpenAI([{ imageBase64: 'x' }], { apiKey: 'k', fetchImpl })).rejects.toMatchObject({
       code: 'malformed',
       message: expect.stringContaining('truncated'),
     })
@@ -156,7 +174,7 @@ describe('classifyWithOpenAI', () => {
 
   it('rejects a verdict the app contract would not accept', async () => {
     const fetchImpl = streamFetch(JSON.stringify({ label: 'Rust', confidence: 0.5, severity: 'critical', notes: 'x' }))
-    await expect(classifyWithOpenAI('x', undefined, { apiKey: 'k', fetchImpl })).rejects.toMatchObject({
+    await expect(classifyWithOpenAI([{ imageBase64: 'x' }], { apiKey: 'k', fetchImpl })).rejects.toMatchObject({
       code: 'malformed',
       message: expect.stringContaining('severity'),
     })
@@ -164,7 +182,7 @@ describe('classifyWithOpenAI', () => {
 
   it('rejects non-JSON text', async () => {
     const fetchImpl = streamFetch('sure, here is your diagnosis: rust')
-    await expect(classifyWithOpenAI('x', undefined, { apiKey: 'k', fetchImpl })).rejects.toMatchObject({
+    await expect(classifyWithOpenAI([{ imageBase64: 'x' }], { apiKey: 'k', fetchImpl })).rejects.toMatchObject({
       code: 'malformed',
       message: expect.stringContaining('non-JSON'),
     })
@@ -172,7 +190,7 @@ describe('classifyWithOpenAI', () => {
 
   it('rejects an empty stream', async () => {
     const fetchImpl = vi.fn(async () => ({ ok: true, status: 200, body: streamOf([]) })) as unknown as typeof fetch
-    await expect(classifyWithOpenAI('x', undefined, { apiKey: 'k', fetchImpl })).rejects.toMatchObject({
+    await expect(classifyWithOpenAI([{ imageBase64: 'x' }], { apiKey: 'k', fetchImpl })).rejects.toMatchObject({
       code: 'malformed',
     })
   })

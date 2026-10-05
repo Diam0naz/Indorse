@@ -3,11 +3,12 @@
  *
  * Owns the classification lifecycle for the scout camera flow:
  *
- *   classify(base64) ──▶ getClassifyEndpoint() ──▶ classifyPhoto() ──▶ state
+ *   classify(images[]) ──▶ getClassifyEndpoint() ──▶ classifyPhoto() ──▶ state
  *
  * - Without a configured proxy endpoint (`EXPO_PUBLIC_AI_CLASSIFY_URL`) or
  *   captured bytes it resolves `null` immediately — the demo path never
- *   notices the AI feature exists.
+ *   notices the AI feature exists. Every shot goes in one call, so a single
+ *   verdict weighs all the angles of the plant together.
  * - Every failure (offline, proxy down, timeout, malformed reply) collapses
  *   to `null` too: the caller falls back to its seeded label instead of
  *   blocking the scout flow on the network.
@@ -33,8 +34,8 @@ export interface PhotoClassification {
   classification: ClassificationResult | null
   /** True from the moment a request starts until it lands or fails. */
   classifying: boolean
-  /** Classify captured bytes; always resolves (failures collapse to `null`). */
-  classify: (imageBase64: string) => Promise<ClassificationResult | null>
+  /** Classify every captured shot in one call; failures collapse to `null`. */
+  classify: (images: string[]) => Promise<ClassificationResult | null>
   /** Drop current state and orphan any in-flight request (retake). */
   reset: () => void
 }
@@ -50,15 +51,19 @@ export function usePhotoClassification(): PhotoClassification {
     setClassifying(false)
   }, [])
 
-  const classify = useCallback(async (imageBase64: string): Promise<ClassificationResult | null> => {
+  const classify = useCallback(async (images: string[]): Promise<ClassificationResult | null> => {
     const endpoint = getClassifyEndpoint()
-    if (!imageBase64 || imageBase64.trim().length === 0 || !endpoint) return null
+    const bytes = images.map((value) => value.trim()).filter((value) => value.length > 0)
+    if (bytes.length === 0 || !endpoint) return null
 
     const mine = (generation.current += 1)
     setClassification(null)
     setClassifying(true)
     try {
-      const result = await classifyPhoto({ imageBase64 }, { endpoint, timeoutMs: CLASSIFY_TIMEOUT_MS })
+      const result = await classifyPhoto(
+        { images: bytes.map((imageBase64) => ({ imageBase64 })) },
+        { endpoint, timeoutMs: CLASSIFY_TIMEOUT_MS },
+      )
       if (generation.current === mine) setClassification(result)
       return result
     } catch {

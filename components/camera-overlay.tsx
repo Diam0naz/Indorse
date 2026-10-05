@@ -7,19 +7,34 @@
  * (dashed ring + camera-off icon) so the flow still works — the preview
  * badge keeps labelling the non-live feed.
  *
+ * The flow is a four-stage machine, one visible purpose per stage:
+ *
+ *   capture    → viewfinder, shutter, shot tray (up to 5), live AI chip;
+ *   analyzing  → a modal that scans the *captured thumbnails* (never the
+ *                live view) with step status while every shot rides to the
+ *                model in one call;
+ *   result     → a diagnosis card reporting the verdict (label, confidence,
+ *                notes) — or an honest "AI unavailable" when none landed,
+ *                with submit gated behind "Retry analysis" whenever a
+ *                configured proxy failed to produce a diagnosis;
+ *   success    → a "Report filed" card with an explicit path to the log,
+ *                instead of the overlay silently disappearing.
+ *
  * Nothing in this overlay is a placeholder:
  *   - the field label is the connected wallet's on-chain farm name (or an
  *     honest "Unregistered area" when there is none) — the Farm account has
  *     no crop field, so no crop is invented;
  *   - the shot counter counts captures the user actually took (up to 5),
- *     and the done card reports that same count;
+ *     and the result card reports that same count;
  *   - the AI chip probes the classify proxy on open (checking / ready /
- *     unavailable) and the verdict line reports the live classification;
- *   - a submit without a verdict sends `unclassified` with severity `none`,
+ *     unavailable) and the diagnosis card reports the live classification;
+ *   - with no configured proxy, a submit without a verdict still sends
+ *     `unclassified` with severity `none` (demo/offline honesty); with a
+ *     proxy configured, submit stays disabled until a diagnosis lands —
  *     never a seeded diagnosis, and the local row mirrors exactly that.
  *
  * The shutter captures into `shots`; "Analyze crop" runs the classifier on
- * the captured bytes (`features/ai/usePhotoClassification`) and the done
+ * every captured shot (`features/ai/usePhotoClassification`) and the result
  * card shows the live verdict. "Submit to Chain" hands a freshly built
  * ScoutEvent back to the caller so the scouting log updates immediately —
  * without a farm it hands back a local row instead, carrying the `anchor`
@@ -28,7 +43,7 @@
  */
 
 import { useEffect, useRef, useState } from 'react'
-import { Animated, Easing, Modal, Pressable, Text, View } from 'react-native'
+import { Animated, Easing, Image, Modal, Pressable, Text, View } from 'react-native'
 import Svg, { Circle, Path } from 'react-native-svg'
 import { useSafeAreaInsets } from 'react-native-safe-area-context'
 import { CameraView, useCameraPermissions } from 'expo-camera'
@@ -66,6 +81,9 @@ interface CameraOverlayProps {
 /** Where the AI chip stands: probed on open, never guessed. */
 type AiEndpointStatus = 'checking' | 'up' | 'down' | 'unset'
 
+/** The flow's visible stage: capture shots → analyzing modal → diagnosis → filed. */
+type Stage = 'capture' | 'analyzing' | 'result' | 'success'
+
 /** Fallback point when the device cannot produce a fix. */
 const FALLBACK_GPS = { lat: 46.8821, lng: -98.7023 }
 
@@ -97,15 +115,14 @@ interface CapturedPhoto {
 const delay = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms))
 
 export function CameraOverlay({ onClose, onSubmit, farmAddress, farmName }: CameraOverlayProps) {
-  const [scanning, setScanning] = useState(false)
-  const [done, setDone] = useState(false)
+  const [stage, setStage] = useState<Stage>('capture')
   const [shots, setShots] = useState<CapturedPhoto[]>([])
   // Endpoint state is decided at construction (configured or not); the effect
   // below only ever resolves it asynchronously — no setState in effect body.
   const [aiEndpoint, setAiEndpoint] = useState<AiEndpointStatus>(() => (getClassifyEndpoint() ? 'checking' : 'unset'))
   const [coords, setCoords] = useState<ScoutCoords | null>(null)
   const [locating, setLocating] = useState(true)
-  const [frameHeight, setFrameHeight] = useState(0)
+  const [stripHeight, setStripHeight] = useState(0)
   const [scan] = useState(() => new Animated.Value(0))
   const cameraRef = useRef<CameraView>(null)
   const cancelled = useRef(false)
@@ -167,9 +184,9 @@ export function CameraOverlay({ onClose, onSubmit, farmAddress, farmName }: Came
     }
   }, [])
 
-  /* Scanline loop while the classifier "runs" */
+  /* Scanline loop across the captured thumbnails while the classifier runs */
   useEffect(() => {
-    if (!scanning) {
+    if (stage !== 'analyzing') {
       scan.stopAnimation()
       scan.setValue(0)
       return
@@ -192,7 +209,7 @@ export function CameraOverlay({ onClose, onSubmit, farmAddress, farmName }: Came
     )
     animation.start()
     return () => animation.stop()
-  }, [scanning, scan])
+  }, [stage, scan])
 
   async function capturePhoto(): Promise<CapturedPhoto | null> {
     if (!usesRealCamera || !cameraRef.current) return null
@@ -208,7 +225,7 @@ export function CameraOverlay({ onClose, onSubmit, farmAddress, farmName }: Came
 
   /** Capture one shot into the tray. The count is what the chip reports. */
   async function handleCapture() {
-    if (scanning || done || shots.length >= MAX_SHOTS) return
+    if (stage !== 'capture' || shots.length >= MAX_SHOTS) return
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light)
     const captured = await capturePhoto()
     if (cancelled.current) return
@@ -217,18 +234,22 @@ export function CameraOverlay({ onClose, onSubmit, farmAddress, farmName }: Came
     setShots((prev) => [...prev, captured ?? { uri: '', base64: '' }])
   }
 
-  /** Run the classifier on the captured bytes, then show the verdict card. */
-  async function handleAnalyze() {
-    if (scanning || shots.length === 0) return
+  /**
+   * Run the classifier on every captured shot, then present the verdict.
+   * The analyzing modal scans the captured thumbnails while this is in
+   * flight; on landing, the result stage reports the diagnosis — or, when a
+   * configured proxy failed, gates submit behind an explicit retry.
+   */
+  async function runAnalysis() {
+    if (shots.length === 0) return
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium)
-    setScanning(true)
+    setStage('analyzing')
 
-    const bytes = shots.find((s) => s.base64)?.base64 ?? ''
-    const [, verdict] = await Promise.all([delay(SCAN_MS), bytes ? classify(bytes) : Promise.resolve(null)])
+    const bytes = shots.filter((s) => s.base64).map((s) => s.base64)
+    const [, verdict] = await Promise.all([delay(SCAN_MS), bytes.length > 0 ? classify(bytes) : Promise.resolve(null)])
     if (cancelled.current) return
 
-    setScanning(false)
-    setDone(true)
+    setStage('result')
     Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success)
 
     // Tell the farmer what the model saw — a feed item at the top of the
@@ -243,10 +264,21 @@ export function CameraOverlay({ onClose, onSubmit, farmAddress, farmName }: Came
     }
   }
 
+  function handleAnalyze() {
+    if (stage !== 'capture' || shots.length === 0) return
+    void runAnalysis()
+  }
+
+  /** Re-run the analysis on the same shots after a failed diagnosis. */
+  function handleRetry() {
+    resetClassification()
+    submitReport.reset()
+    void runAnalysis()
+  }
+
   function handleRetake() {
     resetClassification()
-    setDone(false)
-    setScanning(false)
+    setStage('capture')
     setShots([])
     scan.setValue(0)
     submitReport.reset()
@@ -269,8 +301,11 @@ export function CameraOverlay({ onClose, onSubmit, farmAddress, farmName }: Came
     return { diagnosis: NO_AI_LABEL, confidence: 0, severity: 'none', notes: uri }
   }
 
+  /** A configured proxy produced no verdict — submit stays locked until a retry lands one. */
+  const diagnosisGated = !!getClassifyEndpoint() && !classification
+
   async function handleSubmit() {
-    if (submitReport.isPending) return
+    if (submitReport.isPending || diagnosisGated) return
     const point = coords ?? FALLBACK_GPS
     const stamp = Date.now()
     const uri = `indorse://scout/${stamp}.jpg`
@@ -310,7 +345,7 @@ export function CameraOverlay({ onClose, onSubmit, farmAddress, farmName }: Came
           photoUris: shots.map((shot) => shot.uri).filter((shotUri) => shotUri.length > 0),
         },
       })
-      onClose()
+      setStage('success')
       return
     }
 
@@ -337,7 +372,7 @@ export function CameraOverlay({ onClose, onSubmit, farmAddress, farmName }: Came
             txSig: reportAddress,
             chainStatus: 'pending',
           })
-          onClose()
+          setStage('success')
         },
         onError: () => {
           Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error)
@@ -374,7 +409,7 @@ export function CameraOverlay({ onClose, onSubmit, farmAddress, farmName }: Came
 
   const translateY = scan.interpolate({
     inputRange: [0, 1],
-    outputRange: [0, Math.max(frameHeight - 2, 0)],
+    outputRange: [0, Math.max(stripHeight - 2, 0)],
   })
 
   return (
@@ -402,19 +437,45 @@ export function CameraOverlay({ onClose, onSubmit, farmAddress, farmName }: Came
             </View>
           )}
 
-          {/* Focus brackets + scanline */}
-          {scanning && (
-            <View style={styles.brackets} onLayout={(e) => setFrameHeight(e.nativeEvent.layout.height)}>
-              <View style={[styles.corner, styles.cornerTL]} />
-              <View style={[styles.corner, styles.cornerTR]} />
-              <View style={[styles.corner, styles.cornerBL]} />
-              <View style={[styles.corner, styles.cornerBR]} />
-              <Animated.View style={[styles.scanLine, { transform: [{ translateY }] }]} />
+          {/* Diagnosis card — the verdict, or an honest "no diagnosis" */}
+          {stage === 'result' && (
+            <View style={styles.doneOverlay}>
+              <View style={[styles.doneBadge, classification ? null : styles.doneBadgeWarn]}>
+                {classification ? (
+                  <Svg width={24} height={24} viewBox="0 0 24 24" fill="none">
+                    <Path
+                      d="M5 12 L10 17 L19 8"
+                      stroke={colors.sageLight}
+                      strokeWidth={2.5}
+                      strokeLinecap="round"
+                      strokeLinejoin="round"
+                    />
+                  </Svg>
+                ) : (
+                  <Text style={styles.doneBadgeBang}>!</Text>
+                )}
+              </View>
+              <Text style={styles.doneTitle}>
+                {shots.length <= 1 ? t('scout.cam.capturedOne') : t('scout.cam.captured', { n: shots.length })}
+              </Text>
+              {classification ? (
+                <>
+                  <Text style={styles.diagnosisLabel}>{classification.label}</Text>
+                  <Text style={styles.diagnosisConfidence}>
+                    {t('scout.cam.confidence', { pct: Math.round(classification.confidence * 100) })}
+                  </Text>
+                  <Text style={styles.diagnosisNotes}>{classification.notes}</Text>
+                </>
+              ) : (
+                <Text style={styles.doneMeta}>{classificationMeta()}</Text>
+              )}
+              {/* Seeker-only: signing keys sit in the device Seed Vault. */}
+              <SeedVaultBadge />
             </View>
           )}
 
-          {/* Classification result */}
-          {done && (
+          {/* Filed — an explicit end state with a clear path to the log */}
+          {stage === 'success' && (
             <View style={styles.doneOverlay}>
               <View style={styles.doneBadge}>
                 <Svg width={24} height={24} viewBox="0 0 24 24" fill="none">
@@ -427,12 +488,8 @@ export function CameraOverlay({ onClose, onSubmit, farmAddress, farmName }: Came
                   />
                 </Svg>
               </View>
-              <Text style={styles.doneTitle}>
-                {shots.length <= 1 ? t('scout.cam.capturedOne') : t('scout.cam.captured', { n: shots.length })}
-              </Text>
-              <Text style={styles.doneMeta}>{classificationMeta()}</Text>
-              {/* Seeker-only: signing keys sit in the device Seed Vault. */}
-              <SeedVaultBadge />
+              <Text style={styles.doneTitle}>{t('scout.cam.filed')}</Text>
+              <Text style={styles.doneMeta}>{t('scout.cam.filedBody')}</Text>
             </View>
           )}
 
@@ -495,7 +552,7 @@ export function CameraOverlay({ onClose, onSubmit, farmAddress, farmName }: Came
           )}
 
           {/* Simulated-preview badge — explains the non-live feed */}
-          {!usesRealCamera && !done && !scanning && (
+          {!usesRealCamera && stage === 'capture' && (
             <View style={[styles.previewBadge, { top: insets.top + 92 }]}>
               <Text style={styles.previewBadgeText}>{t('scout.cam.preview')}</Text>
             </View>
@@ -509,9 +566,11 @@ export function CameraOverlay({ onClose, onSubmit, farmAddress, farmName }: Came
 
         {/* ── Controls ───────────────────────────────────────── */}
         <View style={[styles.controls, { paddingBottom: Math.max(insets.bottom, spacing.lg) + spacing.md }]}>
-          {!done ? (
+          {stage === 'capture' ? (
             <View>
-              <Text style={styles.hint}>{scanning ? t('scout.cam.analyzing') : t('scout.cam.hint')}</Text>
+              <Text style={styles.hint}>
+                {shots.length > 0 ? t('scout.cam.hintReady', { n: shots.length }) : t('scout.cam.hint')}
+              </Text>
               <View style={styles.controlRow}>
                 <View style={styles.chip}>
                   <Svg width={14} height={14} viewBox="0 0 14 14" fill="none">
@@ -527,16 +586,12 @@ export function CameraOverlay({ onClose, onSubmit, farmAddress, farmName }: Came
                 </View>
 
                 <Pressable
-                  style={[
-                    styles.shutter,
-                    scanning && styles.shutterActive,
-                    shots.length >= MAX_SHOTS && styles.shutterDisabled,
-                  ]}
+                  style={[styles.shutter, shots.length >= MAX_SHOTS && styles.shutterDisabled]}
                   onPress={handleCapture}
-                  disabled={scanning || shots.length >= MAX_SHOTS}
+                  disabled={shots.length >= MAX_SHOTS}
                   accessibilityLabel={t('scout.cam.capture')}
                 >
-                  {scanning ? <View style={styles.shutterStop} /> : <View style={styles.shutterInner} />}
+                  <View style={styles.shutterInner} />
                 </Pressable>
 
                 <View style={styles.chip}>
@@ -555,7 +610,7 @@ export function CameraOverlay({ onClose, onSubmit, farmAddress, farmName }: Came
 
               {/* Analysis is an explicit step: the button only exists once
                   there are shots to classify. */}
-              {shots.length > 0 && !scanning ? (
+              {shots.length > 0 ? (
                 <Pressable
                   style={styles.analyzeBtn}
                   onPress={handleAnalyze}
@@ -566,16 +621,19 @@ export function CameraOverlay({ onClose, onSubmit, farmAddress, farmName }: Came
                 </Pressable>
               ) : null}
             </View>
-          ) : (
+          ) : stage === 'result' ? (
             <View>
               <View style={styles.actionRow}>
                 <Pressable style={styles.retakeBtn} onPress={handleRetake} disabled={submitReport.isPending}>
                   <Text style={styles.retakeText}>{t('scout.cam.retake')}</Text>
                 </Pressable>
                 <Pressable
-                  style={[styles.submitBtn, (submitReport.isPending || classifying) && styles.submitBusy]}
+                  style={[
+                    styles.submitBtn,
+                    (submitReport.isPending || classifying || diagnosisGated) && styles.submitBusy,
+                  ]}
                   onPress={handleSubmit}
-                  disabled={submitReport.isPending || classifying}
+                  disabled={submitReport.isPending || classifying || diagnosisGated}
                 >
                   <Text style={styles.submitText}>
                     {submitReport.isPending ? t('scout.cam.submitting') : t('scout.cam.submit')}
@@ -583,7 +641,19 @@ export function CameraOverlay({ onClose, onSubmit, farmAddress, farmName }: Came
                 </Pressable>
               </View>
 
-              {submitReport.isError && submitReport.error ? (
+              {diagnosisGated ? (
+                <>
+                  <Pressable
+                    style={styles.analyzeBtn}
+                    onPress={handleRetry}
+                    accessibilityRole="button"
+                    accessibilityLabel={t('scout.cam.retry')}
+                  >
+                    <Text style={styles.analyzeText}>{t('scout.cam.retry')}</Text>
+                  </Pressable>
+                  <Text style={styles.gatedHint}>{t('scout.cam.needDiagnosis')}</Text>
+                </>
+              ) : submitReport.isError && submitReport.error ? (
                 <Text style={styles.submitError}>
                   {t('scout.cam.submitFailed')} — {submitReport.error.message}
                 </Text>
@@ -591,8 +661,38 @@ export function CameraOverlay({ onClose, onSubmit, farmAddress, farmName }: Came
                 <Text style={styles.noFarmHint}>{t('scout.cam.noFarm')}</Text>
               ) : null}
             </View>
-          )}
+          ) : stage === 'success' ? (
+            <Pressable
+              style={styles.submitBtn}
+              onPress={onClose}
+              accessibilityRole="button"
+              accessibilityLabel={t('scout.cam.viewLog')}
+            >
+              <Text style={styles.submitText}>{t('scout.cam.viewLog')}</Text>
+            </Pressable>
+          ) : null}
         </View>
+
+        {/* ── Analyzing modal — scans the captured shots, never the live view */}
+        {stage === 'analyzing' && (
+          <View style={styles.analyzeOverlay}>
+            <Text style={styles.analyzeTitle}>{t('scout.cam.analyzingTitle')}</Text>
+            <View style={styles.thumbStrip} onLayout={(e) => setStripHeight(e.nativeEvent.layout.height)}>
+              {shots.map((shot, index) => (
+                <View key={`${shot.uri}-${index}`} style={styles.thumbWrap}>
+                  {shot.uri ? (
+                    <Image source={{ uri: shot.uri }} style={styles.thumb} />
+                  ) : (
+                    <View style={styles.thumbEmpty} />
+                  )}
+                </View>
+              ))}
+              <Animated.View style={[styles.scanLine, { transform: [{ translateY }] }]} />
+            </View>
+            <Text style={styles.analyzeStatus}>{t('scout.cam.reviewing', { n: shots.length })}</Text>
+            {classifying ? <Text style={styles.analyzeStatusSub}>{t('scout.cam.classifying')}</Text> : null}
+          </View>
+        )}
       </View>
     </Modal>
   )
@@ -645,58 +745,6 @@ const makeStyles = (colors: Colors) =>
       alignItems: 'center',
       justifyContent: 'center',
     },
-    brackets: {
-      position: 'absolute',
-      top: '22%',
-      bottom: '22%',
-      left: '18%',
-      right: '18%',
-      borderWidth: 1,
-      borderColor: 'rgba(242,163,64,0.3)',
-      borderRadius: radii.sm,
-      overflow: 'hidden',
-    },
-    corner: {
-      position: 'absolute',
-      width: 20,
-      height: 20,
-    },
-    cornerTL: {
-      top: -1,
-      left: -1,
-      borderTopWidth: 2,
-      borderLeftWidth: 2,
-      borderTopColor: colors.amber,
-      borderLeftColor: colors.amber,
-      borderTopLeftRadius: 4,
-    },
-    cornerTR: {
-      top: -1,
-      right: -1,
-      borderTopWidth: 2,
-      borderRightWidth: 2,
-      borderTopColor: colors.amber,
-      borderRightColor: colors.amber,
-      borderTopRightRadius: 4,
-    },
-    cornerBL: {
-      bottom: -1,
-      left: -1,
-      borderBottomWidth: 2,
-      borderLeftWidth: 2,
-      borderBottomColor: colors.amber,
-      borderLeftColor: colors.amber,
-      borderBottomLeftRadius: 4,
-    },
-    cornerBR: {
-      bottom: -1,
-      right: -1,
-      borderBottomWidth: 2,
-      borderRightWidth: 2,
-      borderBottomColor: colors.amber,
-      borderRightColor: colors.amber,
-      borderBottomRightRadius: 4,
-    },
     scanLine: {
       position: 'absolute',
       top: 0,
@@ -737,6 +785,36 @@ const makeStyles = (colors: Colors) =>
       fontFamily: 'monospace',
       fontSize: fontSizes.xs,
       color: colors.textMuted,
+    },
+    doneBadgeWarn: {
+      backgroundColor: 'rgba(242,163,64,0.16)',
+      borderColor: colors.amber,
+    },
+    doneBadgeBang: {
+      color: colors.amber,
+      fontSize: fontSizes.xl,
+      fontWeight: fontWeights.bold,
+    },
+    diagnosisLabel: {
+      fontSize: fontSizes.xl,
+      fontWeight: fontWeights.bold,
+      color: colors.textPrimary,
+      textAlign: 'center',
+      marginBottom: 2,
+    },
+    diagnosisConfidence: {
+      fontFamily: 'monospace',
+      fontSize: fontSizes.sm,
+      color: colors.amber,
+      marginBottom: spacing.sm,
+    },
+    diagnosisNotes: {
+      fontSize: fontSizes.sm,
+      color: colors.textSecondary,
+      textAlign: 'center',
+      lineHeight: 18,
+      marginBottom: spacing.md,
+      paddingHorizontal: spacing.xl,
     },
     topBar: {
       position: 'absolute',
@@ -913,10 +991,6 @@ const makeStyles = (colors: Colors) =>
       alignItems: 'center',
       justifyContent: 'center',
     },
-    shutterActive: {
-      backgroundColor: 'rgba(242,163,64,0.25)',
-      borderColor: colors.amber,
-    },
     shutterDisabled: {
       opacity: 0.4,
     },
@@ -942,12 +1016,6 @@ const makeStyles = (colors: Colors) =>
       height: 52,
       borderRadius: 26,
       backgroundColor: 'rgba(255,255,255,0.15)',
-    },
-    shutterStop: {
-      width: 20,
-      height: 20,
-      borderRadius: radii.xs,
-      backgroundColor: colors.amber,
     },
     actionRow: {
       flexDirection: 'row',
@@ -992,6 +1060,69 @@ const makeStyles = (colors: Colors) =>
       marginTop: spacing.md,
       fontSize: fontSizes.xs,
       color: colors.textMuted,
+      textAlign: 'center',
+    },
+    gatedHint: {
+      marginTop: spacing.md,
+      fontSize: fontSizes.xs,
+      lineHeight: 16,
+      color: colors.textMuted,
+      textAlign: 'center',
+    },
+    analyzeOverlay: {
+      position: 'absolute',
+      top: 0,
+      left: 0,
+      right: 0,
+      bottom: 0,
+      backgroundColor: 'rgba(14,13,11,0.94)',
+      alignItems: 'center',
+      justifyContent: 'center',
+      paddingHorizontal: spacing.xl,
+    },
+    analyzeTitle: {
+      fontSize: fontSizes.lg,
+      fontWeight: fontWeights.bold,
+      color: colors.textPrimary,
+      marginBottom: spacing.lg,
+    },
+    thumbStrip: {
+      flexDirection: 'row',
+      gap: spacing.sm,
+      padding: spacing.sm,
+      marginBottom: spacing.lg,
+      overflow: 'hidden',
+      borderRadius: radii.md,
+      backgroundColor: colors.surfaceAlt,
+      borderWidth: 1,
+      borderColor: 'rgba(242,163,64,0.4)',
+    },
+    thumbWrap: {
+      width: 56,
+      height: 56,
+      borderRadius: radii.sm,
+      overflow: 'hidden',
+      backgroundColor: colors.surface,
+    },
+    thumb: {
+      width: '100%',
+      height: '100%',
+    },
+    thumbEmpty: {
+      flex: 1,
+      backgroundColor: colors.surfaceAlt,
+    },
+    analyzeStatus: {
+      fontFamily: 'monospace',
+      fontSize: fontSizes.xs,
+      color: colors.textMuted,
+      textAlign: 'center',
+    },
+    analyzeStatusSub: {
+      fontFamily: 'monospace',
+      fontSize: fontSizes.xxs,
+      color: colors.amber,
+      marginTop: spacing.xs,
       textAlign: 'center',
     },
   })

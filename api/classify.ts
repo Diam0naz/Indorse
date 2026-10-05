@@ -8,7 +8,8 @@
  * that stream into a single JSON body for the app.
  *
  *   POST /api/classify
- *   { "imageBase64": "<base64 bytes>", "mimeType": "image/jpeg" }
+ *   { "images": [{ "imageBase64": "<base64 bytes>", "mimeType": "image/jpeg" }, …] }
+ *   (legacy single-shot `{ imageBase64, mimeType }` bodies still work)
  *   → 200 { "label": "Gray Leaf Spot", "confidence": 0.87,
  *           "severity": "medium", "notes": "Lesions on lower canopy …" }
  *
@@ -19,9 +20,9 @@
  * Run locally with `npm run api:dev` (no Vercel CLI needed) or `vercel dev`.
  */
 
-import { ClassificationError, DEFAULT_MIME_TYPE } from '@/features/ai/types'
+import { ClassificationError } from '@/features/ai/types'
 import { DEFAULT_VISION_MODEL, classifyWithOpenAI } from './_lib/openai'
-import { MAX_IMAGE_CHARS, parseBody, statusFor, type ProxyRequest, type ProxyResponse } from './_lib/proxy'
+import { MAX_IMAGES, collectImages, parseBody, statusFor, type ProxyRequest, type ProxyResponse } from './_lib/proxy'
 
 export default async function handler(req: ProxyRequest, res: ProxyResponse): Promise<void> {
   if (req.method && req.method !== 'POST') {
@@ -30,15 +31,18 @@ export default async function handler(req: ProxyRequest, res: ProxyResponse): Pr
   }
 
   const body = parseBody(req.body)
-  const imageBase64 = typeof body.imageBase64 === 'string' ? body.imageBase64 : ''
-  const mimeType = typeof body.mimeType === 'string' ? body.mimeType : DEFAULT_MIME_TYPE
+  const { images, missing, tooLarge, tooMany } = collectImages(body)
 
-  if (imageBase64.trim().length === 0) {
-    res.status(400).json({ error: 'imageBase64 is required' })
+  if (missing) {
+    res.status(400).json({ error: 'images[] requires at least one imageBase64 entry' })
     return
   }
-  if (imageBase64.length > MAX_IMAGE_CHARS) {
+  if (tooLarge) {
     res.status(413).json({ error: 'Image too large' })
+    return
+  }
+  if (tooMany) {
+    res.status(400).json({ error: `At most ${MAX_IMAGES} images per request` })
     return
   }
 
@@ -49,7 +53,7 @@ export default async function handler(req: ProxyRequest, res: ProxyResponse): Pr
   }
 
   try {
-    const result = await classifyWithOpenAI(imageBase64, mimeType, {
+    const result = await classifyWithOpenAI(images, {
       apiKey,
       model: process.env.OPENAI_VISION_MODEL ?? DEFAULT_VISION_MODEL,
     })

@@ -34,7 +34,7 @@ import type { ClassificationResult } from '@/features/ai/types'
 const LOAD = { timeout: 4000 }
 
 const classifier = vi.hoisted(() => ({
-  classify: vi.fn<(base64: string) => Promise<ClassificationResult | null>>(),
+  classify: vi.fn<(images: string[]) => Promise<ClassificationResult | null>>(),
 }))
 
 vi.mock('expo-haptics', () => ({

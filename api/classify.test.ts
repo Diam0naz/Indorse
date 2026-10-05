@@ -132,4 +132,56 @@ describe('api/classify handler', () => {
 
     expect(res.statusCode).toBe(401)
   })
+
+  it('sends every shot in one images[] request', async () => {
+    let requestBody: { input?: Array<{ content?: Array<{ type: string; image_url?: string }> }> } | undefined
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (_url: string, init: RequestInit) => {
+        requestBody = JSON.parse(String(init.body))
+        return openAIResponse(GRAY_LEAF_SPOT)
+      }),
+    )
+    const res = mockRes()
+
+    await handler(
+      {
+        method: 'POST',
+        body: { images: [{ imageBase64: 'b25l' }, { imageBase64: 'dHdv', mimeType: 'image/png' }] },
+      },
+      res,
+    )
+
+    expect(res.statusCode).toBe(200)
+    expect(res.payload).toEqual(GRAY_LEAF_SPOT)
+    const content = requestBody?.input?.[0]?.content ?? []
+    expect(content.filter((part) => part.type === 'input_image')).toHaveLength(2)
+    expect(content[0].image_url).toBe('data:image/jpeg;base64,b25l')
+    expect(content[1].image_url).toBe('data:image/png;base64,dHdv')
+  })
+
+  it('rejects more than five shots before calling the model', async () => {
+    const fetchMock = vi.fn()
+    vi.stubGlobal('fetch', fetchMock)
+    const res = mockRes()
+
+    await handler(
+      {
+        method: 'POST',
+        body: { images: Array.from({ length: 6 }, (_, i) => ({ imageBase64: `aGk${i}` })) },
+      },
+      res,
+    )
+
+    expect(res.statusCode).toBe(400)
+    expect(fetchMock).not.toHaveBeenCalled()
+  })
+
+  it('drops blank entries and rejects when no usable shot remains', async () => {
+    const res = mockRes()
+
+    await handler({ method: 'POST', body: { images: [{ imageBase64: '   ' }, {}, { imageBase64: '' }] } }, res)
+
+    expect(res.statusCode).toBe(400)
+  })
 })

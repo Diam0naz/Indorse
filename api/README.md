@@ -40,9 +40,12 @@ npx vercel dev              # alternative: serves ./api if you're logged in
 ```bash
 curl -X POST http://localhost:3000/api/classify-gemini \
   -H 'content-type: application/json' \
-  -d '{"imageBase64":"<base64 bytes>","mimeType":"image/jpeg"}'
+  -d '{"images":[{"imageBase64":"<base64 bytes>","mimeType":"image/jpeg"}]}'
 # → {"label":"Gray Leaf Spot","confidence":0.87,"severity":"medium","notes":"…"}
 ```
+
+Send every shot of the plant (up to 5) as `images[]` — one model call weighs
+them together. The legacy single `{ "imageBase64", "mimeType" }` body still works.
 
 ## Use it from the app
 
@@ -50,7 +53,7 @@ curl -X POST http://localhost:3000/api/classify-gemini \
 import { classifyPhoto, getClassifyEndpoint } from '@/features/ai/classify'
 
 const endpoint = getClassifyEndpoint() // EXPO_PUBLIC_AI_CLASSIFY_URL
-const { label, confidence } = await classifyPhoto({ imageBase64 }, { endpoint: endpoint! })
+const { label, confidence } = await classifyPhoto({ images: [{ imageBase64 }] }, { endpoint: endpoint! })
 ```
 
 ## Device verification (SIWS — roadmap #3/#5)

@@ -2,7 +2,9 @@
  * api/classify-gemini.ts — serverless classification proxy (Google Gemini)
  *
  * The Gemini counterpart of `api/classify.ts`: same app-facing contract
- * (`POST { imageBase64, mimeType }` → `{ label, confidence, severity, notes }`),
+ * (`POST { images: [{ imageBase64, mimeType? }, …] }` → one
+ * `{ label, confidence, severity, notes }` verdict weighing every shot;
+ * legacy single-shot `{ imageBase64, mimeType }` bodies still work),
  * same validation edge and status mapping (`_lib/proxy.ts`), different
  * provider (`_lib/gemini.ts`). The key is a Google AI Studio key and never
  * ships to the client.
@@ -13,7 +15,7 @@
  * independently testable and redeployable.
  *
  *   POST /api/classify-gemini
- *   { "imageBase64": "<base64 bytes>", "mimeType": "image/jpeg" }
+ *   { "images": [{ "imageBase64": "<base64 bytes>", "mimeType": "image/jpeg" }] }
  *   → 200 { "label": "Gray Leaf Spot", "confidence": 0.87,
  *           "severity": "medium", "notes": "Lesions on lower canopy …" }
  *
@@ -24,9 +26,9 @@
  * Run locally with `npm run api:dev` (no Vercel CLI needed) or `vercel dev`.
  */
 
-import { ClassificationError, DEFAULT_MIME_TYPE } from '@/features/ai/types'
+import { ClassificationError } from '@/features/ai/types'
 import { DEFAULT_GEMINI_MODEL, classifyWithGemini } from './_lib/gemini'
-import { MAX_IMAGE_CHARS, parseBody, statusFor, type ProxyRequest, type ProxyResponse } from './_lib/proxy'
+import { MAX_IMAGES, collectImages, parseBody, statusFor, type ProxyRequest, type ProxyResponse } from './_lib/proxy'
 
 export default async function handler(req: ProxyRequest, res: ProxyResponse): Promise<void> {
   if (req.method && req.method !== 'POST') {
@@ -35,15 +37,18 @@ export default async function handler(req: ProxyRequest, res: ProxyResponse): Pr
   }
 
   const body = parseBody(req.body)
-  const imageBase64 = typeof body.imageBase64 === 'string' ? body.imageBase64 : ''
-  const mimeType = typeof body.mimeType === 'string' ? body.mimeType : DEFAULT_MIME_TYPE
+  const { images, missing, tooLarge, tooMany } = collectImages(body)
 
-  if (imageBase64.trim().length === 0) {
-    res.status(400).json({ error: 'imageBase64 is required' })
+  if (missing) {
+    res.status(400).json({ error: 'images[] requires at least one imageBase64 entry' })
     return
   }
-  if (imageBase64.length > MAX_IMAGE_CHARS) {
+  if (tooLarge) {
     res.status(413).json({ error: 'Image too large' })
+    return
+  }
+  if (tooMany) {
+    res.status(400).json({ error: `At most ${MAX_IMAGES} images per request` })
     return
   }
 
@@ -54,7 +59,7 @@ export default async function handler(req: ProxyRequest, res: ProxyResponse): Pr
   }
 
   try {
-    const result = await classifyWithGemini(imageBase64, mimeType, {
+    const result = await classifyWithGemini(images, {
       apiKey,
       model: process.env.GEMINI_MODEL ?? DEFAULT_GEMINI_MODEL,
     })

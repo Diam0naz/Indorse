@@ -25,6 +25,7 @@ import {
   parseClassification,
   DEFAULT_MIME_TYPE,
   type ClassificationResult,
+  type ImageInput,
 } from '@/features/ai/types'
 import { EVENT_DIAGNOSIS_SCHEMA, VISION_PROMPT } from './prompt'
 import { connect as http2Connect } from 'node:http2'
@@ -98,12 +99,18 @@ interface GeminiPayload {
   promptFeedback?: { blockReason?: string }
 }
 
-/** Call the Gemini vision model and return a validated classification. */
+/**
+ * Call the Gemini vision model and return a validated classification.
+ * Every image arrives in one `generateContent` call, so a single verdict
+ * weighs all the scout's shots of the plant together.
+ */
 export async function classifyWithGemini(
-  imageBase64: string,
-  mimeType: string | undefined,
+  images: ImageInput[],
   deps: GeminiClassifyDeps,
 ): Promise<ClassificationResult> {
+  if (images.length === 0) {
+    throw new ClassificationError('bad-request', 'classifyWithGemini requires at least one image')
+  }
   if (!deps.apiKey) {
     throw new ClassificationError('unauthorized', 'GEMINI_API_KEY is not configured')
   }
@@ -124,8 +131,13 @@ export async function classifyWithGemini(
             {
               role: 'user',
               parts: [
-                { inlineData: { mimeType: mimeType ?? DEFAULT_MIME_TYPE, data: imageBase64 } },
-                { text: 'Diagnose this field photo.' },
+                ...images.map((image) => ({
+                  inlineData: { mimeType: image.mimeType ?? DEFAULT_MIME_TYPE, data: image.imageBase64 },
+                })),
+                {
+                  text:
+                    images.length > 1 ? 'Diagnose these field photos of the same plant.' : 'Diagnose this field photo.',
+                },
               ],
             },
           ],
