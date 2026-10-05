@@ -709,7 +709,8 @@
         "Approve or reject a pending scout report.",
         "Bootstrap the verifier set once: quorum `k` and the USDC bond each",
         "member must post. Membership is earned separately via `post_bond`, so",
-        "this only fixes the rules — governance (`config.admin`) owns them."
+        "this only fixes the rules — governance (`config.admin`) owns them.",
+        "`reconfigure_verifier_set` rewrites them later under the same bounds."
       ],
       "discriminator": [
         30,
@@ -780,8 +781,10 @@
       "docs": [
         "Join the set by posting the bond: the member's own USDC account pays",
         "into the program-held bond vault, so the seat — not the protocol —",
-        "carries the collateral. Bonds leave only two ways: back to the member",
-        "via `remove_verifier`, or to the treasury via a governed slash."
+        "carries the collateral. Bonds leave only three ways: back to the member",
+        "via `remove_verifier` or a governed `release_verifier`, or to the",
+        "treasury via a governed slash. Each seat records exactly what it paid,",
+        "so repricing `bond_amount` never moves someone else's collateral."
       ],
       "discriminator": [
         168,
@@ -801,6 +804,12 @@
         },
         {
           "name": "verifier_set",
+          "docs": [
+            "The set PDA. Sets created before Phase 3A were allocated for bare-",
+            "pubkey members; the realloc normalizes every account to the current",
+            "layout size on the first join, with the joining member paying any",
+            "rent delta (a no-op on already-current sets)."
+          ],
           "writable": true,
           "pda": {
             "seeds": [
@@ -845,9 +854,89 @@
         {
           "name": "token_program",
           "address": "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA"
+        },
+        {
+          "name": "system_program",
+          "docs": [
+            "Referenced by the realloc constraint above: the rent top-up and the",
+            "resize CPI both go through the system program."
+          ],
+          "address": "11111111111111111111111111111111"
         }
       ],
       "args": []
+    },
+    {
+      "name": "reconfigure_verifier_set",
+      "docs": [
+        "Governed reconfiguration: `config.admin` rewrites `k` and the seat",
+        "price with the same bounds init ran under. Deliberately NOT coupled to",
+        "the current member count — re-quoruming a stuck set in either",
+        "direction is governance's explicit, reversible call. Repricing the",
+        "bond affects FUTURE joins only: every seat keeps the stake it posted.",
+        "",
+        "Ops rule: finish open tallies before lowering `k`. `cast_vote`",
+        "freezes a tally whose side already reaches the new `k` on next",
+        "contact, but a split tally where every member has already voted can",
+        "no longer progress — each further vote fails `AlreadyVoted`."
+      ],
+      "discriminator": [
+        236,
+        113,
+        78,
+        199,
+        76,
+        91,
+        46,
+        64
+      ],
+      "accounts": [
+        {
+          "name": "authority",
+          "docs": [
+            "Role gate: only `config.admin` rewrites the rules."
+          ],
+          "signer": true
+        },
+        {
+          "name": "config"
+        },
+        {
+          "name": "verifier_set",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  118,
+                  101,
+                  114,
+                  105,
+                  102,
+                  105,
+                  101,
+                  114,
+                  95,
+                  115,
+                  101,
+                  116
+                ]
+              }
+            ]
+          }
+        }
+      ],
+      "args": [
+        {
+          "name": "k",
+          "type": "u8"
+        },
+        {
+          "name": "bond_amount",
+          "type": "u64"
+        }
+      ]
     },
     {
       "name": "register_farm",
@@ -998,6 +1087,89 @@
       "args": []
     },
     {
+      "name": "release_verifier",
+      "docs": [
+        "Governed fair exit: `config.admin` frees a seat without penalty and",
+        "the bond goes back to that member's own USDC account — the benign",
+        "twin of `slash_verifier` (which forfeits to the treasury).",
+        "Unconditional by design: like the slash it may take a set below `k`,",
+        "and it is the valve that keeps the quorum floor from becoming a trap."
+      ],
+      "discriminator": [
+        104,
+        67,
+        70,
+        29,
+        239,
+        190,
+        233,
+        191
+      ],
+      "accounts": [
+        {
+          "name": "authority",
+          "docs": [
+            "Role gate: only `config.admin` may free a member's seat."
+          ],
+          "signer": true
+        },
+        {
+          "name": "config"
+        },
+        {
+          "name": "verifier_set",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  118,
+                  101,
+                  114,
+                  105,
+                  102,
+                  105,
+                  101,
+                  114,
+                  95,
+                  115,
+                  101,
+                  116
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "name": "bond_vault",
+          "writable": true
+        },
+        {
+          "name": "usdc_mint"
+        },
+        {
+          "name": "member_usdc",
+          "docs": [
+            "Where the returned bond lands — the released member's own USDC",
+            "account. The mint is pinned here; the handler pins the owner to",
+            "`target` before any state moves, so governance cannot redirect it."
+          ],
+          "writable": true
+        },
+        {
+          "name": "token_program",
+          "address": "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA"
+        }
+      ],
+      "args": [
+        {
+          "name": "target",
+          "type": "pubkey"
+        }
+      ]
+    },
+    {
       "name": "remove_oracle",
       "docs": [
         "Remove a reader (`config.admin`). Readings they already posted stay in",
@@ -1060,7 +1232,9 @@
       "docs": [
         "Leave the set with the bond returned — a voluntary exit keeps a",
         "captured verifier from being frozen out of their own collateral.",
-        "Votes already cast on open tallies keep counting."
+        "Quorum floor: while the set stands at (or below) `k` members, nobody",
+        "may walk — the seat stays until governance `release_verifier`s it or a",
+        "new one bonds. Votes already cast on open tallies keep counting."
       ],
       "discriminator": [
         179,
@@ -2413,6 +2587,19 @@
       ]
     },
     {
+      "name": "VerifierReleased",
+      "discriminator": [
+        67,
+        238,
+        126,
+        68,
+        249,
+        96,
+        186,
+        139
+      ]
+    },
+    {
       "name": "VerifierSetInitialized",
       "discriminator": [
         32,
@@ -2423,6 +2610,19 @@
         108,
         30,
         149
+      ]
+    },
+    {
+      "name": "VerifierSetReconfigured",
+      "discriminator": [
+        188,
+        224,
+        193,
+        91,
+        144,
+        151,
+        129,
+        235
       ]
     },
     {
@@ -2658,6 +2858,11 @@
       "code": 6035,
       "name": "ReadingNotFinalized",
       "msg": "The season reading has not reached quorum"
+    },
+    {
+      "code": 6036,
+      "name": "DropBelowQuorum",
+      "msg": "Removal would take the verifier set below its quorum"
     }
   ],
   "types": [
@@ -3542,6 +3747,41 @@
       }
     },
     {
+      "name": "VerifierMember",
+      "docs": [
+        "One seat: the member and exactly what they paid for it."
+      ],
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "pubkey",
+            "type": "pubkey"
+          },
+          {
+            "name": "stake",
+            "type": "u64"
+          }
+        ]
+      }
+    },
+    {
+      "name": "VerifierReleased",
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "member",
+            "type": "pubkey"
+          },
+          {
+            "name": "amount",
+            "type": "u64"
+          }
+        ]
+      }
+    },
+    {
       "name": "VerifierSet",
       "docs": [
         "Phase 1 — K-of-N verifier set: membership with bonded stakes.",
@@ -3561,17 +3801,25 @@
           {
             "name": "bond_amount",
             "docs": [
-              "USDC (atomic units) each member posts to join — fixed at init."
+              "USDC (atomic units) each seat costs — the price of a NEW join;",
+              "`reconfigure_verifier_set` reprices it, affecting future joins only."
             ],
             "type": "u64"
           },
           {
             "name": "members",
             "docs": [
-              "Bonded members; the MAX_VERIFIERS bound keeps the account fixed-size."
+              "Bonded members with the exact stake each posted at join time: the",
+              "figure an exit refunds and a slash takes, so repricing the set bond",
+              "never moves someone else's collateral. Bounded by MAX_VERIFIERS so",
+              "the account stays fixed-size."
             ],
             "type": {
-              "vec": "pubkey"
+              "vec": {
+                "defined": {
+                  "name": "VerifierMember"
+                }
+              }
             }
           },
           {
@@ -3583,6 +3831,22 @@
     },
     {
       "name": "VerifierSetInitialized",
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "k",
+            "type": "u8"
+          },
+          {
+            "name": "bond_amount",
+            "type": "u64"
+          }
+        ]
+      }
+    },
+    {
+      "name": "VerifierSetReconfigured",
       "type": {
         "kind": "struct",
         "fields": [

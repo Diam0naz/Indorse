@@ -49,12 +49,15 @@ describe('indorse_program', () => {
   // Phase 1 — K-of-N verifier set (quorum k=2, two bonded members)
   const K = 2
   const BOND = 5_000_000 // 5 USDC per seat
+  const REPRICED_BOND = 7_000_000 // 7 USDC — the Phase 3A reconfigured seat price
   let verifierSetPda: PublicKey
   let bondVault: PublicKey
   let verifierA: Keypair
   let verifierB: Keypair
+  let verifierC: Keypair
   let verifierUsdcA: PublicKey
   let verifierUsdcB: PublicKey
+  let verifierUsdcC: PublicKey
 
   // Phase 2 — oracle-set median (odd quorum k=3, three unbound readers)
   const ORACLE_K = 3
@@ -96,6 +99,22 @@ describe('indorse_program', () => {
         report,
         farm: farmPda,
         tally: tallyFor(report),
+        systemProgram: SystemProgram.programId,
+      })
+      .signers([by])
+      .rpc()
+
+  // Phase 1 helper — join the set by posting the CURRENT seat price
+  const bondSeat = (by: Keypair, usdc: PublicKey) =>
+    program.methods
+      .postBond()
+      .accounts({
+        member: by.publicKey,
+        verifierSet: verifierSetPda,
+        bondVault,
+        usdcMint,
+        memberUsdc: usdc,
+        tokenProgram: anchor.utils.token.TOKEN_PROGRAM_ID,
         systemProgram: SystemProgram.programId,
       })
       .signers([by])
@@ -491,25 +510,11 @@ describe('indorse_program', () => {
     await mintTo(provider.connection, owner, usdcMint, verifierUsdcA, owner, BOND)
     await mintTo(provider.connection, owner, usdcMint, verifierUsdcB, owner, BOND)
 
-    const join = (by: Keypair, usdc: PublicKey) =>
-      program.methods
-        .postBond()
-        .accounts({
-          member: by.publicKey,
-          verifierSet: verifierSetPda,
-          bondVault,
-          usdcMint,
-          memberUsdc: usdc,
-          tokenProgram: anchor.utils.token.TOKEN_PROGRAM_ID,
-        })
-        .signers([by])
-        .rpc()
-
-    await join(verifierA, verifierUsdcA)
-    await join(verifierB, verifierUsdcB)
+    await bondSeat(verifierA, verifierUsdcA)
+    await bondSeat(verifierB, verifierUsdcB)
 
     try {
-      await join(verifierA, verifierUsdcA)
+      await bondSeat(verifierA, verifierUsdcA)
       assert.fail('Should have thrown an error')
     } catch (err) {
       assert.include(err.message, 'already a bonded verifier')
@@ -517,11 +522,105 @@ describe('indorse_program', () => {
 
     const set = await program.account.verifierSet.fetch(verifierSetPda)
     assert.deepEqual(
-      set.members.map((m) => m.toBase58()),
+      set.members.map((m) => m.pubkey.toBase58()),
       [verifierA.publicKey.toBase58(), verifierB.publicKey.toBase58()],
     )
     const vault = await getAccount(provider.connection, bondVault)
     assert.equal(Number(vault.amount), 2 * BOND)
+  })
+
+  it('Reconfigures quorum and bond price, admin only', async () => {
+    // A member cannot rewrite the rules — only config.admin.
+    try {
+      await program.methods
+        .reconfigureVerifierSet(3, new anchor.BN(BOND))
+        .accounts({
+          authority: verifierA.publicKey,
+          config: configPda,
+          verifierSet: verifierSetPda,
+        })
+        .signers([verifierA])
+        .rpc()
+      assert.fail('Should have thrown an error')
+    } catch (err) {
+      assert.include(err.message, 'program admin')
+    }
+
+    // Same bounds as init: k = 1 recreates the single-verifier regime.
+    try {
+      await program.methods
+        .reconfigureVerifierSet(1, new anchor.BN(BOND))
+        .accounts({
+          authority: provider.wallet.publicKey,
+          config: configPda,
+          verifierSet: verifierSetPda,
+        })
+        .rpc()
+      assert.fail('Should have thrown an error')
+    } catch (err) {
+      assert.include(err.message, 'Quorum must be')
+    }
+
+    // …and k above the set maximum is out just as at init.
+    try {
+      await program.methods
+        .reconfigureVerifierSet(8, new anchor.BN(BOND))
+        .accounts({
+          authority: provider.wallet.publicKey,
+          config: configPda,
+          verifierSet: verifierSetPda,
+        })
+        .rpc()
+      assert.fail('Should have thrown an error')
+    } catch (err) {
+      assert.include(err.message, 'Quorum must be')
+    }
+
+    // A zero bond would make seats free.
+    try {
+      await program.methods
+        .reconfigureVerifierSet(K, new anchor.BN(0))
+        .accounts({
+          authority: provider.wallet.publicKey,
+          config: configPda,
+          verifierSet: verifierSetPda,
+        })
+        .rpc()
+      assert.fail('Should have thrown an error')
+    } catch (err) {
+      assert.include(err.message, 'greater than zero')
+    }
+
+    // Valid in both directions: up to k = 3…
+    await program.methods
+      .reconfigureVerifierSet(3, new anchor.BN(REPRICED_BOND))
+      .accounts({
+        authority: provider.wallet.publicKey,
+        config: configPda,
+        verifierSet: verifierSetPda,
+      })
+      .rpc()
+    let set = await program.account.verifierSet.fetch(verifierSetPda)
+    assert.equal(set.k, 3)
+    assert.equal(Number(set.bondAmount), REPRICED_BOND)
+
+    // …and back to k = 2 for the vote tests below. The reconfiguration is
+    // reversible, and repricing never moves the stakes existing seats posted.
+    await program.methods
+      .reconfigureVerifierSet(K, new anchor.BN(REPRICED_BOND))
+      .accounts({
+        authority: provider.wallet.publicKey,
+        config: configPda,
+        verifierSet: verifierSetPda,
+      })
+      .rpc()
+    set = await program.account.verifierSet.fetch(verifierSetPda)
+    assert.equal(set.k, K)
+    assert.equal(Number(set.bondAmount), REPRICED_BOND)
+    assert.deepEqual(
+      set.members.map((m) => Number(m.stake)),
+      [BOND, BOND],
+    )
   })
 
   it('Reject voting by a key outside the verifier set', async () => {
@@ -669,9 +768,57 @@ describe('indorse_program', () => {
     assert.equal(farmAccount.verifiedReportCount, 1)
   })
 
-  it('Exits the verifier set with the bond returned', async () => {
-    const before = (await getAccount(provider.connection, verifierUsdcA)).amount
+  it('Refuses an exit that would drop the set below quorum', async () => {
+    // Members [A, B] at k = 2: the set sits exactly on the floor, so a
+    // voluntary exit would strand quorum — refused with nothing moved.
+    try {
+      await program.methods
+        .removeVerifier()
+        .accounts({
+          member: verifierA.publicKey,
+          verifierSet: verifierSetPda,
+          bondVault,
+          usdcMint,
+          memberUsdc: verifierUsdcA,
+          tokenProgram: anchor.utils.token.TOKEN_PROGRAM_ID,
+        })
+        .signers([verifierA])
+        .rpc()
+      assert.fail('Should have thrown an error')
+    } catch (err) {
+      assert.include(err.message, 'below its quorum')
+    }
 
+    const set = await program.account.verifierSet.fetch(verifierSetPda)
+    assert.equal(set.members.length, 2)
+    const vault = await getAccount(provider.connection, bondVault)
+    assert.equal(Number(vault.amount), 2 * BOND)
+  })
+
+  it('Bonds a third seat at the current price, then exits above the floor', async () => {
+    verifierC = Keypair.generate()
+    await fund(verifierC.publicKey)
+    verifierUsdcC = await createAccount(provider.connection, owner, usdcMint, verifierC.publicKey)
+    await mintTo(provider.connection, owner, usdcMint, verifierUsdcC, owner, REPRICED_BOND)
+
+    // C is the first seat to join after the reconfiguration: they pay the
+    // CURRENT price (7), while A and B keep the 5 they posted.
+    await bondSeat(verifierC, verifierUsdcC)
+    let set = await program.account.verifierSet.fetch(verifierSetPda)
+    assert.deepEqual(
+      set.members.map((m) => [m.pubkey.toBase58(), Number(m.stake)]),
+      [
+        [verifierA.publicKey.toBase58(), BOND],
+        [verifierB.publicKey.toBase58(), BOND],
+        [verifierC.publicKey.toBase58(), REPRICED_BOND],
+      ],
+    )
+    let vault = await getAccount(provider.connection, bondVault)
+    assert.equal(Number(vault.amount), 2 * BOND + REPRICED_BOND)
+
+    // Three members at k = 2: A exits above the floor and gets back exactly
+    // the stake they posted — 5, not the reconfigured 7.
+    const before = (await getAccount(provider.connection, verifierUsdcA)).amount
     await program.methods
       .removeVerifier()
       .accounts({
@@ -687,10 +834,65 @@ describe('indorse_program', () => {
 
     const after = (await getAccount(provider.connection, verifierUsdcA)).amount
     assert.equal(Number(after), Number(before) + BOND)
+    vault = await getAccount(provider.connection, bondVault)
+    assert.equal(Number(vault.amount), BOND + REPRICED_BOND)
+    set = await program.account.verifierSet.fetch(verifierSetPda)
+    assert.deepEqual(
+      set.members.map((m) => [m.pubkey.toBase58(), Number(m.stake)]),
+      [
+        [verifierB.publicKey.toBase58(), BOND],
+        [verifierC.publicKey.toBase58(), REPRICED_BOND],
+      ],
+    )
+  })
+
+  it('Releases a seat with the bond returned, admin only', async () => {
+    // A member cannot release anyone — only config.admin.
+    try {
+      await program.methods
+        .releaseVerifier(verifierC.publicKey)
+        .accounts({
+          authority: verifierB.publicKey,
+          config: configPda,
+          verifierSet: verifierSetPda,
+          bondVault,
+          usdcMint,
+          memberUsdc: verifierUsdcC,
+          tokenProgram: anchor.utils.token.TOKEN_PROGRAM_ID,
+        })
+        .signers([verifierB])
+        .rpc()
+      assert.fail('Should have thrown an error')
+    } catch (err) {
+      assert.include(err.message, 'program admin')
+    }
+
+    const before = (await getAccount(provider.connection, verifierUsdcC)).amount
+    await program.methods
+      .releaseVerifier(verifierC.publicKey)
+      .accounts({
+        authority: provider.wallet.publicKey,
+        config: configPda,
+        verifierSet: verifierSetPda,
+        bondVault,
+        usdcMint,
+        memberUsdc: verifierUsdcC,
+        tokenProgram: anchor.utils.token.TOKEN_PROGRAM_ID,
+      })
+      .rpc()
+
+    // C's recorded stake went back to C's own account — even though the set
+    // now stands BELOW k: release is governance's unconditional valve, the
+    // counterpart to the (floored) voluntary exit.
+    const after = (await getAccount(provider.connection, verifierUsdcC)).amount
+    assert.equal(Number(after), Number(before) + REPRICED_BOND)
     const vault = await getAccount(provider.connection, bondVault)
     assert.equal(Number(vault.amount), BOND)
     const set = await program.account.verifierSet.fetch(verifierSetPda)
-    assert.equal(set.members.length, 1)
+    assert.deepEqual(
+      set.members.map((m) => [m.pubkey.toBase58(), Number(m.stake)]),
+      [[verifierB.publicKey.toBase58(), BOND]],
+    )
   })
 
   it('Slash moves a bond to the treasury, admin only', async () => {
@@ -736,7 +938,76 @@ describe('indorse_program', () => {
     const vault = await getAccount(provider.connection, bondVault)
     assert.equal(Number(vault.amount), 0)
     const treasuryAfter = (await getAccount(provider.connection, treasuryUsdc)).amount
+    // +BOND (B's recorded 5 USDC) — not the reconfigured 7: the slash takes
+    // exactly the stake this seat posted, and may leave the set below k by
+    // design (governance's unconditional lever).
     assert.equal(Number(treasuryAfter), Number(treasuryBefore) + BOND)
+  })
+
+  it('Freezes an open tally when k is lowered beneath it', async () => {
+    // Everyone's seat is free again (A exited, B was slashed, C was
+    // released) — rebuild a three-member set and re-quorum it to 3.
+    await program.methods
+      .reconfigureVerifierSet(3, new anchor.BN(REPRICED_BOND))
+      .accounts({
+        authority: provider.wallet.publicKey,
+        config: configPda,
+        verifierSet: verifierSetPda,
+      })
+      .rpc()
+
+    for (const [by, usdc] of [
+      [verifierA, verifierUsdcA],
+      [verifierB, verifierUsdcB],
+      [verifierC, verifierUsdcC],
+    ] as const) {
+      await mintTo(provider.connection, owner, usdcMint, usdc, owner, REPRICED_BOND)
+      await bondSeat(by, usdc)
+    }
+
+    // A fresh report — its tally opens on the first vote below.
+    const [report4Pda] = PublicKey.findProgramAddressSync(
+      [Buffer.from('report'), farmPda.toBuffer(), u32le(3)],
+      program.programId,
+    )
+    await program.methods
+      .submitScoutReport(PHOTO_HASH, REPORT_URI, new anchor.BN(LAT_E6), new anchor.BN(LNG_E6), AI_LABEL)
+      .accounts({
+        reporter: reporter.publicKey,
+        farm: farmPda,
+        report: report4Pda,
+        systemProgram: SystemProgram.programId,
+      })
+      .signers([reporter])
+      .rpc()
+
+    // Two approvals with k = 3: still open.
+    await castVote(report4Pda, true, verifierA)
+    await castVote(report4Pda, true, verifierB)
+    const open = await program.account.scoutReport.fetch(report4Pda)
+    assert.deepEqual(open.status, { pending: {} })
+
+    // Governance lowers k beneath the standing tally…
+    await program.methods
+      .reconfigureVerifierSet(K, new anchor.BN(REPRICED_BOND))
+      .accounts({
+        authority: provider.wallet.publicKey,
+        config: configPda,
+        verifierSet: verifierSetPda,
+      })
+      .rpc()
+
+    // …and the next member contact freezes it as the counts already stand:
+    // quorum (2) was reached under the new k, so C's ballot is never
+    // recorded — no AlreadyVoted deadlock, no vote inflation.
+    await castVote(report4Pda, true, verifierC)
+    const frozen = await program.account.scoutReport.fetch(report4Pda)
+    assert.deepEqual(frozen.status, { verified: {} })
+    const tally = await program.account.tally.fetch(tallyFor(report4Pda))
+    assert.equal(tally.approvals, 2)
+    assert.equal(tally.votes.length, 2)
+    const farmAccount = await program.account.farm.fetch(farmPda)
+    assert.equal(farmAccount.verifiedReportCount, 2)
   })
 
   // ── Oracle set (Phase 2 — median of an odd quorum, no bonds) ──────────────

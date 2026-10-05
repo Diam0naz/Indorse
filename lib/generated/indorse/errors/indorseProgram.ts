@@ -86,12 +86,15 @@ export const INDORSE_PROGRAM_ERROR__ORACLE_SET_FULL = 0x1791 // 6033
 export const INDORSE_PROGRAM_ERROR__READING_FINALIZED = 0x1792 // 6034
 /** ReadingNotFinalized: The season reading has not reached quorum */
 export const INDORSE_PROGRAM_ERROR__READING_NOT_FINALIZED = 0x1793 // 6035
+/** DropBelowQuorum: Removal would take the verifier set below its quorum */
+export const INDORSE_PROGRAM_ERROR__DROP_BELOW_QUORUM = 0x1794 // 6036
 
 export type IndorseProgramError =
   | typeof INDORSE_PROGRAM_ERROR__ALREADY_ORACLE
   | typeof INDORSE_PROGRAM_ERROR__ALREADY_VERIFIED
   | typeof INDORSE_PROGRAM_ERROR__ALREADY_VERIFIER
   | typeof INDORSE_PROGRAM_ERROR__ALREADY_VOTED
+  | typeof INDORSE_PROGRAM_ERROR__DROP_BELOW_QUORUM
   | typeof INDORSE_PROGRAM_ERROR__ESCROW_LOCKED
   | typeof INDORSE_PROGRAM_ERROR__ESCROW_NOT_FUNDED
   | typeof INDORSE_PROGRAM_ERROR__INVALID_MEDIAN_QUORUM
@@ -132,6 +135,7 @@ if (process.env['NODE_ENV'] !== 'production') {
     [INDORSE_PROGRAM_ERROR__ALREADY_VERIFIED]: `Report already verified or rejected`,
     [INDORSE_PROGRAM_ERROR__ALREADY_VERIFIER]: `Key is already a bonded verifier`,
     [INDORSE_PROGRAM_ERROR__ALREADY_VOTED]: `Verifier has already voted on this report`,
+    [INDORSE_PROGRAM_ERROR__DROP_BELOW_QUORUM]: `Removal would take the verifier set below its quorum`,
     [INDORSE_PROGRAM_ERROR__ESCROW_LOCKED]: `Escrow is locked — cancellation window has passed`,
     [INDORSE_PROGRAM_ERROR__ESCROW_NOT_FUNDED]: `Escrow is not in funded state`,
     [INDORSE_PROGRAM_ERROR__INVALID_MEDIAN_QUORUM]: `Oracle quorum must be an odd number from 3 to the oracle-set maximum`,

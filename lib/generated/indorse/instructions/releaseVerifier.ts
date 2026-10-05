@@ -10,6 +10,8 @@ import {
   combineCodec,
   fixDecoderSize,
   fixEncoderSize,
+  getAddressDecoder,
+  getAddressEncoder,
   getBytesDecoder,
   getBytesEncoder,
   getStructDecoder,
@@ -27,133 +29,131 @@ import {
   type InstructionWithAccounts,
   type InstructionWithData,
   type ReadonlyAccount,
+  type ReadonlySignerAccount,
   type ReadonlyUint8Array,
   type TransactionSigner,
   type WritableAccount,
-  type WritableSignerAccount,
 } from '@solana/kit'
 import { getAccountMetaFactory, type ResolvedInstructionAccount } from '@solana/program-client-core'
 import { findVerifierSetPda } from '../pdas'
 import { INDORSE_PROGRAM_PROGRAM_ADDRESS } from '../programs'
 
-export const POST_BOND_DISCRIMINATOR: ReadonlyUint8Array = new Uint8Array([168, 151, 202, 119, 163, 58, 147, 247])
+export const RELEASE_VERIFIER_DISCRIMINATOR: ReadonlyUint8Array = new Uint8Array([104, 67, 70, 29, 239, 190, 233, 191])
 
-export function getPostBondDiscriminatorBytes(): ReadonlyUint8Array {
-  return fixEncoderSize(getBytesEncoder(), 8).encode(POST_BOND_DISCRIMINATOR)
+export function getReleaseVerifierDiscriminatorBytes(): ReadonlyUint8Array {
+  return fixEncoderSize(getBytesEncoder(), 8).encode(RELEASE_VERIFIER_DISCRIMINATOR)
 }
 
-export type PostBondInstruction<
+export type ReleaseVerifierInstruction<
   TProgram extends string = typeof INDORSE_PROGRAM_PROGRAM_ADDRESS,
-  TAccountMember extends string | AccountMeta<string> = string,
+  TAccountAuthority extends string | AccountMeta<string> = string,
+  TAccountConfig extends string | AccountMeta<string> = string,
   TAccountVerifierSet extends string | AccountMeta<string> = string,
   TAccountBondVault extends string | AccountMeta<string> = string,
   TAccountUsdcMint extends string | AccountMeta<string> = string,
   TAccountMemberUsdc extends string | AccountMeta<string> = string,
   TAccountTokenProgram extends string | AccountMeta<string> = 'TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA',
-  TAccountSystemProgram extends string | AccountMeta<string> = '11111111111111111111111111111111',
   TRemainingAccounts extends readonly AccountMeta<string>[] = [],
 > = Instruction<TProgram> &
   InstructionWithData<ReadonlyUint8Array> &
   InstructionWithAccounts<
     [
-      TAccountMember extends string
-        ? WritableSignerAccount<TAccountMember> & AccountSignerMeta<TAccountMember>
-        : TAccountMember,
+      TAccountAuthority extends string
+        ? ReadonlySignerAccount<TAccountAuthority> & AccountSignerMeta<TAccountAuthority>
+        : TAccountAuthority,
+      TAccountConfig extends string ? ReadonlyAccount<TAccountConfig> : TAccountConfig,
       TAccountVerifierSet extends string ? WritableAccount<TAccountVerifierSet> : TAccountVerifierSet,
       TAccountBondVault extends string ? WritableAccount<TAccountBondVault> : TAccountBondVault,
       TAccountUsdcMint extends string ? ReadonlyAccount<TAccountUsdcMint> : TAccountUsdcMint,
       TAccountMemberUsdc extends string ? WritableAccount<TAccountMemberUsdc> : TAccountMemberUsdc,
       TAccountTokenProgram extends string ? ReadonlyAccount<TAccountTokenProgram> : TAccountTokenProgram,
-      TAccountSystemProgram extends string ? ReadonlyAccount<TAccountSystemProgram> : TAccountSystemProgram,
       ...TRemainingAccounts,
     ]
   >
 
-export type PostBondInstructionData = { discriminator: ReadonlyUint8Array }
+export type ReleaseVerifierInstructionData = { discriminator: ReadonlyUint8Array; target: Address }
 
-export type PostBondInstructionDataArgs = {}
+export type ReleaseVerifierInstructionDataArgs = { target: Address }
 
-export function getPostBondInstructionDataEncoder(): FixedSizeEncoder<PostBondInstructionDataArgs> {
-  return transformEncoder(getStructEncoder([['discriminator', fixEncoderSize(getBytesEncoder(), 8)]]), (value) => ({
-    ...value,
-    discriminator: POST_BOND_DISCRIMINATOR,
-  }))
+export function getReleaseVerifierInstructionDataEncoder(): FixedSizeEncoder<ReleaseVerifierInstructionDataArgs> {
+  return transformEncoder(
+    getStructEncoder([
+      ['discriminator', fixEncoderSize(getBytesEncoder(), 8)],
+      ['target', getAddressEncoder()],
+    ]),
+    (value) => ({ ...value, discriminator: RELEASE_VERIFIER_DISCRIMINATOR }),
+  )
 }
 
-export function getPostBondInstructionDataDecoder(): FixedSizeDecoder<PostBondInstructionData> {
-  return getStructDecoder([['discriminator', fixDecoderSize(getBytesDecoder(), 8)]])
+export function getReleaseVerifierInstructionDataDecoder(): FixedSizeDecoder<ReleaseVerifierInstructionData> {
+  return getStructDecoder([
+    ['discriminator', fixDecoderSize(getBytesDecoder(), 8)],
+    ['target', getAddressDecoder()],
+  ])
 }
 
-export function getPostBondInstructionDataCodec(): FixedSizeCodec<
-  PostBondInstructionDataArgs,
-  PostBondInstructionData
+export function getReleaseVerifierInstructionDataCodec(): FixedSizeCodec<
+  ReleaseVerifierInstructionDataArgs,
+  ReleaseVerifierInstructionData
 > {
-  return combineCodec(getPostBondInstructionDataEncoder(), getPostBondInstructionDataDecoder())
+  return combineCodec(getReleaseVerifierInstructionDataEncoder(), getReleaseVerifierInstructionDataDecoder())
 }
 
-export type PostBondAsyncInput<
-  TAccountMember extends string = string,
+export type ReleaseVerifierAsyncInput<
+  TAccountAuthority extends string = string,
+  TAccountConfig extends string = string,
   TAccountVerifierSet extends string = string,
   TAccountBondVault extends string = string,
   TAccountUsdcMint extends string = string,
   TAccountMemberUsdc extends string = string,
   TAccountTokenProgram extends string = string,
-  TAccountSystemProgram extends string = string,
 > = {
-  member: TransactionSigner<TAccountMember>
-  /**
-   * The set PDA. Sets created before Phase 3A were allocated for bare-
-   * pubkey members; the realloc normalizes every account to the current
-   * layout size on the first join, with the joining member paying any
-   * rent delta (a no-op on already-current sets).
-   */
+  /** Role gate: only `config.admin` may free a member's seat. */
+  authority: TransactionSigner<TAccountAuthority>
+  config: Address<TAccountConfig>
   verifierSet?: Address<TAccountVerifierSet>
-  /**
-   * The set's canonical bond-vault ATA — validated by address (created
-   * once by the cutover script, like the treasury's), never trusted blind.
-   */
   bondVault: Address<TAccountBondVault>
-  /** The bond mint — every collateral account must agree with it. */
   usdcMint: Address<TAccountUsdcMint>
+  /**
+   * Where the returned bond lands — the released member's own USDC
+   * account. The mint is pinned here; the handler pins the owner to
+   * `target` before any state moves, so governance cannot redirect it.
+   */
   memberUsdc: Address<TAccountMemberUsdc>
   tokenProgram?: Address<TAccountTokenProgram>
-  /**
-   * Referenced by the realloc constraint above: the rent top-up and the
-   * resize CPI both go through the system program.
-   */
-  systemProgram?: Address<TAccountSystemProgram>
+  target: ReleaseVerifierInstructionDataArgs['target']
 }
 
-export async function getPostBondInstructionAsync<
-  TAccountMember extends string,
+export async function getReleaseVerifierInstructionAsync<
+  TAccountAuthority extends string,
+  TAccountConfig extends string,
   TAccountVerifierSet extends string,
   TAccountBondVault extends string,
   TAccountUsdcMint extends string,
   TAccountMemberUsdc extends string,
   TAccountTokenProgram extends string,
-  TAccountSystemProgram extends string,
   TProgramAddress extends Address = typeof INDORSE_PROGRAM_PROGRAM_ADDRESS,
 >(
-  input: PostBondAsyncInput<
-    TAccountMember,
+  input: ReleaseVerifierAsyncInput<
+    TAccountAuthority,
+    TAccountConfig,
     TAccountVerifierSet,
     TAccountBondVault,
     TAccountUsdcMint,
     TAccountMemberUsdc,
-    TAccountTokenProgram,
-    TAccountSystemProgram
+    TAccountTokenProgram
   >,
   config?: { programAddress?: TProgramAddress },
 ): Promise<
-  PostBondInstruction<
+  ReleaseVerifierInstruction<
     TProgramAddress,
-    TAccountMember,
+    TAccountAuthority,
+    TAccountConfig,
     TAccountVerifierSet,
     TAccountBondVault,
     TAccountUsdcMint,
     TAccountMemberUsdc,
-    TAccountTokenProgram,
-    TAccountSystemProgram
+    TAccountTokenProgram
   >
 > {
   // Program address.
@@ -161,15 +161,18 @@ export async function getPostBondInstructionAsync<
 
   // Original accounts.
   const originalAccounts = {
-    member: { value: input.member ?? null, isWritable: true },
+    authority: { value: input.authority ?? null, isWritable: false },
+    config: { value: input.config ?? null, isWritable: false },
     verifierSet: { value: input.verifierSet ?? null, isWritable: true },
     bondVault: { value: input.bondVault ?? null, isWritable: true },
     usdcMint: { value: input.usdcMint ?? null, isWritable: false },
     memberUsdc: { value: input.memberUsdc ?? null, isWritable: true },
     tokenProgram: { value: input.tokenProgram ?? null, isWritable: false },
-    systemProgram: { value: input.systemProgram ?? null, isWritable: false },
   }
   const accounts = originalAccounts as Record<keyof typeof originalAccounts, ResolvedInstructionAccount>
+
+  // Original args.
+  const args = { ...input }
 
   // Resolve default values.
   if (!accounts.verifierSet.value) {
@@ -179,182 +182,162 @@ export async function getPostBondInstructionAsync<
     accounts.tokenProgram.value =
       'TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA' as Address<'TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA'>
   }
-  if (!accounts.systemProgram.value) {
-    accounts.systemProgram.value = '11111111111111111111111111111111' as Address<'11111111111111111111111111111111'>
-  }
 
   const getAccountMeta = getAccountMetaFactory(programAddress, 'programId')
   return Object.freeze({
     accounts: [
-      getAccountMeta('member', accounts.member),
+      getAccountMeta('authority', accounts.authority),
+      getAccountMeta('config', accounts.config),
       getAccountMeta('verifierSet', accounts.verifierSet),
       getAccountMeta('bondVault', accounts.bondVault),
       getAccountMeta('usdcMint', accounts.usdcMint),
       getAccountMeta('memberUsdc', accounts.memberUsdc),
       getAccountMeta('tokenProgram', accounts.tokenProgram),
-      getAccountMeta('systemProgram', accounts.systemProgram),
     ],
-    data: getPostBondInstructionDataEncoder().encode({}),
+    data: getReleaseVerifierInstructionDataEncoder().encode(args as ReleaseVerifierInstructionDataArgs),
     programAddress,
-  } as PostBondInstruction<
+  } as ReleaseVerifierInstruction<
     TProgramAddress,
-    TAccountMember,
+    TAccountAuthority,
+    TAccountConfig,
     TAccountVerifierSet,
     TAccountBondVault,
     TAccountUsdcMint,
     TAccountMemberUsdc,
-    TAccountTokenProgram,
-    TAccountSystemProgram
+    TAccountTokenProgram
   >)
 }
 
-export type PostBondInput<
-  TAccountMember extends string = string,
+export type ReleaseVerifierInput<
+  TAccountAuthority extends string = string,
+  TAccountConfig extends string = string,
   TAccountVerifierSet extends string = string,
   TAccountBondVault extends string = string,
   TAccountUsdcMint extends string = string,
   TAccountMemberUsdc extends string = string,
   TAccountTokenProgram extends string = string,
-  TAccountSystemProgram extends string = string,
 > = {
-  member: TransactionSigner<TAccountMember>
-  /**
-   * The set PDA. Sets created before Phase 3A were allocated for bare-
-   * pubkey members; the realloc normalizes every account to the current
-   * layout size on the first join, with the joining member paying any
-   * rent delta (a no-op on already-current sets).
-   */
+  /** Role gate: only `config.admin` may free a member's seat. */
+  authority: TransactionSigner<TAccountAuthority>
+  config: Address<TAccountConfig>
   verifierSet: Address<TAccountVerifierSet>
-  /**
-   * The set's canonical bond-vault ATA — validated by address (created
-   * once by the cutover script, like the treasury's), never trusted blind.
-   */
   bondVault: Address<TAccountBondVault>
-  /** The bond mint — every collateral account must agree with it. */
   usdcMint: Address<TAccountUsdcMint>
+  /**
+   * Where the returned bond lands — the released member's own USDC
+   * account. The mint is pinned here; the handler pins the owner to
+   * `target` before any state moves, so governance cannot redirect it.
+   */
   memberUsdc: Address<TAccountMemberUsdc>
   tokenProgram?: Address<TAccountTokenProgram>
-  /**
-   * Referenced by the realloc constraint above: the rent top-up and the
-   * resize CPI both go through the system program.
-   */
-  systemProgram?: Address<TAccountSystemProgram>
+  target: ReleaseVerifierInstructionDataArgs['target']
 }
 
-export function getPostBondInstruction<
-  TAccountMember extends string,
+export function getReleaseVerifierInstruction<
+  TAccountAuthority extends string,
+  TAccountConfig extends string,
   TAccountVerifierSet extends string,
   TAccountBondVault extends string,
   TAccountUsdcMint extends string,
   TAccountMemberUsdc extends string,
   TAccountTokenProgram extends string,
-  TAccountSystemProgram extends string,
   TProgramAddress extends Address = typeof INDORSE_PROGRAM_PROGRAM_ADDRESS,
 >(
-  input: PostBondInput<
-    TAccountMember,
+  input: ReleaseVerifierInput<
+    TAccountAuthority,
+    TAccountConfig,
     TAccountVerifierSet,
     TAccountBondVault,
     TAccountUsdcMint,
     TAccountMemberUsdc,
-    TAccountTokenProgram,
-    TAccountSystemProgram
+    TAccountTokenProgram
   >,
   config?: { programAddress?: TProgramAddress },
-): PostBondInstruction<
+): ReleaseVerifierInstruction<
   TProgramAddress,
-  TAccountMember,
+  TAccountAuthority,
+  TAccountConfig,
   TAccountVerifierSet,
   TAccountBondVault,
   TAccountUsdcMint,
   TAccountMemberUsdc,
-  TAccountTokenProgram,
-  TAccountSystemProgram
+  TAccountTokenProgram
 > {
   // Program address.
   const programAddress = config?.programAddress ?? INDORSE_PROGRAM_PROGRAM_ADDRESS
 
   // Original accounts.
   const originalAccounts = {
-    member: { value: input.member ?? null, isWritable: true },
+    authority: { value: input.authority ?? null, isWritable: false },
+    config: { value: input.config ?? null, isWritable: false },
     verifierSet: { value: input.verifierSet ?? null, isWritable: true },
     bondVault: { value: input.bondVault ?? null, isWritable: true },
     usdcMint: { value: input.usdcMint ?? null, isWritable: false },
     memberUsdc: { value: input.memberUsdc ?? null, isWritable: true },
     tokenProgram: { value: input.tokenProgram ?? null, isWritable: false },
-    systemProgram: { value: input.systemProgram ?? null, isWritable: false },
   }
   const accounts = originalAccounts as Record<keyof typeof originalAccounts, ResolvedInstructionAccount>
+
+  // Original args.
+  const args = { ...input }
 
   // Resolve default values.
   if (!accounts.tokenProgram.value) {
     accounts.tokenProgram.value =
       'TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA' as Address<'TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA'>
   }
-  if (!accounts.systemProgram.value) {
-    accounts.systemProgram.value = '11111111111111111111111111111111' as Address<'11111111111111111111111111111111'>
-  }
 
   const getAccountMeta = getAccountMetaFactory(programAddress, 'programId')
   return Object.freeze({
     accounts: [
-      getAccountMeta('member', accounts.member),
+      getAccountMeta('authority', accounts.authority),
+      getAccountMeta('config', accounts.config),
       getAccountMeta('verifierSet', accounts.verifierSet),
       getAccountMeta('bondVault', accounts.bondVault),
       getAccountMeta('usdcMint', accounts.usdcMint),
       getAccountMeta('memberUsdc', accounts.memberUsdc),
       getAccountMeta('tokenProgram', accounts.tokenProgram),
-      getAccountMeta('systemProgram', accounts.systemProgram),
     ],
-    data: getPostBondInstructionDataEncoder().encode({}),
+    data: getReleaseVerifierInstructionDataEncoder().encode(args as ReleaseVerifierInstructionDataArgs),
     programAddress,
-  } as PostBondInstruction<
+  } as ReleaseVerifierInstruction<
     TProgramAddress,
-    TAccountMember,
+    TAccountAuthority,
+    TAccountConfig,
     TAccountVerifierSet,
     TAccountBondVault,
     TAccountUsdcMint,
     TAccountMemberUsdc,
-    TAccountTokenProgram,
-    TAccountSystemProgram
+    TAccountTokenProgram
   >)
 }
 
-export type ParsedPostBondInstruction<
+export type ParsedReleaseVerifierInstruction<
   TProgram extends string = typeof INDORSE_PROGRAM_PROGRAM_ADDRESS,
   TAccountMetas extends readonly AccountMeta[] = readonly AccountMeta[],
 > = {
   programAddress: Address<TProgram>
   accounts: {
-    member: TAccountMetas[0]
+    /** Role gate: only `config.admin` may free a member's seat. */
+    authority: TAccountMetas[0]
+    config: TAccountMetas[1]
+    verifierSet: TAccountMetas[2]
+    bondVault: TAccountMetas[3]
+    usdcMint: TAccountMetas[4]
     /**
-     * The set PDA. Sets created before Phase 3A were allocated for bare-
-     * pubkey members; the realloc normalizes every account to the current
-     * layout size on the first join, with the joining member paying any
-     * rent delta (a no-op on already-current sets).
+     * Where the returned bond lands — the released member's own USDC
+     * account. The mint is pinned here; the handler pins the owner to
+     * `target` before any state moves, so governance cannot redirect it.
      */
-    verifierSet: TAccountMetas[1]
-    /**
-     * The set's canonical bond-vault ATA — validated by address (created
-     * once by the cutover script, like the treasury's), never trusted blind.
-     */
-    bondVault: TAccountMetas[2]
-    /** The bond mint — every collateral account must agree with it. */
-    usdcMint: TAccountMetas[3]
-    memberUsdc: TAccountMetas[4]
-    tokenProgram: TAccountMetas[5]
-    /**
-     * Referenced by the realloc constraint above: the rent top-up and the
-     * resize CPI both go through the system program.
-     */
-    systemProgram: TAccountMetas[6]
+    memberUsdc: TAccountMetas[5]
+    tokenProgram: TAccountMetas[6]
   }
-  data: PostBondInstructionData
+  data: ReleaseVerifierInstructionData
 }
 
-export function parsePostBondInstruction<TProgram extends string, TAccountMetas extends readonly AccountMeta[]>(
+export function parseReleaseVerifierInstruction<TProgram extends string, TAccountMetas extends readonly AccountMeta[]>(
   instruction: Instruction<TProgram> & InstructionWithAccounts<TAccountMetas> & InstructionWithData<ReadonlyUint8Array>,
-): ParsedPostBondInstruction<TProgram, TAccountMetas> {
+): ParsedReleaseVerifierInstruction<TProgram, TAccountMetas> {
   if (instruction.accounts.length < 7) {
     throw new SolanaError(SOLANA_ERROR__PROGRAM_CLIENTS__INSUFFICIENT_ACCOUNT_METAS, {
       actualAccountMetas: instruction.accounts.length,
@@ -370,14 +353,14 @@ export function parsePostBondInstruction<TProgram extends string, TAccountMetas 
   return {
     programAddress: instruction.programAddress,
     accounts: {
-      member: getNextAccount(),
+      authority: getNextAccount(),
+      config: getNextAccount(),
       verifierSet: getNextAccount(),
       bondVault: getNextAccount(),
       usdcMint: getNextAccount(),
       memberUsdc: getNextAccount(),
       tokenProgram: getNextAccount(),
-      systemProgram: getNextAccount(),
     },
-    data: getPostBondInstructionDataDecoder().decode(instruction.data),
+    data: getReleaseVerifierInstructionDataDecoder().decode(instruction.data),
   }
 }

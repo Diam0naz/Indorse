@@ -63,3 +63,6 @@ brag-output-*/
 # test-ledger holds validator/faucet keypairs — never commit those)
 programs/**/target/
 programs/**/test-ledger/
+
+# local validator ledger created when a root-level solana-test-validator runs
+/test-ledger/

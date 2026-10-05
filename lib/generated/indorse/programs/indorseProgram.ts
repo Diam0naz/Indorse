@@ -76,8 +76,10 @@ import {
   getInitOracleSetInstructionAsync,
   getInitVerifierSetInstructionAsync,
   getPostBondInstructionAsync,
+  getReconfigureVerifierSetInstructionAsync,
   getRegisterFarmInstructionAsync,
   getReleaseEscrowInstruction,
+  getReleaseVerifierInstructionAsync,
   getRemoveOracleInstructionAsync,
   getRemoveVerifierInstructionAsync,
   getRevokePolicyInstructionAsync,
@@ -99,8 +101,10 @@ import {
   parseInitOracleSetInstruction,
   parseInitVerifierSetInstruction,
   parsePostBondInstruction,
+  parseReconfigureVerifierSetInstruction,
   parseRegisterFarmInstruction,
   parseReleaseEscrowInstruction,
+  parseReleaseVerifierInstruction,
   parseRemoveOracleInstruction,
   parseRemoveVerifierInstruction,
   parseRevokePolicyInstruction,
@@ -131,8 +135,10 @@ import {
   type ParsedInitOracleSetInstruction,
   type ParsedInitVerifierSetInstruction,
   type ParsedPostBondInstruction,
+  type ParsedReconfigureVerifierSetInstruction,
   type ParsedRegisterFarmInstruction,
   type ParsedReleaseEscrowInstruction,
+  type ParsedReleaseVerifierInstruction,
   type ParsedRemoveOracleInstruction,
   type ParsedRemoveVerifierInstruction,
   type ParsedRevokePolicyInstruction,
@@ -145,8 +151,10 @@ import {
   type ParsedSubmitScoutReportInstruction,
   type ParsedWithdrawTreasuryInstruction,
   type PostBondAsyncInput,
+  type ReconfigureVerifierSetAsyncInput,
   type RegisterFarmAsyncInput,
   type ReleaseEscrowInput,
+  type ReleaseVerifierAsyncInput,
   type RemoveOracleAsyncInput,
   type RemoveVerifierAsyncInput,
   type RevokePolicyAsyncInput,
@@ -309,7 +317,9 @@ export enum IndorseProgramEvent {
   TreasuryWithdrawn,
   VerifierExited,
   VerifierJoined,
+  VerifierReleased,
   VerifierSetInitialized,
+  VerifierSetReconfigured,
   VerifierSlashed,
   VoteCast,
   WeatherMedianFinalized,
@@ -503,11 +513,29 @@ export function identifyIndorseProgramEvent(
   if (
     containsBytes(
       data,
+      fixEncoderSize(getBytesEncoder(), 8).encode(new Uint8Array([67, 238, 126, 68, 249, 96, 186, 139])),
+      0,
+    )
+  ) {
+    return IndorseProgramEvent.VerifierReleased
+  }
+  if (
+    containsBytes(
+      data,
       fixEncoderSize(getBytesEncoder(), 8).encode(new Uint8Array([32, 180, 222, 5, 0, 108, 30, 149])),
       0,
     )
   ) {
     return IndorseProgramEvent.VerifierSetInitialized
+  }
+  if (
+    containsBytes(
+      data,
+      fixEncoderSize(getBytesEncoder(), 8).encode(new Uint8Array([188, 224, 193, 91, 144, 151, 129, 235])),
+      0,
+    )
+  ) {
+    return IndorseProgramEvent.VerifierSetReconfigured
   }
   if (
     containsBytes(
@@ -559,8 +587,10 @@ export enum IndorseProgramInstruction {
   InitOracleSet,
   InitVerifierSet,
   PostBond,
+  ReconfigureVerifierSet,
   RegisterFarm,
   ReleaseEscrow,
+  ReleaseVerifier,
   RemoveOracle,
   RemoveVerifier,
   RevokePolicy,
@@ -671,6 +701,15 @@ export function identifyIndorseProgramInstruction(
   if (
     containsBytes(
       data,
+      fixEncoderSize(getBytesEncoder(), 8).encode(new Uint8Array([236, 113, 78, 199, 76, 91, 46, 64])),
+      0,
+    )
+  ) {
+    return IndorseProgramInstruction.ReconfigureVerifierSet
+  }
+  if (
+    containsBytes(
+      data,
       fixEncoderSize(getBytesEncoder(), 8).encode(new Uint8Array([183, 52, 200, 186, 245, 91, 216, 246])),
       0,
     )
@@ -685,6 +724,15 @@ export function identifyIndorseProgramInstruction(
     )
   ) {
     return IndorseProgramInstruction.ReleaseEscrow
+  }
+  if (
+    containsBytes(
+      data,
+      fixEncoderSize(getBytesEncoder(), 8).encode(new Uint8Array([104, 67, 70, 29, 239, 190, 233, 191])),
+      0,
+    )
+  ) {
+    return IndorseProgramInstruction.ReleaseVerifier
   }
   if (
     containsBytes(
@@ -802,8 +850,12 @@ export type ParsedIndorseProgramInstruction<TProgram extends string = 'GVenujqgM
   | ({ instructionType: IndorseProgramInstruction.InitOracleSet } & ParsedInitOracleSetInstruction<TProgram>)
   | ({ instructionType: IndorseProgramInstruction.InitVerifierSet } & ParsedInitVerifierSetInstruction<TProgram>)
   | ({ instructionType: IndorseProgramInstruction.PostBond } & ParsedPostBondInstruction<TProgram>)
+  | ({
+      instructionType: IndorseProgramInstruction.ReconfigureVerifierSet
+    } & ParsedReconfigureVerifierSetInstruction<TProgram>)
   | ({ instructionType: IndorseProgramInstruction.RegisterFarm } & ParsedRegisterFarmInstruction<TProgram>)
   | ({ instructionType: IndorseProgramInstruction.ReleaseEscrow } & ParsedReleaseEscrowInstruction<TProgram>)
+  | ({ instructionType: IndorseProgramInstruction.ReleaseVerifier } & ParsedReleaseVerifierInstruction<TProgram>)
   | ({ instructionType: IndorseProgramInstruction.RemoveOracle } & ParsedRemoveOracleInstruction<TProgram>)
   | ({ instructionType: IndorseProgramInstruction.RemoveVerifier } & ParsedRemoveVerifierInstruction<TProgram>)
   | ({ instructionType: IndorseProgramInstruction.RevokePolicy } & ParsedRevokePolicyInstruction<TProgram>)
@@ -866,6 +918,13 @@ export function parseIndorseProgramInstruction<TProgram extends string>(
       assertIsInstructionWithAccounts(instruction)
       return { instructionType: IndorseProgramInstruction.PostBond, ...parsePostBondInstruction(instruction) }
     }
+    case IndorseProgramInstruction.ReconfigureVerifierSet: {
+      assertIsInstructionWithAccounts(instruction)
+      return {
+        instructionType: IndorseProgramInstruction.ReconfigureVerifierSet,
+        ...parseReconfigureVerifierSetInstruction(instruction),
+      }
+    }
     case IndorseProgramInstruction.RegisterFarm: {
       assertIsInstructionWithAccounts(instruction)
       return { instructionType: IndorseProgramInstruction.RegisterFarm, ...parseRegisterFarmInstruction(instruction) }
@@ -873,6 +932,13 @@ export function parseIndorseProgramInstruction<TProgram extends string>(
     case IndorseProgramInstruction.ReleaseEscrow: {
       assertIsInstructionWithAccounts(instruction)
       return { instructionType: IndorseProgramInstruction.ReleaseEscrow, ...parseReleaseEscrowInstruction(instruction) }
+    }
+    case IndorseProgramInstruction.ReleaseVerifier: {
+      assertIsInstructionWithAccounts(instruction)
+      return {
+        instructionType: IndorseProgramInstruction.ReleaseVerifier,
+        ...parseReleaseVerifierInstruction(instruction),
+      }
     }
     case IndorseProgramInstruction.RemoveOracle: {
       assertIsInstructionWithAccounts(instruction)
@@ -984,12 +1050,18 @@ export type IndorseProgramPluginInstructions = {
     input: InitVerifierSetAsyncInput,
   ) => ReturnType<typeof getInitVerifierSetInstructionAsync> & SelfPlanAndSendFunctions
   postBond: (input: PostBondAsyncInput) => ReturnType<typeof getPostBondInstructionAsync> & SelfPlanAndSendFunctions
+  reconfigureVerifierSet: (
+    input: ReconfigureVerifierSetAsyncInput,
+  ) => ReturnType<typeof getReconfigureVerifierSetInstructionAsync> & SelfPlanAndSendFunctions
   registerFarm: (
     input: RegisterFarmAsyncInput,
   ) => ReturnType<typeof getRegisterFarmInstructionAsync> & SelfPlanAndSendFunctions
   releaseEscrow: (
     input: ReleaseEscrowInput,
   ) => ReturnType<typeof getReleaseEscrowInstruction> & SelfPlanAndSendFunctions
+  releaseVerifier: (
+    input: ReleaseVerifierAsyncInput,
+  ) => ReturnType<typeof getReleaseVerifierInstructionAsync> & SelfPlanAndSendFunctions
   removeOracle: (
     input: RemoveOracleAsyncInput,
   ) => ReturnType<typeof getRemoveOracleInstructionAsync> & SelfPlanAndSendFunctions
@@ -1069,8 +1141,11 @@ export function indorseProgramProgram() {
           initOracleSet: (input) => addSelfPlanAndSendFunctions(client, getInitOracleSetInstructionAsync(input)),
           initVerifierSet: (input) => addSelfPlanAndSendFunctions(client, getInitVerifierSetInstructionAsync(input)),
           postBond: (input) => addSelfPlanAndSendFunctions(client, getPostBondInstructionAsync(input)),
+          reconfigureVerifierSet: (input) =>
+            addSelfPlanAndSendFunctions(client, getReconfigureVerifierSetInstructionAsync(input)),
           registerFarm: (input) => addSelfPlanAndSendFunctions(client, getRegisterFarmInstructionAsync(input)),
           releaseEscrow: (input) => addSelfPlanAndSendFunctions(client, getReleaseEscrowInstruction(input)),
+          releaseVerifier: (input) => addSelfPlanAndSendFunctions(client, getReleaseVerifierInstructionAsync(input)),
           removeOracle: (input) => addSelfPlanAndSendFunctions(client, getRemoveOracleInstructionAsync(input)),
           removeVerifier: (input) => addSelfPlanAndSendFunctions(client, getRemoveVerifierInstructionAsync(input)),
           revokePolicy: (input) => addSelfPlanAndSendFunctions(client, getRevokePolicyInstructionAsync(input)),

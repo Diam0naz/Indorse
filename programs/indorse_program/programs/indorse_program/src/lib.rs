@@ -182,6 +182,7 @@ pub mod indorse_program {
     /// Bootstrap the verifier set once: quorum `k` and the USDC bond each
     /// member must post. Membership is earned separately via `post_bond`, so
     /// this only fixes the rules — governance (`config.admin`) owns them.
+    /// `reconfigure_verifier_set` rewrites them later under the same bounds.
     pub fn init_verifier_set(ctx: Context<InitVerifierSet>, k: u8, bond_amount: u64) -> Result<()> {
         require!(k >= 2 && k <= MAX_VERIFIERS as u8, FarmError::InvalidQuorum);
         require!(bond_amount > 0, FarmError::ZeroBond);
@@ -196,17 +197,51 @@ pub mod indorse_program {
         Ok(())
     }
 
+    /// Governed reconfiguration: `config.admin` rewrites `k` and the seat
+    /// price with the same bounds init ran under. Deliberately NOT coupled to
+    /// the current member count — re-quoruming a stuck set in either
+    /// direction is governance's explicit, reversible call. Repricing the
+    /// bond affects FUTURE joins only: every seat keeps the stake it posted.
+    ///
+    /// Ops rule: finish open tallies before lowering `k`. `cast_vote`
+    /// freezes a tally whose side already reaches the new `k` on next
+    /// contact, but a split tally where every member has already voted can
+    /// no longer progress — each further vote fails `AlreadyVoted`.
+    pub fn reconfigure_verifier_set(
+        ctx: Context<ReconfigureVerifierSet>,
+        k: u8,
+        bond_amount: u64,
+    ) -> Result<()> {
+        require!(k >= 2 && k <= MAX_VERIFIERS as u8, FarmError::InvalidQuorum);
+        require!(bond_amount > 0, FarmError::ZeroBond);
+
+        let set = &mut ctx.accounts.verifier_set;
+        set.k = k;
+        set.bond_amount = bond_amount;
+
+        emit!(VerifierSetReconfigured { k, bond_amount });
+        Ok(())
+    }
+
     /// Join the set by posting the bond: the member's own USDC account pays
     /// into the program-held bond vault, so the seat — not the protocol —
-    /// carries the collateral. Bonds leave only two ways: back to the member
-    /// via `remove_verifier`, or to the treasury via a governed slash.
+    /// carries the collateral. Bonds leave only three ways: back to the member
+    /// via `remove_verifier` or a governed `release_verifier`, or to the
+    /// treasury via a governed slash. Each seat records exactly what it paid,
+    /// so repricing `bond_amount` never moves someone else's collateral.
     pub fn post_bond(ctx: Context<PostBond>) -> Result<()> {
         let member = ctx.accounts.member.key();
         let set = &mut ctx.accounts.verifier_set;
-        require!(!set.members.contains(&member), FarmError::AlreadyVerifier);
+        require!(
+            !set.members.iter().any(|m| m.pubkey == member),
+            FarmError::AlreadyVerifier
+        );
         require!(set.members.len() < MAX_VERIFIERS, FarmError::VerifierSetFull);
         let bond = set.bond_amount;
-        set.members.push(member);
+        set.members.push(VerifierMember {
+            pubkey: member,
+            stake: bond,
+        });
 
         token::transfer(
             CpiContext::new(
@@ -226,17 +261,21 @@ pub mod indorse_program {
 
     /// Leave the set with the bond returned — a voluntary exit keeps a
     /// captured verifier from being frozen out of their own collateral.
-    /// Votes already cast on open tallies keep counting.
+    /// Quorum floor: while the set stands at (or below) `k` members, nobody
+    /// may walk — the seat stays until governance `release_verifier`s it or a
+    /// new one bonds. Votes already cast on open tallies keep counting.
     pub fn remove_verifier(ctx: Context<RemoveVerifier>) -> Result<()> {
         let member = ctx.accounts.member.key();
         let set = &mut ctx.accounts.verifier_set;
         let position = set
             .members
             .iter()
-            .position(|m| *m == member)
+            .position(|m| m.pubkey == member)
             .ok_or(FarmError::UnauthorisedVerifier)?;
-        set.members.remove(position);
-        let bond = set.bond_amount;
+        // Floor after the membership lookup, so a stranger still fails as
+        // UnauthorisedVerifier rather than tripping the quorum rule.
+        require!(set.members.len() > set.k as usize, FarmError::DropBelowQuorum);
+        let stake = set.members.remove(position).stake;
 
         let seeds = [b"verifier_set".as_ref(), &[ctx.bumps.verifier_set]];
         token::transfer(
@@ -249,10 +288,50 @@ pub mod indorse_program {
                 },
                 &[&seeds[..]],
             ),
-            bond,
+            stake,
         )?;
 
-        emit!(VerifierExited { member, bond });
+        emit!(VerifierExited { member, bond: stake });
+        Ok(())
+    }
+
+    /// Governed fair exit: `config.admin` frees a seat without penalty and
+    /// the bond goes back to that member's own USDC account — the benign
+    /// twin of `slash_verifier` (which forfeits to the treasury).
+    /// Unconditional by design: like the slash it may take a set below `k`,
+    /// and it is the valve that keeps the quorum floor from becoming a trap.
+    pub fn release_verifier(ctx: Context<ReleaseVerifier>, target: Pubkey) -> Result<()> {
+        // The refund destination must be the released member's own account —
+        // checked here rather than in a constraint, because instruction args
+        // are not in scope there.
+        require!(
+            ctx.accounts.member_usdc.owner == target,
+            FarmError::TokenAccountInvalid
+        );
+
+        let set = &mut ctx.accounts.verifier_set;
+        let position = set
+            .members
+            .iter()
+            .position(|m| m.pubkey == target)
+            .ok_or(FarmError::UnauthorisedVerifier)?;
+        let stake = set.members.remove(position).stake;
+
+        let seeds = [b"verifier_set".as_ref(), &[ctx.bumps.verifier_set]];
+        token::transfer(
+            CpiContext::new_with_signer(
+                ctx.accounts.token_program.to_account_info(),
+                Transfer {
+                    from: ctx.accounts.bond_vault.to_account_info(),
+                    to: ctx.accounts.member_usdc.to_account_info(),
+                    authority: ctx.accounts.verifier_set.to_account_info(),
+                },
+                &[&seeds[..]],
+            ),
+            stake,
+        )?;
+
+        emit!(VerifierReleased { member: target, amount: stake });
         Ok(())
     }
 
@@ -266,10 +345,12 @@ pub mod indorse_program {
         let position = set
             .members
             .iter()
-            .position(|m| *m == target)
+            .position(|m| m.pubkey == target)
             .ok_or(FarmError::UnauthorisedVerifier)?;
-        set.members.remove(position);
-        let bond = set.bond_amount;
+        // Takes exactly the stake this seat posted — unconditional by design
+        // (governance may take a set below `k` this way), and a later
+        // bond-price change never moves it.
+        let stake = set.members.remove(position).stake;
 
         let seeds = [b"verifier_set".as_ref(), &[ctx.bumps.verifier_set]];
         token::transfer(
@@ -282,10 +363,10 @@ pub mod indorse_program {
                 },
                 &[&seeds[..]],
             ),
-            bond,
+            stake,
         )?;
 
-        emit!(VerifierSlashed { member: target, amount: bond });
+        emit!(VerifierSlashed { member: target, amount: stake });
         Ok(())
     }
 
@@ -296,7 +377,19 @@ pub mod indorse_program {
     /// honestly instead of flipping a result.
     pub fn cast_vote(ctx: Context<CastVote>, approve: bool) -> Result<()> {
         let voter = ctx.accounts.voter.key();
+        let k = ctx.accounts.verifier_set.k;
         let tally = &mut ctx.accounts.tally;
+
+        // Freeze-on-contact: governance may lower `k` while a tally is open.
+        // If a side already stands at `k` as the counts are, this call
+        // finalises the report without recording the caller's ballot — which
+        // is what stops an already-voted member set from deadlocking on
+        // AlreadyVoted after such a change.
+        if tally.approvals >= k || tally.rejections >= k {
+            let approved = tally.approvals >= k;
+            return finalise_report(&mut ctx.accounts.report, &mut ctx.accounts.farm, voter, approved);
+        }
+
         require!(
             !tally.votes.iter().any(|vote| vote.voter == voter),
             FarmError::AlreadyVoted
@@ -317,31 +410,8 @@ pub mod indorse_program {
             rejections,
         });
 
-        let k = ctx.accounts.verifier_set.k;
         if approvals >= k || rejections >= k {
-            let approved = approvals >= k;
-            let report = &mut ctx.accounts.report;
-            report.status = if approved {
-                ReportStatus::Verified
-            } else {
-                ReportStatus::Rejected
-            };
-            report.verifier = voter;
-
-            if approved {
-                ctx.accounts.farm.verified_report_count = ctx
-                    .accounts
-                    .farm
-                    .verified_report_count
-                    .checked_add(1)
-                    .ok_or(FarmError::Overflow)?;
-            }
-
-            emit!(ScoutReportVerified {
-                report: report.key(),
-                approved,
-                verifier: voter,
-            });
+            finalise_report(&mut ctx.accounts.report, &mut ctx.accounts.farm, voter, approvals >= k)?;
         }
         Ok(())
     }
@@ -1045,14 +1115,25 @@ impl ScoutReport {
 pub struct VerifierSet {
     /// Quorum: first side to reach this many votes finalises the report.
     pub k: u8,
-    /// USDC (atomic units) each member posts to join — fixed at init.
+    /// USDC (atomic units) each seat costs — the price of a NEW join;
+    /// `reconfigure_verifier_set` reprices it, affecting future joins only.
     pub bond_amount: u64,
-    /// Bonded members; the MAX_VERIFIERS bound keeps the account fixed-size.
-    pub members: Vec<Pubkey>,
+    /// Bonded members with the exact stake each posted at join time: the
+    /// figure an exit refunds and a slash takes, so repricing the set bond
+    /// never moves someone else's collateral. Bounded by MAX_VERIFIERS so
+    /// the account stays fixed-size.
+    pub members: Vec<VerifierMember>,
     pub bump: u8,
 }
 impl VerifierSet {
-    pub const MAX_SIZE: usize = 1 + 8 + 4 + (32 * MAX_VERIFIERS) + 1;
+    pub const MAX_SIZE: usize = 1 + 8 + 4 + ((32 + 8) * MAX_VERIFIERS) + 1;
+}
+
+/// One seat: the member and exactly what they paid for it.
+#[derive(AnchorSerialize, AnchorDeserialize, Clone, Debug, PartialEq)]
+pub struct VerifierMember {
+    pub pubkey: Pubkey,
+    pub stake: u64,
 }
 
 /// Phase 1 — per-report vote record (seeds ["tally", report]). Created by
@@ -1074,6 +1155,38 @@ impl Tally {
 pub struct TallyVote {
     pub voter: Pubkey,
     pub approve: bool,
+}
+
+/// Single finalisation path for `cast_vote`: a normal quorum-reaching vote
+/// and the freeze-on-contact branch (a tally whose side already stands at
+/// `k` after governance lowered it) share this, so a report can only ever
+/// end in one place.
+fn finalise_report(
+    report: &mut Account<ScoutReport>,
+    farm: &mut Account<Farm>,
+    verifier: Pubkey,
+    approved: bool,
+) -> Result<()> {
+    report.status = if approved {
+        ReportStatus::Verified
+    } else {
+        ReportStatus::Rejected
+    };
+    report.verifier = verifier;
+
+    if approved {
+        farm.verified_report_count = farm
+            .verified_report_count
+            .checked_add(1)
+            .ok_or(FarmError::Overflow)?;
+    }
+
+    emit!(ScoutReportVerified {
+        report: report.key(),
+        approved,
+        verifier,
+    });
+    Ok(())
 }
 
 /// Layer 2 — Harvest batch with provenance snapshot
@@ -1302,12 +1415,38 @@ pub struct InitVerifierSet<'info> {
     pub system_program: Program<'info, System>,
 }
 
+/// Governed reconfiguration of the verifier set — same gate and bounds as
+/// init, but rewriting instead of creating. No payer: the PDA already exists
+/// and its size does not change here.
+#[derive(Accounts)]
+pub struct ReconfigureVerifierSet<'info> {
+    /// Role gate: only `config.admin` rewrites the rules.
+    #[account(constraint = authority.key() == config.admin @ FarmError::UnauthorisedAdmin)]
+    pub authority: Signer<'info>,
+
+    pub config: Account<'info, Config>,
+
+    #[account(mut, seeds = [b"verifier_set"], bump)]
+    pub verifier_set: Account<'info, VerifierSet>,
+}
+
 #[derive(Accounts)]
 pub struct PostBond<'info> {
     #[account(mut)]
     pub member: Signer<'info>,
 
-    #[account(mut, seeds = [b"verifier_set"], bump)]
+    /// The set PDA. Sets created before Phase 3A were allocated for bare-
+    /// pubkey members; the realloc normalizes every account to the current
+    /// layout size on the first join, with the joining member paying any
+    /// rent delta (a no-op on already-current sets).
+    #[account(
+        mut,
+        seeds = [b"verifier_set"],
+        bump,
+        realloc = 8 + VerifierSet::MAX_SIZE,
+        realloc::payer = member,
+        realloc::zero = false
+    )]
     pub verifier_set: Account<'info, VerifierSet>,
 
     /// The set's canonical bond-vault ATA — validated by address (created
@@ -1333,6 +1472,10 @@ pub struct PostBond<'info> {
     pub member_usdc: Account<'info, TokenAccount>,
 
     pub token_program: Program<'info, Token>,
+
+    /// Referenced by the realloc constraint above: the rent top-up and the
+    /// resize CPI both go through the system program.
+    pub system_program: Program<'info, System>,
 }
 
 #[derive(Accounts)]
@@ -1359,6 +1502,41 @@ pub struct RemoveVerifier<'info> {
     #[account(
         mut,
         constraint = member_usdc.owner == member.key() @ FarmError::TokenAccountInvalid,
+        constraint = member_usdc.mint == usdc_mint.key() @ FarmError::TokenAccountInvalid
+    )]
+    pub member_usdc: Account<'info, TokenAccount>,
+
+    pub token_program: Program<'info, Token>,
+}
+
+#[derive(Accounts)]
+pub struct ReleaseVerifier<'info> {
+    /// Role gate: only `config.admin` may free a member's seat.
+    #[account(constraint = authority.key() == config.admin @ FarmError::UnauthorisedAdmin)]
+    pub authority: Signer<'info>,
+
+    pub config: Account<'info, Config>,
+
+    #[account(mut, seeds = [b"verifier_set"], bump)]
+    pub verifier_set: Account<'info, VerifierSet>,
+
+    #[account(
+        mut,
+        constraint = bond_vault.key()
+            == anchor_spl::associated_token::get_associated_token_address(
+                &verifier_set.key(),
+                &usdc_mint.key(),
+            ) @ FarmError::TokenAccountInvalid
+    )]
+    pub bond_vault: Account<'info, TokenAccount>,
+
+    pub usdc_mint: Account<'info, Mint>,
+
+    /// Where the returned bond lands — the released member's own USDC
+    /// account. The mint is pinned here; the handler pins the owner to
+    /// `target` before any state moves, so governance cannot redirect it.
+    #[account(
+        mut,
         constraint = member_usdc.mint == usdc_mint.key() @ FarmError::TokenAccountInvalid
     )]
     pub member_usdc: Account<'info, TokenAccount>,
@@ -1419,7 +1597,8 @@ pub struct CastVote<'info> {
     #[account(
         seeds = [b"verifier_set"],
         bump,
-        constraint = verifier_set.members.contains(&voter.key()) @ FarmError::UnauthorisedVerifier
+        constraint = verifier_set.members.iter().any(|m| m.pubkey == voter.key())
+            @ FarmError::UnauthorisedVerifier
     )]
     pub verifier_set: Account<'info, VerifierSet>,
 
@@ -2017,6 +2196,18 @@ pub struct VerifierSlashed {
 }
 
 #[event]
+pub struct VerifierSetReconfigured {
+    pub k: u8,
+    pub bond_amount: u64,
+}
+
+#[event]
+pub struct VerifierReleased {
+    pub member: Pubkey,
+    pub amount: u64,
+}
+
+#[event]
 pub struct VoteCast {
     pub report: Pubkey,
     pub voter: Pubkey,
@@ -2143,4 +2334,8 @@ pub enum FarmError {
     ReadingFinalized,
     #[msg("The season reading has not reached quorum")]
     ReadingNotFinalized,
+
+    // Appended with the Phase 3A governed reconfiguration instructions.
+    #[msg("Removal would take the verifier set below its quorum")]
+    DropBelowQuorum,
 }

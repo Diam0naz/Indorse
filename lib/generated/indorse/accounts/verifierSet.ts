@@ -15,8 +15,6 @@ import {
   fetchEncodedAccounts,
   fixDecoderSize,
   fixEncoderSize,
-  getAddressDecoder,
-  getAddressEncoder,
   getArrayDecoder,
   getArrayEncoder,
   getBytesDecoder,
@@ -40,6 +38,12 @@ import {
   type MaybeEncodedAccount,
   type ReadonlyUint8Array,
 } from '@solana/kit'
+import {
+  getVerifierMemberDecoder,
+  getVerifierMemberEncoder,
+  type VerifierMember,
+  type VerifierMemberArgs,
+} from '../types'
 
 export const VERIFIER_SET_DISCRIMINATOR: ReadonlyUint8Array = new Uint8Array([227, 16, 215, 74, 157, 114, 239, 185])
 
@@ -51,20 +55,36 @@ export type VerifierSet = {
   discriminator: ReadonlyUint8Array
   /** Quorum: first side to reach this many votes finalises the report. */
   k: number
-  /** USDC (atomic units) each member posts to join — fixed at init. */
+  /**
+   * USDC (atomic units) each seat costs — the price of a NEW join;
+   * `reconfigure_verifier_set` reprices it, affecting future joins only.
+   */
   bondAmount: bigint
-  /** Bonded members; the MAX_VERIFIERS bound keeps the account fixed-size. */
-  members: Array<Address>
+  /**
+   * Bonded members with the exact stake each posted at join time: the
+   * figure an exit refunds and a slash takes, so repricing the set bond
+   * never moves someone else's collateral. Bounded by MAX_VERIFIERS so
+   * the account stays fixed-size.
+   */
+  members: Array<VerifierMember>
   bump: number
 }
 
 export type VerifierSetArgs = {
   /** Quorum: first side to reach this many votes finalises the report. */
   k: number
-  /** USDC (atomic units) each member posts to join — fixed at init. */
+  /**
+   * USDC (atomic units) each seat costs — the price of a NEW join;
+   * `reconfigure_verifier_set` reprices it, affecting future joins only.
+   */
   bondAmount: number | bigint
-  /** Bonded members; the MAX_VERIFIERS bound keeps the account fixed-size. */
-  members: Array<Address>
+  /**
+   * Bonded members with the exact stake each posted at join time: the
+   * figure an exit refunds and a slash takes, so repricing the set bond
+   * never moves someone else's collateral. Bounded by MAX_VERIFIERS so
+   * the account stays fixed-size.
+   */
+  members: Array<VerifierMemberArgs>
   bump: number
 }
 
@@ -75,7 +95,7 @@ export function getVerifierSetEncoder(): Encoder<VerifierSetArgs> {
       ['discriminator', fixEncoderSize(getBytesEncoder(), 8)],
       ['k', getU8Encoder()],
       ['bondAmount', getU64Encoder()],
-      ['members', getArrayEncoder(getAddressEncoder())],
+      ['members', getArrayEncoder(getVerifierMemberEncoder())],
       ['bump', getU8Encoder()],
     ]),
     (value) => ({ ...value, discriminator: VERIFIER_SET_DISCRIMINATOR }),
@@ -88,7 +108,7 @@ export function getVerifierSetDecoder(): Decoder<VerifierSet> {
     ['discriminator', fixDecoderSize(getBytesDecoder(), 8)],
     ['k', getU8Decoder()],
     ['bondAmount', getU64Decoder()],
-    ['members', getArrayDecoder(getAddressDecoder())],
+    ['members', getArrayDecoder(getVerifierMemberDecoder())],
     ['bump', getU8Decoder()],
   ])
 }
