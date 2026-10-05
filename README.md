@@ -36,7 +36,10 @@ Snapshot as of **2026-10-04** — all four quality gates green
 Android-only, so wallet connect is Android-only; persisted captures anchor
 only to the farm that is current when the outbox flushes, and the captured
 photo _files_ live in the OS cache (the hash and anchor payload persist —
-the pixels are best-effort); on devnet the three roles are split across
+the pixels are best-effort; copying each file into app storage at capture is
+deferred); the React Query cache stays in-memory, so chain rows do not
+survive an app restart without RPC — persisting the query client for offline
+rows is deferred; on devnet the three roles are split across
 deterministic per-role keys (`scripts/role-keys.cjs` — reproducible from a
 public formula, so structural rather than secret), while the real Squads
 M-of-N handover remains outstanding: creating the vault and signing the
