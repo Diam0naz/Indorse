@@ -25,7 +25,9 @@ import {
   policyPda,
   reportPda,
   rewardAuthorityPda,
+  tallyPda,
   treasuryPda,
+  verifierSetPda,
   weatherOraclePda,
 } from '@/lib/program/pdas'
 import { PROGRAM_ID } from '@/constants/app-config'
@@ -34,6 +36,7 @@ import { USDC_DEVNET, USDC_MAINNET } from '@/constants/tokens'
 const OWNER = 'GVenujqgMJZCvYPKqMmPiAXQp7o3mwQbXw1nSBu3U5Ht'
 const FARM = 'TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA'
 const BATCH = '11111111111111111111111111111111'
+const REPORT = 'SysvarC1ock11111111111111111111111111111111'
 const programAddress = address(IDL_PROGRAM_ID)
 const base58 = getBase58Encoder()
 
@@ -66,6 +69,8 @@ function seedBytes(
       return base58.encode(FARM)
     case 'batch':
       return base58.encode(BATCH)
+    case 'report':
+      return base58.encode(REPORT)
     case 'farm.report_count':
       return u32le(ctx.reportCount)
     case 'farm.batch_count':
@@ -154,6 +159,14 @@ describe('PDA helpers vs IDL seed metadata', () => {
 
   it('treasury — single literal seed', async () => {
     expect(await treasuryPda()).toBe(await deriveFromIdl('withdraw_treasury', 'treasury', CTX))
+  })
+
+  it('verifier set — single literal seed', async () => {
+    expect(await verifierSetPda()).toBe(await deriveFromIdl('init_verifier_set', 'verifier_set', CTX))
+  })
+
+  it('tally — ["tally", report]', async () => {
+    expect(await tallyPda(REPORT)).toBe(await deriveFromIdl('cast_vote', 'tally', CTX))
   })
 
   it('report PDAs differ per index', async () => {

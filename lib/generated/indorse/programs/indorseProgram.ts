@@ -40,6 +40,8 @@ import {
   getHarvestBatchCodec,
   getPolicyCodec,
   getScoutReportCodec,
+  getTallyCodec,
+  getVerifierSetCodec,
   getWeatherOracleCodec,
   type Config,
   type ConfigArgs,
@@ -53,73 +55,93 @@ import {
   type PolicyArgs,
   type ScoutReport,
   type ScoutReportArgs,
+  type Tally,
+  type TallyArgs,
+  type VerifierSet,
+  type VerifierSetArgs,
   type WeatherOracle,
   type WeatherOracleArgs,
 } from '../accounts'
 import {
   getCancelEscrowInstruction,
+  getCastVoteInstructionAsync,
   getCreateEscrowInstructionAsync,
   getCreatePolicyInstruction,
   getDeleteFarmInstructionAsync,
   getInitConfigInstructionAsync,
+  getInitVerifierSetInstructionAsync,
+  getPostBondInstructionAsync,
   getRegisterFarmInstructionAsync,
   getReleaseEscrowInstruction,
+  getRemoveVerifierInstructionAsync,
   getRevokePolicyInstructionAsync,
   getRewardReportInstructionAsync,
   getSetRolesInstructionAsync,
   getSettlePolicyInstructionAsync,
+  getSlashVerifierInstructionAsync,
   getSubmitHarvestBatchInstruction,
   getSubmitScoutReportInstruction,
   getSubmitWeatherReadingInstructionAsync,
-  getVerifyScoutReportInstruction,
   getWithdrawTreasuryInstructionAsync,
   parseCancelEscrowInstruction,
+  parseCastVoteInstruction,
   parseCreateEscrowInstruction,
   parseCreatePolicyInstruction,
   parseDeleteFarmInstruction,
   parseInitConfigInstruction,
+  parseInitVerifierSetInstruction,
+  parsePostBondInstruction,
   parseRegisterFarmInstruction,
   parseReleaseEscrowInstruction,
+  parseRemoveVerifierInstruction,
   parseRevokePolicyInstruction,
   parseRewardReportInstruction,
   parseSetRolesInstruction,
   parseSettlePolicyInstruction,
+  parseSlashVerifierInstruction,
   parseSubmitHarvestBatchInstruction,
   parseSubmitScoutReportInstruction,
   parseSubmitWeatherReadingInstruction,
-  parseVerifyScoutReportInstruction,
   parseWithdrawTreasuryInstruction,
   type CancelEscrowInput,
+  type CastVoteAsyncInput,
   type CreateEscrowAsyncInput,
   type CreatePolicyInput,
   type DeleteFarmAsyncInput,
   type InitConfigAsyncInput,
+  type InitVerifierSetAsyncInput,
   type ParsedCancelEscrowInstruction,
+  type ParsedCastVoteInstruction,
   type ParsedCreateEscrowInstruction,
   type ParsedCreatePolicyInstruction,
   type ParsedDeleteFarmInstruction,
   type ParsedInitConfigInstruction,
+  type ParsedInitVerifierSetInstruction,
+  type ParsedPostBondInstruction,
   type ParsedRegisterFarmInstruction,
   type ParsedReleaseEscrowInstruction,
+  type ParsedRemoveVerifierInstruction,
   type ParsedRevokePolicyInstruction,
   type ParsedRewardReportInstruction,
   type ParsedSetRolesInstruction,
   type ParsedSettlePolicyInstruction,
+  type ParsedSlashVerifierInstruction,
   type ParsedSubmitHarvestBatchInstruction,
   type ParsedSubmitScoutReportInstruction,
   type ParsedSubmitWeatherReadingInstruction,
-  type ParsedVerifyScoutReportInstruction,
   type ParsedWithdrawTreasuryInstruction,
+  type PostBondAsyncInput,
   type RegisterFarmAsyncInput,
   type ReleaseEscrowInput,
+  type RemoveVerifierAsyncInput,
   type RevokePolicyAsyncInput,
   type RewardReportAsyncInput,
   type SetRolesAsyncInput,
   type SettlePolicyAsyncInput,
+  type SlashVerifierAsyncInput,
   type SubmitHarvestBatchInput,
   type SubmitScoutReportInput,
   type SubmitWeatherReadingAsyncInput,
-  type VerifyScoutReportInput,
   type WithdrawTreasuryAsyncInput,
 } from '../instructions'
 import {
@@ -129,7 +151,9 @@ import {
   findFarmPda,
   findOraclePda,
   findRewardAuthorityPda,
+  findTallyPda,
   findTreasuryPda,
+  findVerifierSetPda,
 } from '../pdas'
 
 export const INDORSE_PROGRAM_PROGRAM_ADDRESS =
@@ -142,6 +166,8 @@ export enum IndorseProgramAccount {
   HarvestBatch,
   Policy,
   ScoutReport,
+  Tally,
+  VerifierSet,
   WeatherOracle,
 }
 
@@ -206,6 +232,24 @@ export function identifyIndorseProgramAccount(
   if (
     containsBytes(
       data,
+      fixEncoderSize(getBytesEncoder(), 8).encode(new Uint8Array([126, 11, 29, 33, 32, 101, 239, 25])),
+      0,
+    )
+  ) {
+    return IndorseProgramAccount.Tally
+  }
+  if (
+    containsBytes(
+      data,
+      fixEncoderSize(getBytesEncoder(), 8).encode(new Uint8Array([227, 16, 215, 74, 157, 114, 239, 185])),
+      0,
+    )
+  ) {
+    return IndorseProgramAccount.VerifierSet
+  }
+  if (
+    containsBytes(
+      data,
       fixEncoderSize(getBytesEncoder(), 8).encode(new Uint8Array([72, 134, 13, 212, 180, 3, 74, 162])),
       0,
     )
@@ -234,6 +278,11 @@ export enum IndorseProgramEvent {
   ScoutReportSubmitted,
   ScoutReportVerified,
   TreasuryWithdrawn,
+  VerifierExited,
+  VerifierJoined,
+  VerifierSetInitialized,
+  VerifierSlashed,
+  VoteCast,
   WeatherReadingSubmitted,
 }
 
@@ -379,6 +428,51 @@ export function identifyIndorseProgramEvent(
   if (
     containsBytes(
       data,
+      fixEncoderSize(getBytesEncoder(), 8).encode(new Uint8Array([97, 6, 71, 183, 83, 252, 19, 209])),
+      0,
+    )
+  ) {
+    return IndorseProgramEvent.VerifierExited
+  }
+  if (
+    containsBytes(
+      data,
+      fixEncoderSize(getBytesEncoder(), 8).encode(new Uint8Array([184, 210, 93, 129, 170, 147, 31, 70])),
+      0,
+    )
+  ) {
+    return IndorseProgramEvent.VerifierJoined
+  }
+  if (
+    containsBytes(
+      data,
+      fixEncoderSize(getBytesEncoder(), 8).encode(new Uint8Array([32, 180, 222, 5, 0, 108, 30, 149])),
+      0,
+    )
+  ) {
+    return IndorseProgramEvent.VerifierSetInitialized
+  }
+  if (
+    containsBytes(
+      data,
+      fixEncoderSize(getBytesEncoder(), 8).encode(new Uint8Array([41, 11, 233, 16, 87, 34, 95, 136])),
+      0,
+    )
+  ) {
+    return IndorseProgramEvent.VerifierSlashed
+  }
+  if (
+    containsBytes(
+      data,
+      fixEncoderSize(getBytesEncoder(), 8).encode(new Uint8Array([39, 53, 195, 104, 188, 17, 225, 213])),
+      0,
+    )
+  ) {
+    return IndorseProgramEvent.VoteCast
+  }
+  if (
+    containsBytes(
+      data,
       fixEncoderSize(getBytesEncoder(), 8).encode(new Uint8Array([160, 132, 195, 231, 25, 58, 123, 245])),
       0,
     )
@@ -390,20 +484,24 @@ export function identifyIndorseProgramEvent(
 
 export enum IndorseProgramInstruction {
   CancelEscrow,
+  CastVote,
   CreateEscrow,
   CreatePolicy,
   DeleteFarm,
   InitConfig,
+  InitVerifierSet,
+  PostBond,
   RegisterFarm,
   ReleaseEscrow,
+  RemoveVerifier,
   RevokePolicy,
   RewardReport,
   SetRoles,
   SettlePolicy,
+  SlashVerifier,
   SubmitHarvestBatch,
   SubmitScoutReport,
   SubmitWeatherReading,
-  VerifyScoutReport,
   WithdrawTreasury,
 }
 
@@ -419,6 +517,15 @@ export function identifyIndorseProgramInstruction(
     )
   ) {
     return IndorseProgramInstruction.CancelEscrow
+  }
+  if (
+    containsBytes(
+      data,
+      fixEncoderSize(getBytesEncoder(), 8).encode(new Uint8Array([20, 212, 15, 189, 69, 180, 69, 151])),
+      0,
+    )
+  ) {
+    return IndorseProgramInstruction.CastVote
   }
   if (
     containsBytes(
@@ -459,6 +566,24 @@ export function identifyIndorseProgramInstruction(
   if (
     containsBytes(
       data,
+      fixEncoderSize(getBytesEncoder(), 8).encode(new Uint8Array([30, 43, 62, 51, 10, 14, 217, 215])),
+      0,
+    )
+  ) {
+    return IndorseProgramInstruction.InitVerifierSet
+  }
+  if (
+    containsBytes(
+      data,
+      fixEncoderSize(getBytesEncoder(), 8).encode(new Uint8Array([168, 151, 202, 119, 163, 58, 147, 247])),
+      0,
+    )
+  ) {
+    return IndorseProgramInstruction.PostBond
+  }
+  if (
+    containsBytes(
+      data,
       fixEncoderSize(getBytesEncoder(), 8).encode(new Uint8Array([183, 52, 200, 186, 245, 91, 216, 246])),
       0,
     )
@@ -473,6 +598,15 @@ export function identifyIndorseProgramInstruction(
     )
   ) {
     return IndorseProgramInstruction.ReleaseEscrow
+  }
+  if (
+    containsBytes(
+      data,
+      fixEncoderSize(getBytesEncoder(), 8).encode(new Uint8Array([179, 9, 132, 183, 233, 23, 172, 111])),
+      0,
+    )
+  ) {
+    return IndorseProgramInstruction.RemoveVerifier
   }
   if (
     containsBytes(
@@ -513,6 +647,15 @@ export function identifyIndorseProgramInstruction(
   if (
     containsBytes(
       data,
+      fixEncoderSize(getBytesEncoder(), 8).encode(new Uint8Array([133, 226, 237, 187, 178, 10, 116, 203])),
+      0,
+    )
+  ) {
+    return IndorseProgramInstruction.SlashVerifier
+  }
+  if (
+    containsBytes(
+      data,
       fixEncoderSize(getBytesEncoder(), 8).encode(new Uint8Array([52, 6, 195, 205, 125, 160, 103, 25])),
       0,
     )
@@ -540,15 +683,6 @@ export function identifyIndorseProgramInstruction(
   if (
     containsBytes(
       data,
-      fixEncoderSize(getBytesEncoder(), 8).encode(new Uint8Array([195, 245, 205, 232, 143, 27, 24, 218])),
-      0,
-    )
-  ) {
-    return IndorseProgramInstruction.VerifyScoutReport
-  }
-  if (
-    containsBytes(
-      data,
       fixEncoderSize(getBytesEncoder(), 8).encode(new Uint8Array([40, 63, 122, 158, 144, 216, 83, 96])),
       0,
     )
@@ -563,22 +697,26 @@ export function identifyIndorseProgramInstruction(
 
 export type ParsedIndorseProgramInstruction<TProgram extends string = 'GVenujqgMJZCvYPKqMmPiAXQp7o3mwQbXw1nSBu3U5Ht'> =
   | ({ instructionType: IndorseProgramInstruction.CancelEscrow } & ParsedCancelEscrowInstruction<TProgram>)
+  | ({ instructionType: IndorseProgramInstruction.CastVote } & ParsedCastVoteInstruction<TProgram>)
   | ({ instructionType: IndorseProgramInstruction.CreateEscrow } & ParsedCreateEscrowInstruction<TProgram>)
   | ({ instructionType: IndorseProgramInstruction.CreatePolicy } & ParsedCreatePolicyInstruction<TProgram>)
   | ({ instructionType: IndorseProgramInstruction.DeleteFarm } & ParsedDeleteFarmInstruction<TProgram>)
   | ({ instructionType: IndorseProgramInstruction.InitConfig } & ParsedInitConfigInstruction<TProgram>)
+  | ({ instructionType: IndorseProgramInstruction.InitVerifierSet } & ParsedInitVerifierSetInstruction<TProgram>)
+  | ({ instructionType: IndorseProgramInstruction.PostBond } & ParsedPostBondInstruction<TProgram>)
   | ({ instructionType: IndorseProgramInstruction.RegisterFarm } & ParsedRegisterFarmInstruction<TProgram>)
   | ({ instructionType: IndorseProgramInstruction.ReleaseEscrow } & ParsedReleaseEscrowInstruction<TProgram>)
+  | ({ instructionType: IndorseProgramInstruction.RemoveVerifier } & ParsedRemoveVerifierInstruction<TProgram>)
   | ({ instructionType: IndorseProgramInstruction.RevokePolicy } & ParsedRevokePolicyInstruction<TProgram>)
   | ({ instructionType: IndorseProgramInstruction.RewardReport } & ParsedRewardReportInstruction<TProgram>)
   | ({ instructionType: IndorseProgramInstruction.SetRoles } & ParsedSetRolesInstruction<TProgram>)
   | ({ instructionType: IndorseProgramInstruction.SettlePolicy } & ParsedSettlePolicyInstruction<TProgram>)
+  | ({ instructionType: IndorseProgramInstruction.SlashVerifier } & ParsedSlashVerifierInstruction<TProgram>)
   | ({ instructionType: IndorseProgramInstruction.SubmitHarvestBatch } & ParsedSubmitHarvestBatchInstruction<TProgram>)
   | ({ instructionType: IndorseProgramInstruction.SubmitScoutReport } & ParsedSubmitScoutReportInstruction<TProgram>)
   | ({
       instructionType: IndorseProgramInstruction.SubmitWeatherReading
     } & ParsedSubmitWeatherReadingInstruction<TProgram>)
-  | ({ instructionType: IndorseProgramInstruction.VerifyScoutReport } & ParsedVerifyScoutReportInstruction<TProgram>)
   | ({ instructionType: IndorseProgramInstruction.WithdrawTreasury } & ParsedWithdrawTreasuryInstruction<TProgram>)
 
 export function parseIndorseProgramInstruction<TProgram extends string>(
@@ -589,6 +727,10 @@ export function parseIndorseProgramInstruction<TProgram extends string>(
     case IndorseProgramInstruction.CancelEscrow: {
       assertIsInstructionWithAccounts(instruction)
       return { instructionType: IndorseProgramInstruction.CancelEscrow, ...parseCancelEscrowInstruction(instruction) }
+    }
+    case IndorseProgramInstruction.CastVote: {
+      assertIsInstructionWithAccounts(instruction)
+      return { instructionType: IndorseProgramInstruction.CastVote, ...parseCastVoteInstruction(instruction) }
     }
     case IndorseProgramInstruction.CreateEscrow: {
       assertIsInstructionWithAccounts(instruction)
@@ -606,6 +748,17 @@ export function parseIndorseProgramInstruction<TProgram extends string>(
       assertIsInstructionWithAccounts(instruction)
       return { instructionType: IndorseProgramInstruction.InitConfig, ...parseInitConfigInstruction(instruction) }
     }
+    case IndorseProgramInstruction.InitVerifierSet: {
+      assertIsInstructionWithAccounts(instruction)
+      return {
+        instructionType: IndorseProgramInstruction.InitVerifierSet,
+        ...parseInitVerifierSetInstruction(instruction),
+      }
+    }
+    case IndorseProgramInstruction.PostBond: {
+      assertIsInstructionWithAccounts(instruction)
+      return { instructionType: IndorseProgramInstruction.PostBond, ...parsePostBondInstruction(instruction) }
+    }
     case IndorseProgramInstruction.RegisterFarm: {
       assertIsInstructionWithAccounts(instruction)
       return { instructionType: IndorseProgramInstruction.RegisterFarm, ...parseRegisterFarmInstruction(instruction) }
@@ -613,6 +766,13 @@ export function parseIndorseProgramInstruction<TProgram extends string>(
     case IndorseProgramInstruction.ReleaseEscrow: {
       assertIsInstructionWithAccounts(instruction)
       return { instructionType: IndorseProgramInstruction.ReleaseEscrow, ...parseReleaseEscrowInstruction(instruction) }
+    }
+    case IndorseProgramInstruction.RemoveVerifier: {
+      assertIsInstructionWithAccounts(instruction)
+      return {
+        instructionType: IndorseProgramInstruction.RemoveVerifier,
+        ...parseRemoveVerifierInstruction(instruction),
+      }
     }
     case IndorseProgramInstruction.RevokePolicy: {
       assertIsInstructionWithAccounts(instruction)
@@ -629,6 +789,10 @@ export function parseIndorseProgramInstruction<TProgram extends string>(
     case IndorseProgramInstruction.SettlePolicy: {
       assertIsInstructionWithAccounts(instruction)
       return { instructionType: IndorseProgramInstruction.SettlePolicy, ...parseSettlePolicyInstruction(instruction) }
+    }
+    case IndorseProgramInstruction.SlashVerifier: {
+      assertIsInstructionWithAccounts(instruction)
+      return { instructionType: IndorseProgramInstruction.SlashVerifier, ...parseSlashVerifierInstruction(instruction) }
     }
     case IndorseProgramInstruction.SubmitHarvestBatch: {
       assertIsInstructionWithAccounts(instruction)
@@ -649,13 +813,6 @@ export function parseIndorseProgramInstruction<TProgram extends string>(
       return {
         instructionType: IndorseProgramInstruction.SubmitWeatherReading,
         ...parseSubmitWeatherReadingInstruction(instruction),
-      }
-    }
-    case IndorseProgramInstruction.VerifyScoutReport: {
-      assertIsInstructionWithAccounts(instruction)
-      return {
-        instructionType: IndorseProgramInstruction.VerifyScoutReport,
-        ...parseVerifyScoutReportInstruction(instruction),
       }
     }
     case IndorseProgramInstruction.WithdrawTreasury: {
@@ -689,11 +846,14 @@ export type IndorseProgramPluginAccounts = {
   harvestBatch: ReturnType<typeof getHarvestBatchCodec> & SelfFetchFunctions<HarvestBatchArgs, HarvestBatch>
   policy: ReturnType<typeof getPolicyCodec> & SelfFetchFunctions<PolicyArgs, Policy>
   scoutReport: ReturnType<typeof getScoutReportCodec> & SelfFetchFunctions<ScoutReportArgs, ScoutReport>
+  tally: ReturnType<typeof getTallyCodec> & SelfFetchFunctions<TallyArgs, Tally>
+  verifierSet: ReturnType<typeof getVerifierSetCodec> & SelfFetchFunctions<VerifierSetArgs, VerifierSet>
   weatherOracle: ReturnType<typeof getWeatherOracleCodec> & SelfFetchFunctions<WeatherOracleArgs, WeatherOracle>
 }
 
 export type IndorseProgramPluginInstructions = {
   cancelEscrow: (input: CancelEscrowInput) => ReturnType<typeof getCancelEscrowInstruction> & SelfPlanAndSendFunctions
+  castVote: (input: CastVoteAsyncInput) => ReturnType<typeof getCastVoteInstructionAsync> & SelfPlanAndSendFunctions
   createEscrow: (
     input: CreateEscrowAsyncInput,
   ) => ReturnType<typeof getCreateEscrowInstructionAsync> & SelfPlanAndSendFunctions
@@ -704,12 +864,19 @@ export type IndorseProgramPluginInstructions = {
   initConfig: (
     input: InitConfigAsyncInput,
   ) => ReturnType<typeof getInitConfigInstructionAsync> & SelfPlanAndSendFunctions
+  initVerifierSet: (
+    input: InitVerifierSetAsyncInput,
+  ) => ReturnType<typeof getInitVerifierSetInstructionAsync> & SelfPlanAndSendFunctions
+  postBond: (input: PostBondAsyncInput) => ReturnType<typeof getPostBondInstructionAsync> & SelfPlanAndSendFunctions
   registerFarm: (
     input: RegisterFarmAsyncInput,
   ) => ReturnType<typeof getRegisterFarmInstructionAsync> & SelfPlanAndSendFunctions
   releaseEscrow: (
     input: ReleaseEscrowInput,
   ) => ReturnType<typeof getReleaseEscrowInstruction> & SelfPlanAndSendFunctions
+  removeVerifier: (
+    input: RemoveVerifierAsyncInput,
+  ) => ReturnType<typeof getRemoveVerifierInstructionAsync> & SelfPlanAndSendFunctions
   revokePolicy: (
     input: RevokePolicyAsyncInput,
   ) => ReturnType<typeof getRevokePolicyInstructionAsync> & SelfPlanAndSendFunctions
@@ -720,6 +887,9 @@ export type IndorseProgramPluginInstructions = {
   settlePolicy: (
     input: SettlePolicyAsyncInput,
   ) => ReturnType<typeof getSettlePolicyInstructionAsync> & SelfPlanAndSendFunctions
+  slashVerifier: (
+    input: SlashVerifierAsyncInput,
+  ) => ReturnType<typeof getSlashVerifierInstructionAsync> & SelfPlanAndSendFunctions
   submitHarvestBatch: (
     input: SubmitHarvestBatchInput,
   ) => ReturnType<typeof getSubmitHarvestBatchInstruction> & SelfPlanAndSendFunctions
@@ -729,15 +899,14 @@ export type IndorseProgramPluginInstructions = {
   submitWeatherReading: (
     input: SubmitWeatherReadingAsyncInput,
   ) => ReturnType<typeof getSubmitWeatherReadingInstructionAsync> & SelfPlanAndSendFunctions
-  verifyScoutReport: (
-    input: VerifyScoutReportInput,
-  ) => ReturnType<typeof getVerifyScoutReportInstruction> & SelfPlanAndSendFunctions
   withdrawTreasury: (
     input: WithdrawTreasuryAsyncInput,
   ) => ReturnType<typeof getWithdrawTreasuryInstructionAsync> & SelfPlanAndSendFunctions
 }
 
 export type IndorseProgramPluginPdas = {
+  verifierSet: typeof findVerifierSetPda
+  tally: typeof findTallyPda
   escrow: typeof findEscrowPda
   escrowVault: typeof findEscrowVaultPda
   farm: typeof findFarmPda
@@ -764,28 +933,36 @@ export function indorseProgramProgram() {
           harvestBatch: addSelfFetchFunctions(client, getHarvestBatchCodec()),
           policy: addSelfFetchFunctions(client, getPolicyCodec()),
           scoutReport: addSelfFetchFunctions(client, getScoutReportCodec()),
+          tally: addSelfFetchFunctions(client, getTallyCodec()),
+          verifierSet: addSelfFetchFunctions(client, getVerifierSetCodec()),
           weatherOracle: addSelfFetchFunctions(client, getWeatherOracleCodec()),
         },
         instructions: {
           cancelEscrow: (input) => addSelfPlanAndSendFunctions(client, getCancelEscrowInstruction(input)),
+          castVote: (input) => addSelfPlanAndSendFunctions(client, getCastVoteInstructionAsync(input)),
           createEscrow: (input) => addSelfPlanAndSendFunctions(client, getCreateEscrowInstructionAsync(input)),
           createPolicy: (input) => addSelfPlanAndSendFunctions(client, getCreatePolicyInstruction(input)),
           deleteFarm: (input) => addSelfPlanAndSendFunctions(client, getDeleteFarmInstructionAsync(input)),
           initConfig: (input) => addSelfPlanAndSendFunctions(client, getInitConfigInstructionAsync(input)),
+          initVerifierSet: (input) => addSelfPlanAndSendFunctions(client, getInitVerifierSetInstructionAsync(input)),
+          postBond: (input) => addSelfPlanAndSendFunctions(client, getPostBondInstructionAsync(input)),
           registerFarm: (input) => addSelfPlanAndSendFunctions(client, getRegisterFarmInstructionAsync(input)),
           releaseEscrow: (input) => addSelfPlanAndSendFunctions(client, getReleaseEscrowInstruction(input)),
+          removeVerifier: (input) => addSelfPlanAndSendFunctions(client, getRemoveVerifierInstructionAsync(input)),
           revokePolicy: (input) => addSelfPlanAndSendFunctions(client, getRevokePolicyInstructionAsync(input)),
           rewardReport: (input) => addSelfPlanAndSendFunctions(client, getRewardReportInstructionAsync(input)),
           setRoles: (input) => addSelfPlanAndSendFunctions(client, getSetRolesInstructionAsync(input)),
           settlePolicy: (input) => addSelfPlanAndSendFunctions(client, getSettlePolicyInstructionAsync(input)),
+          slashVerifier: (input) => addSelfPlanAndSendFunctions(client, getSlashVerifierInstructionAsync(input)),
           submitHarvestBatch: (input) => addSelfPlanAndSendFunctions(client, getSubmitHarvestBatchInstruction(input)),
           submitScoutReport: (input) => addSelfPlanAndSendFunctions(client, getSubmitScoutReportInstruction(input)),
           submitWeatherReading: (input) =>
             addSelfPlanAndSendFunctions(client, getSubmitWeatherReadingInstructionAsync(input)),
-          verifyScoutReport: (input) => addSelfPlanAndSendFunctions(client, getVerifyScoutReportInstruction(input)),
           withdrawTreasury: (input) => addSelfPlanAndSendFunctions(client, getWithdrawTreasuryInstructionAsync(input)),
         },
         pdas: {
+          verifierSet: findVerifierSetPda,
+          tally: findTallyPda,
           escrow: findEscrowPda,
           escrowVault: findEscrowVaultPda,
           farm: findFarmPda,

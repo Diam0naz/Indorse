@@ -50,7 +50,12 @@ export type Config = {
    * key allowed to withdraw from the program treasury.
    */
   admin: Address
-  /** Verifies scout reports and pays out rewards. */
+  /**
+   * Vestigial after Phase 1: report verification moved to the bonded
+   * K-of-N verifier set, and reward claims became permissionless. The
+   * field survives so the account layout doesn't migrate; `set_roles`
+   * still rotates it, but nothing gates on it.
+   */
   verifier: Address
   /** Posts weather readings. */
   oracle: Address
@@ -63,7 +68,12 @@ export type ConfigArgs = {
    * key allowed to withdraw from the program treasury.
    */
   admin: Address
-  /** Verifies scout reports and pays out rewards. */
+  /**
+   * Vestigial after Phase 1: report verification moved to the bonded
+   * K-of-N verifier set, and reward claims became permissionless. The
+   * field survives so the account layout doesn't migrate; `set_roles`
+   * still rotates it, but nothing gates on it.
+   */
   verifier: Address
   /** Posts weather readings. */
   oracle: Address

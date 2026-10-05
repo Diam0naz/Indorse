@@ -63,6 +63,10 @@ export type ScoutReport = {
   lngE6: bigint
   aiLabel: string
   status: ReportStatus
+  /**
+   * The voter whose vote pushed the tally to quorum — finalizer, not
+   * sole authority (Phase 1 replaced the single verifier).
+   */
   verifier: Address
   timestamp: bigint
   bump: number
@@ -78,6 +82,10 @@ export type ScoutReportArgs = {
   lngE6: number | bigint
   aiLabel: string
   status: ReportStatusArgs
+  /**
+   * The voter whose vote pushed the tally to quorum — finalizer, not
+   * sole authority (Phase 1 replaced the single verifier).
+   */
   verifier: Address
   timestamp: number | bigint
   bump: number

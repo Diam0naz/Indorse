@@ -12,6 +12,10 @@
  *   insurance_vault    = ["insurance_vault", farm, u32(policy_count) LE]
  *   weather oracle     = ["weather", farm, i64(season_start) LE]
  *   reward authority   = ["reward_authority"]
+ *   config             = ["config"]
+ *   treasury           = ["treasury"]
+ *   verifier set       = ["verifier_set"]
+ *   tally              = ["tally", report]
  *
  * The IDL carries the same seed metadata on each instruction's PDA account
  * entry; tests derive both ways and assert they agree, so drift between this
@@ -118,6 +122,16 @@ export function configPda(): Promise<Address> {
 /** `["treasury"]` — program custody; its USDC ATA receives swept refunds. */
 export function treasuryPda(): Promise<Address> {
   return derive([encoder.encode('treasury')])
+}
+
+/** `["verifier_set"]` — Phase 1 K-of-N quorum: k, bond price, members. */
+export function verifierSetPda(): Promise<Address> {
+  return derive([encoder.encode('verifier_set')])
+}
+
+/** `["tally", report]` — Phase 1 per-report vote record. */
+export function tallyPda(report: string): Promise<Address> {
+  return derive([encoder.encode('tally'), base58Encoder.encode(report)])
 }
 
 /* ── SPL token accounts ────────────────────────────────────────────────────── */

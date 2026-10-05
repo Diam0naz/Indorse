@@ -9,3 +9,4 @@
 export * from './escrowState'
 export * from './policyState'
 export * from './reportStatus'
+export * from './tallyVote'

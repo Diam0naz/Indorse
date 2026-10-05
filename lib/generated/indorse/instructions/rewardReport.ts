@@ -14,13 +14,10 @@ import {
   getBytesEncoder,
   getStructDecoder,
   getStructEncoder,
-  getU64Decoder,
-  getU64Encoder,
   SOLANA_ERROR__PROGRAM_CLIENTS__INSUFFICIENT_ACCOUNT_METAS,
   SolanaError,
   transformEncoder,
   type AccountMeta,
-  type AccountSignerMeta,
   type Address,
   type FixedSizeCodec,
   type FixedSizeDecoder,
@@ -29,9 +26,7 @@ import {
   type InstructionWithAccounts,
   type InstructionWithData,
   type ReadonlyAccount,
-  type ReadonlySignerAccount,
   type ReadonlyUint8Array,
-  type TransactionSigner,
   type WritableAccount,
 } from '@solana/kit'
 import { getAccountMetaFactory, type ResolvedInstructionAccount } from '@solana/program-client-core'
@@ -46,8 +41,6 @@ export function getRewardReportDiscriminatorBytes(): ReadonlyUint8Array {
 
 export type RewardReportInstruction<
   TProgram extends string = typeof INDORSE_PROGRAM_PROGRAM_ADDRESS,
-  TAccountAuthority extends string | AccountMeta<string> = string,
-  TAccountConfig extends string | AccountMeta<string> = string,
   TAccountReport extends string | AccountMeta<string> = string,
   TAccountRewardAuthority extends string | AccountMeta<string> = string,
   TAccountRewardVault extends string | AccountMeta<string> = string,
@@ -59,10 +52,6 @@ export type RewardReportInstruction<
   InstructionWithData<ReadonlyUint8Array> &
   InstructionWithAccounts<
     [
-      TAccountAuthority extends string
-        ? ReadonlySignerAccount<TAccountAuthority> & AccountSignerMeta<TAccountAuthority>
-        : TAccountAuthority,
-      TAccountConfig extends string ? ReadonlyAccount<TAccountConfig> : TAccountConfig,
       TAccountReport extends string ? WritableAccount<TAccountReport> : TAccountReport,
       TAccountRewardAuthority extends string ? ReadonlyAccount<TAccountRewardAuthority> : TAccountRewardAuthority,
       TAccountRewardVault extends string ? WritableAccount<TAccountRewardVault> : TAccountRewardVault,
@@ -75,25 +64,19 @@ export type RewardReportInstruction<
     ]
   >
 
-export type RewardReportInstructionData = { discriminator: ReadonlyUint8Array; amount: bigint }
+export type RewardReportInstructionData = { discriminator: ReadonlyUint8Array }
 
-export type RewardReportInstructionDataArgs = { amount: number | bigint }
+export type RewardReportInstructionDataArgs = {}
 
 export function getRewardReportInstructionDataEncoder(): FixedSizeEncoder<RewardReportInstructionDataArgs> {
-  return transformEncoder(
-    getStructEncoder([
-      ['discriminator', fixEncoderSize(getBytesEncoder(), 8)],
-      ['amount', getU64Encoder()],
-    ]),
-    (value) => ({ ...value, discriminator: REWARD_REPORT_DISCRIMINATOR }),
-  )
+  return transformEncoder(getStructEncoder([['discriminator', fixEncoderSize(getBytesEncoder(), 8)]]), (value) => ({
+    ...value,
+    discriminator: REWARD_REPORT_DISCRIMINATOR,
+  }))
 }
 
 export function getRewardReportInstructionDataDecoder(): FixedSizeDecoder<RewardReportInstructionData> {
-  return getStructDecoder([
-    ['discriminator', fixDecoderSize(getBytesDecoder(), 8)],
-    ['amount', getU64Decoder()],
-  ])
+  return getStructDecoder([['discriminator', fixDecoderSize(getBytesDecoder(), 8)]])
 }
 
 export function getRewardReportInstructionDataCodec(): FixedSizeCodec<
@@ -104,8 +87,6 @@ export function getRewardReportInstructionDataCodec(): FixedSizeCodec<
 }
 
 export type RewardReportAsyncInput<
-  TAccountAuthority extends string = string,
-  TAccountConfig extends string = string,
   TAccountReport extends string = string,
   TAccountRewardAuthority extends string = string,
   TAccountRewardVault extends string = string,
@@ -113,10 +94,10 @@ export type RewardReportAsyncInput<
   TAccountReporterTokenAccount extends string = string,
   TAccountTokenProgram extends string = string,
 > = {
-  /** Role gate: only `config.verifier` may pay out rewards. */
-  authority: TransactionSigner<TAccountAuthority>
-  /** The role lives here — rotating it is `set_roles`, not a redeploy. */
-  config: Address<TAccountConfig>
+  /**
+   * No signer gate: the handler's Verified-status check is the whole
+   * gate, and the payout's destination and amount are both protocol-pinned.
+   */
   report: Address<TAccountReport>
   rewardAuthority?: Address<TAccountRewardAuthority>
   rewardVault: Address<TAccountRewardVault>
@@ -124,12 +105,9 @@ export type RewardReportAsyncInput<
   rewardMint: Address<TAccountRewardMint>
   reporterTokenAccount: Address<TAccountReporterTokenAccount>
   tokenProgram?: Address<TAccountTokenProgram>
-  amount: RewardReportInstructionDataArgs['amount']
 }
 
 export async function getRewardReportInstructionAsync<
-  TAccountAuthority extends string,
-  TAccountConfig extends string,
   TAccountReport extends string,
   TAccountRewardAuthority extends string,
   TAccountRewardVault extends string,
@@ -139,8 +117,6 @@ export async function getRewardReportInstructionAsync<
   TProgramAddress extends Address = typeof INDORSE_PROGRAM_PROGRAM_ADDRESS,
 >(
   input: RewardReportAsyncInput<
-    TAccountAuthority,
-    TAccountConfig,
     TAccountReport,
     TAccountRewardAuthority,
     TAccountRewardVault,
@@ -152,8 +128,6 @@ export async function getRewardReportInstructionAsync<
 ): Promise<
   RewardReportInstruction<
     TProgramAddress,
-    TAccountAuthority,
-    TAccountConfig,
     TAccountReport,
     TAccountRewardAuthority,
     TAccountRewardVault,
@@ -167,8 +141,6 @@ export async function getRewardReportInstructionAsync<
 
   // Original accounts.
   const originalAccounts = {
-    authority: { value: input.authority ?? null, isWritable: false },
-    config: { value: input.config ?? null, isWritable: false },
     report: { value: input.report ?? null, isWritable: true },
     rewardAuthority: { value: input.rewardAuthority ?? null, isWritable: false },
     rewardVault: { value: input.rewardVault ?? null, isWritable: true },
@@ -177,9 +149,6 @@ export async function getRewardReportInstructionAsync<
     tokenProgram: { value: input.tokenProgram ?? null, isWritable: false },
   }
   const accounts = originalAccounts as Record<keyof typeof originalAccounts, ResolvedInstructionAccount>
-
-  // Original args.
-  const args = { ...input }
 
   // Resolve default values.
   if (!accounts.rewardAuthority.value) {
@@ -193,8 +162,6 @@ export async function getRewardReportInstructionAsync<
   const getAccountMeta = getAccountMetaFactory(programAddress, 'programId')
   return Object.freeze({
     accounts: [
-      getAccountMeta('authority', accounts.authority),
-      getAccountMeta('config', accounts.config),
       getAccountMeta('report', accounts.report),
       getAccountMeta('rewardAuthority', accounts.rewardAuthority),
       getAccountMeta('rewardVault', accounts.rewardVault),
@@ -202,12 +169,10 @@ export async function getRewardReportInstructionAsync<
       getAccountMeta('reporterTokenAccount', accounts.reporterTokenAccount),
       getAccountMeta('tokenProgram', accounts.tokenProgram),
     ],
-    data: getRewardReportInstructionDataEncoder().encode(args as RewardReportInstructionDataArgs),
+    data: getRewardReportInstructionDataEncoder().encode({}),
     programAddress,
   } as RewardReportInstruction<
     TProgramAddress,
-    TAccountAuthority,
-    TAccountConfig,
     TAccountReport,
     TAccountRewardAuthority,
     TAccountRewardVault,
@@ -218,8 +183,6 @@ export async function getRewardReportInstructionAsync<
 }
 
 export type RewardReportInput<
-  TAccountAuthority extends string = string,
-  TAccountConfig extends string = string,
   TAccountReport extends string = string,
   TAccountRewardAuthority extends string = string,
   TAccountRewardVault extends string = string,
@@ -227,10 +190,10 @@ export type RewardReportInput<
   TAccountReporterTokenAccount extends string = string,
   TAccountTokenProgram extends string = string,
 > = {
-  /** Role gate: only `config.verifier` may pay out rewards. */
-  authority: TransactionSigner<TAccountAuthority>
-  /** The role lives here — rotating it is `set_roles`, not a redeploy. */
-  config: Address<TAccountConfig>
+  /**
+   * No signer gate: the handler's Verified-status check is the whole
+   * gate, and the payout's destination and amount are both protocol-pinned.
+   */
   report: Address<TAccountReport>
   rewardAuthority: Address<TAccountRewardAuthority>
   rewardVault: Address<TAccountRewardVault>
@@ -238,12 +201,9 @@ export type RewardReportInput<
   rewardMint: Address<TAccountRewardMint>
   reporterTokenAccount: Address<TAccountReporterTokenAccount>
   tokenProgram?: Address<TAccountTokenProgram>
-  amount: RewardReportInstructionDataArgs['amount']
 }
 
 export function getRewardReportInstruction<
-  TAccountAuthority extends string,
-  TAccountConfig extends string,
   TAccountReport extends string,
   TAccountRewardAuthority extends string,
   TAccountRewardVault extends string,
@@ -253,8 +213,6 @@ export function getRewardReportInstruction<
   TProgramAddress extends Address = typeof INDORSE_PROGRAM_PROGRAM_ADDRESS,
 >(
   input: RewardReportInput<
-    TAccountAuthority,
-    TAccountConfig,
     TAccountReport,
     TAccountRewardAuthority,
     TAccountRewardVault,
@@ -265,8 +223,6 @@ export function getRewardReportInstruction<
   config?: { programAddress?: TProgramAddress },
 ): RewardReportInstruction<
   TProgramAddress,
-  TAccountAuthority,
-  TAccountConfig,
   TAccountReport,
   TAccountRewardAuthority,
   TAccountRewardVault,
@@ -279,8 +235,6 @@ export function getRewardReportInstruction<
 
   // Original accounts.
   const originalAccounts = {
-    authority: { value: input.authority ?? null, isWritable: false },
-    config: { value: input.config ?? null, isWritable: false },
     report: { value: input.report ?? null, isWritable: true },
     rewardAuthority: { value: input.rewardAuthority ?? null, isWritable: false },
     rewardVault: { value: input.rewardVault ?? null, isWritable: true },
@@ -289,9 +243,6 @@ export function getRewardReportInstruction<
     tokenProgram: { value: input.tokenProgram ?? null, isWritable: false },
   }
   const accounts = originalAccounts as Record<keyof typeof originalAccounts, ResolvedInstructionAccount>
-
-  // Original args.
-  const args = { ...input }
 
   // Resolve default values.
   if (!accounts.tokenProgram.value) {
@@ -302,8 +253,6 @@ export function getRewardReportInstruction<
   const getAccountMeta = getAccountMetaFactory(programAddress, 'programId')
   return Object.freeze({
     accounts: [
-      getAccountMeta('authority', accounts.authority),
-      getAccountMeta('config', accounts.config),
       getAccountMeta('report', accounts.report),
       getAccountMeta('rewardAuthority', accounts.rewardAuthority),
       getAccountMeta('rewardVault', accounts.rewardVault),
@@ -311,12 +260,10 @@ export function getRewardReportInstruction<
       getAccountMeta('reporterTokenAccount', accounts.reporterTokenAccount),
       getAccountMeta('tokenProgram', accounts.tokenProgram),
     ],
-    data: getRewardReportInstructionDataEncoder().encode(args as RewardReportInstructionDataArgs),
+    data: getRewardReportInstructionDataEncoder().encode({}),
     programAddress,
   } as RewardReportInstruction<
     TProgramAddress,
-    TAccountAuthority,
-    TAccountConfig,
     TAccountReport,
     TAccountRewardAuthority,
     TAccountRewardVault,
@@ -332,17 +279,17 @@ export type ParsedRewardReportInstruction<
 > = {
   programAddress: Address<TProgram>
   accounts: {
-    /** Role gate: only `config.verifier` may pay out rewards. */
-    authority: TAccountMetas[0]
-    /** The role lives here — rotating it is `set_roles`, not a redeploy. */
-    config: TAccountMetas[1]
-    report: TAccountMetas[2]
-    rewardAuthority: TAccountMetas[3]
-    rewardVault: TAccountMetas[4]
+    /**
+     * No signer gate: the handler's Verified-status check is the whole
+     * gate, and the payout's destination and amount are both protocol-pinned.
+     */
+    report: TAccountMetas[0]
+    rewardAuthority: TAccountMetas[1]
+    rewardVault: TAccountMetas[2]
     /** Reward SPL mint (e.g. SKR on devnet) */
-    rewardMint: TAccountMetas[5]
-    reporterTokenAccount: TAccountMetas[6]
-    tokenProgram: TAccountMetas[7]
+    rewardMint: TAccountMetas[3]
+    reporterTokenAccount: TAccountMetas[4]
+    tokenProgram: TAccountMetas[5]
   }
   data: RewardReportInstructionData
 }
@@ -350,10 +297,10 @@ export type ParsedRewardReportInstruction<
 export function parseRewardReportInstruction<TProgram extends string, TAccountMetas extends readonly AccountMeta[]>(
   instruction: Instruction<TProgram> & InstructionWithAccounts<TAccountMetas> & InstructionWithData<ReadonlyUint8Array>,
 ): ParsedRewardReportInstruction<TProgram, TAccountMetas> {
-  if (instruction.accounts.length < 8) {
+  if (instruction.accounts.length < 6) {
     throw new SolanaError(SOLANA_ERROR__PROGRAM_CLIENTS__INSUFFICIENT_ACCOUNT_METAS, {
       actualAccountMetas: instruction.accounts.length,
-      expectedAccountMetas: 8,
+      expectedAccountMetas: 6,
     })
   }
   let accountIndex = 0
@@ -365,8 +312,6 @@ export function parseRewardReportInstruction<TProgram extends string, TAccountMe
   return {
     programAddress: instruction.programAddress,
     accounts: {
-      authority: getNextAccount(),
-      config: getNextAccount(),
       report: getNextAccount(),
       rewardAuthority: getNextAccount(),
       rewardVault: getNextAccount(),

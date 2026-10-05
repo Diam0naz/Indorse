@@ -14,20 +14,20 @@ Android device or emulator with a wallet app (e.g. Phantom, Solflare) installed.
 
 Snapshot as of **2026-10-04** — all four quality gates green
 (`tsc --noEmit`, `prettier --check .`, `expo lint`, `vitest run`):
-**468 tests passing · 1 skipped (the opt-in smoke test) across 57 files**.
+**482 tests passing · 1 skipped (the opt-in smoke test) across 58 files**.
 
-| Area                | State   | Notes                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                    |
-| ------------------- | ------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| On-chain program    | Shipped | 16 instructions — authority is data (the config PDA `839zrf…YzaY8` on devnet holds the admin/verifier/oracle roles every ops gate reads, rotated by `set_roles` instead of a redeploy) and custody is program-owned (settle/revoke sweep refunds to the treasury PDA's USDC ATA; `withdraw_treasury` releases them to the admin only); deployed to devnet (`GVenujqgMJZCvYPKqMmPiAXQp7o3mwQbXw1nSBu3U5Ht`), IDL synced via `npm run idl:sync`; 21 Anchor integration cases plus an opt-in RPC smoke test |
-| Scout tab           | Shipped | Chain-fed log and field cards, attention banner, folding action stack, camera → AI diagnosis, the 3-step onboarding card for the no-farm state (scan works before setup — anchoring needs a farm), and a persisted scan store: captures survive restarts (`indorse.scout.v1`) and anchor through an outbox flush once a farm is reachable                                                                                                                                                                |
-| Provenance & escrow | Shipped | Score, evidence trail, harvest batches; escrow create → release / cancel-and-retry                                                                                                                                                                                                                                                                                                                                                                                                                       |
-| Weather             | Shipped | Policy setup, oracle readings with error + retry, season chart plotted against the trigger                                                                                                                                                                                                                                                                                                                                                                                                               |
-| Profile & settings  | Shipped | Seven settings destinations (incl. Account & Local Data), passcode/biometrics app lock, hide balances, cluster health check, en/es/fr, system/dark/light themes                                                                                                                                                                                                                                                                                                                                          |
-| Data honesty        | Shipped | No mock data reaches the UI — empty states and honest guest/failure/loading notes instead; seed constants survive only as test/CSV fixtures                                                                                                                                                                                                                                                                                                                                                              |
-| CSV export          | Shipped | Live chain reads → one flat RFC 4180 file → share or copy                                                                                                                                                                                                                                                                                                                                                                                                                                                |
-| AI proxy (`api/`)   | Shipped | One route, two backends — OpenAI (streamed, strict `json_schema`) and Gemini (`responseSchema`; provider keys never reach the device)                                                                                                                                                                                                                                                                                                                                                                    |
-| Device verification | Shipped | SIWS nonce/verify routes, SGT dev allowlist, transactional email via Resend                                                                                                                                                                                                                                                                                                                                                                                                                              |
-| Launch media        | Shipped | Launch video in `brag-output-2026-09-30-183600/`                                                                                                                                                                                                                                                                                                                                                                                                                                                         |
+| Area                | State   | Notes                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                    |
+| ------------------- | ------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| On-chain program    | Shipped | 20 instructions — authority is data (the config PDA `839zrf…YzaY8` on devnet holds the admin/verifier/oracle roles every ops gate reads, rotated by `set_roles` instead of a redeploy), verification is a bonded K-of-N quorum (the verifier-set PDA `H4HnKfqu…XK` holds k, the bond price and the members; `cast_vote` finalizes a report at quorum), and custody is program-owned (settle/revoke sweep refunds to the treasury PDA's USDC ATA; `withdraw_treasury` releases them to the admin only); deployed to devnet (`GVenujqgMJZCvYPKqMmPiAXQp7o3mwQbXw1nSBu3U5Ht`), IDL synced via `npm run idl:sync`; 25 Anchor integration cases plus an opt-in RPC smoke test |
+| Scout tab           | Shipped | Chain-fed log and field cards, attention banner, folding action stack, camera → AI diagnosis, the 3-step onboarding card for the no-farm state (scan works before setup — anchoring needs a farm), and a persisted scan store: captures survive restarts (`indorse.scout.v1`) and anchor through an outbox flush once a farm is reachable                                                                                                                                                                                                                                                                                                                                |
+| Provenance & escrow | Shipped | Score, evidence trail, harvest batches; escrow create → release / cancel-and-retry                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                       |
+| Weather             | Shipped | Policy setup, oracle readings with error + retry, season chart plotted against the trigger                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                               |
+| Profile & settings  | Shipped | Seven settings destinations (incl. Account & Local Data), passcode/biometrics app lock, hide balances, cluster health check, en/es/fr, system/dark/light themes                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                          |
+| Data honesty        | Shipped | No mock data reaches the UI — empty states and honest guest/failure/loading notes instead; seed constants survive only as test/CSV fixtures                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                              |
+| CSV export          | Shipped | Live chain reads → one flat RFC 4180 file → share or copy                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                |
+| AI proxy (`api/`)   | Shipped | One route, two backends — OpenAI (streamed, strict `json_schema`) and Gemini (`responseSchema`; provider keys never reach the device)                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                    |
+| Device verification | Shipped | SIWS nonce/verify routes, SGT dev allowlist, transactional email via Resend                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                              |
+| Launch media        | Shipped | Launch video in `brag-output-2026-09-30-183600/`                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                         |
 
 **In flight:** the Solana Attestation Service issuer (`api/sas-issuer.ts` +
 `npm run sas:bootstrap`) and the HyperFrames launch deck (`deck/`).
@@ -40,7 +40,12 @@ the pixels are best-effort); on devnet the three roles are split across
 deterministic per-role keys (`scripts/role-keys.cjs` — reproducible from a
 public formula, so structural rather than secret), while the real Squads
 M-of-N handover remains outstanding: creating the vault and signing the
-rotation to it; the final device screenshots for the write-up are still
+rotation to it; Phase 1 verification ships bonds with a _governed_ slash only
+(no automatic slash economics until real verifier behaviour exists to design
+against), a set bounded at 7 members with `k`/bond fixed at init, the now
+vestigial `config.verifier` field (it gates nothing since Phase 1 and is kept
+only so the account layout doesn't migrate), and a protocol-fixed
+`REPORT_REWARD`; the final device screenshots for the write-up are still
 outstanding.
 
 ---
@@ -65,7 +70,7 @@ Every change lands only with all four gates green, run in this order:
 | Types  | `npx tsc --noEmit`       | missing i18n keys (es/fr are typed `Record<MessageKey, string>`), hook/type drift |
 | Format | `npx prettier --check .` | the whole tree — app, tests, `api/`, even `deck/` HTML and Markdown               |
 | Lint   | `npx expo lint`          | React hooks rules, dead code                                                      |
-| Tests  | `npx vitest run`         | behaviour — 57 files, 468 passing + 1 skipped (the opt-in smoke test)             |
+| Tests  | `npx vitest run`         | behaviour — 58 files, 482 passing + 1 skipped (the opt-in smoke test)             |
 
 `npm run ci` chains the same checks and finishes with an Android prebuild, so
 it also catches anything Metro refuses to bundle.
@@ -151,13 +156,14 @@ A running postmortem: what broke, why, and the guard that now prevents it.
 
 ### Test-suite incidents
 
-| Failure                                                                         | Root cause                                                                                                                           | Fix / rule                                                                                                    |
-| ------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------- |
-| 2 export tests: "Connect a wallet to export" shown despite a populated scenario | The file-level `useMobileWalletSetup` mock hardcoded `address: null`, bypassing the kit-level scenario the suite drove               | The mock reads the shared `exportScenario.address`; `beforeEach` resets it so later suites still see a guest  |
-| Later tests poisoned by earlier ones                                            | No `clearMocks` in the vitest config — scenario objects leaked across tests (ProfileScreen mounted the export suite's mocks)         | File-level `beforeEach` reset of every scenario + `vi.clearAllMocks()`                                        |
-| Fold-dock test: the modal never mounted after unfolding                         | Un-awaited `fireEvent.press` — RNTL v14 flushes per call, so the next press landed while the stack was still `pointerEvents: 'none'` | Await **every** `fireEvent` call                                                                              |
-| Profile screen crashed after a camera-test mock changed                         | `vi.mock('@/features/scout/location')` returned only `getCurrentCoords`, but `useSetupSignals` also calls `getLocationPermission`    | Mock a module's full export surface (or spread `importOriginal`) — a partial mock breaks every other consumer |
-| CSV export button enabled for a wallet with nothing to export                   | The scenario set `rowCount > 0` while `address` was null                                                                             | Scenario rule: `address` must be set whenever `farm` is set                                                   |
+| Failure                                                                         | Root cause                                                                                                                                                                                                              | Fix / rule                                                                                                                                                          |
+| ------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 2 export tests: "Connect a wallet to export" shown despite a populated scenario | The file-level `useMobileWalletSetup` mock hardcoded `address: null`, bypassing the kit-level scenario the suite drove                                                                                                  | The mock reads the shared `exportScenario.address`; `beforeEach` resets it so later suites still see a guest                                                        |
+| Later tests poisoned by earlier ones                                            | No `clearMocks` in the vitest config — scenario objects leaked across tests (ProfileScreen mounted the export suite's mocks)                                                                                            | File-level `beforeEach` reset of every scenario + `vi.clearAllMocks()`                                                                                              |
+| Fold-dock test: the modal never mounted after unfolding                         | Un-awaited `fireEvent.press` — RNTL v14 flushes per call, so the next press landed while the stack was still `pointerEvents: 'none'`                                                                                    | Await **every** `fireEvent` call                                                                                                                                    |
+| Profile screen crashed after a camera-test mock changed                         | `vi.mock('@/features/scout/location')` returned only `getCurrentCoords`, but `useSetupSignals` also calls `getLocationPermission`                                                                                       | Mock a module's full export surface (or spread `importOriginal`) — a partial mock breaks every other consumer                                                       |
+| CSV export button enabled for a wallet with nothing to export                   | The scenario set `rowCount > 0` while `address` was null                                                                                                                                                                | Scenario rule: `address` must be set whenever `farm` is set                                                                                                         |
+| Phase 1 negative tests failed with "insufficient lamports" instead of the gate  | Anchor executes an instruction's `init` rent transfer **before** its account constraints, so a zero-lamport stranger paying for an `init`/`init_if_needed` died on the transfer instead of reaching `UnauthorisedAdmin` | `fund()` the transient signer first (rule documented at the helper); load failures also precede constraints, so account existence errors surface before gate errors |
 
 ### Environment & process
 
@@ -177,12 +183,19 @@ A running postmortem: what broke, why, and the guard that now prevents it.
 
 ## On-chain program
 
-The Anchor program lives in `programs/indorse_program/` and exposes 16
+The Anchor program lives in `programs/indorse_program/` and exposes 20
 instructions. Layer 0 is the config: the `Config` PDA (seeds `["config"]`)
 holds the admin/verifier/oracle roles every ops gate reads, so authority is
 swappable account data — the `ADMIN` const survives only as the one key
 allowed to call `init_config`. Custody is program-owned too: insurance refunds
-sweep into the `["treasury"]` PDA's USDC ATA, never a wallet's:
+sweep into the `["treasury"]` PDA's USDC ATA, never a wallet's.
+
+Verification (Phase 1) replaces the old single `config.verifier` key with a
+bonded K-of-N verifier set: `init_verifier_set` fixes the quorum `k` (2–7) and
+the USDC bond price, members seat themselves with `post_bond`, and `cast_vote`
+finalizes a report the moment one side reaches `k` — approve or reject, one
+vote per member. Bonds leave only two ways: back to the member
+(`remove_verifier`) or to the treasury (governed `slash_verifier`).
 
 | Instruction              | Description                                                                                                                                                                                                                                                                        |
 | ------------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -191,8 +204,12 @@ sweep into the `["treasury"]` PDA's USDC ATA, never a wallet's:
 | `register_farm`          | Create a farm PDA seeded by `[b"farm", owner]`                                                                                                                                                                                                                                     |
 | `delete_farm`            | Close the farm PDA and refund its rent (owner only) — child accounts (reports, batches, policies) stay on chain as an independent trail                                                                                                                                            |
 | `submit_scout_report`    | Submit a field photo report for a farm                                                                                                                                                                                                                                             |
-| `verify_scout_report`    | Approve or reject a pending report (`config.verifier` only)                                                                                                                                                                                                                        |
-| `reward_report`          | Pay SKR tokens to the reporter (`config.verifier`, one payout)                                                                                                                                                                                                                     |
+| `init_verifier_set`      | One-shot rules for verification: quorum `k` (2–7) and the USDC bond each member posts (`config.admin` only)                                                                                                                                                                        |
+| `post_bond`              | Join the set: the member's own USDC account pays the bond into the program-owned bond vault (the set PDA's canonical ATA)                                                                                                                                                          |
+| `remove_verifier`        | Voluntary exit: the member leaves and the bond returns to their account; votes already cast keep counting                                                                                                                                                                          |
+| `slash_verifier`         | Governed slash (`config.admin`): the member is removed and their bond moves to the treasury — deliberately no automatic slashing rules                                                                                                                                             |
+| `cast_vote`              | One quorum vote per bonded member on a pending report; the first side to reach `k` finalizes it (an approval bumps the farm's verified count), and the pending gate closes the tally against late votes                                                                            |
+| `reward_report`          | Pay SKR tokens to the reporter — permissionless since Phase 1: the Verified status is the whole gate, the destination is pinned to `report.reporter`, and `REPORT_REWARD` is protocol-fixed                                                                                        |
 | `submit_harvest_batch`   | Record a harvest batch with provenance snapshot                                                                                                                                                                                                                                    |
 | `create_escrow`          | Buyer deposits USDC into escrow for a batch                                                                                                                                                                                                                                        |
 | `release_escrow`         | Farmer claims the escrowed funds                                                                                                                                                                                                                                                   |
@@ -229,13 +246,17 @@ cd ../.. && npm run idl:sync && npm run client:generate
 cd programs/indorse_program
 solana program deploy --program-id target/deploy/indorse_program-keypair.json \
   target/deploy/indorse_program.so --url devnet    # in-place upgrade
-node scripts/init-config.cjs                      # idempotent: config + treasury ATA
+node scripts/init-config.cjs                      # idempotent: config + treasury ATA + verifier set + bond vault
 ```
 
 `scripts/init-config.cjs` defaults to devnet, is safe to re-run (an existing
-config prints its roles; the treasury USDC ATA is `getOrCreate`), takes
-`RPC_URL=http://127.0.0.1:8899` for a local validator, and takes
-`USDC_MINT=…` where the treasury mint isn't the app's devnet USDC.
+config prints its roles; the treasury and bond-vault USDC ATAs are
+`getOrCreate`), takes `RPC_URL=http://127.0.0.1:8899` for a local validator,
+and takes `USDC_MINT=…` where the mint isn't the app's devnet USDC. The
+verifier-set step signs with whoever holds `config.admin` _now_ (derived key
+after the role rotation, bootstrap before it) and takes `K` and `BOND_AMOUNT`
+(atomic units) for the rules; membership itself is never scripted — each
+verifier seats itself with `post_bond` from its own wallet.
 
 ### Devnet role keys
 
@@ -254,8 +275,10 @@ the devnet roles structure the flow (a separate key per gate, the rotation
 path rehearsed end to end with both signers proven), they do not secure it.
 `ROLE_SEED` overrides the seed, `ADMIN/VERIFIER/ORACLE` override individual
 rotation targets (rotate back to the bootstrap key with all three), and
-`RPC_URL` picks the cluster. A Squads vault holding real keys is still the
-actual Phase 0 handover.
+`RPC_URL` picks the cluster. The same derived admin key also signs Phase 1
+state: `scripts/init-config.cjs` creates the devnet verifier set
+(`H4HnKfqu…XK`, k=2, 5 USDC bond) with it. A Squads vault holding real keys
+is still the actual Phase 0 handover.
 
 ### Generated client
 
@@ -489,9 +512,11 @@ npm run icons           # Regenerate the app icons
 
 ## Running Anchor tests
 
-The integration tests (21 cases: config authority rotation, program-treasury
-revoke/withdraw, scouting, rewards, treasury-pool insurance, escrow
-cancel/retry) need a local validator and the Anchor CLI. Plain `anchor test`
+The integration tests (25 cases: config authority rotation, the K-of-N
+verifier set — quorum approve/reject, double-vote refusal, bonded exit and
+governed slash — program-treasury revoke/withdraw, scouting, rewards,
+treasury-pool insurance, escrow cancel/retry) need a local validator and the
+Anchor CLI. Plain `anchor test`
 tries to drive Surfpool in Anchor 0.32; in environments where Surfpool does
 not start, run against `solana-test-validator` directly. Note that
 Agave ≥ 2.2 rejects _new_ loader-v3 programs on a local validator, so the

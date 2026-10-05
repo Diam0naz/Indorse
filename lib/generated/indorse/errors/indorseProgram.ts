@@ -66,11 +66,24 @@ export const INDORSE_PROGRAM_ERROR__REVOCATION_WINDOW_CLOSED = 0x1787 // 6023
 export const INDORSE_PROGRAM_ERROR__OVERFLOW = 0x1788 // 6024
 /** UnauthorisedAdmin: Caller is not the authorised program admin */
 export const INDORSE_PROGRAM_ERROR__UNAUTHORISED_ADMIN = 0x1789 // 6025
+/** InvalidQuorum: Quorum must be between 2 and the verifier-set maximum */
+export const INDORSE_PROGRAM_ERROR__INVALID_QUORUM = 0x178a // 6026
+/** ZeroBond: Bond amount must be greater than zero */
+export const INDORSE_PROGRAM_ERROR__ZERO_BOND = 0x178b // 6027
+/** AlreadyVerifier: Key is already a bonded verifier */
+export const INDORSE_PROGRAM_ERROR__ALREADY_VERIFIER = 0x178c // 6028
+/** VerifierSetFull: The verifier set is full */
+export const INDORSE_PROGRAM_ERROR__VERIFIER_SET_FULL = 0x178d // 6029
+/** AlreadyVoted: Verifier has already voted on this report */
+export const INDORSE_PROGRAM_ERROR__ALREADY_VOTED = 0x178e // 6030
 
 export type IndorseProgramError =
   | typeof INDORSE_PROGRAM_ERROR__ALREADY_VERIFIED
+  | typeof INDORSE_PROGRAM_ERROR__ALREADY_VERIFIER
+  | typeof INDORSE_PROGRAM_ERROR__ALREADY_VOTED
   | typeof INDORSE_PROGRAM_ERROR__ESCROW_LOCKED
   | typeof INDORSE_PROGRAM_ERROR__ESCROW_NOT_FUNDED
+  | typeof INDORSE_PROGRAM_ERROR__INVALID_QUORUM
   | typeof INDORSE_PROGRAM_ERROR__INVALID_SEASON
   | typeof INDORSE_PROGRAM_ERROR__LABEL_TOO_LONG
   | typeof INDORSE_PROGRAM_ERROR__NAME_TOO_LONG
@@ -92,15 +105,20 @@ export type IndorseProgramError =
   | typeof INDORSE_PROGRAM_ERROR__UNAUTHORISED_ORACLE
   | typeof INDORSE_PROGRAM_ERROR__UNAUTHORISED_VERIFIER
   | typeof INDORSE_PROGRAM_ERROR__URI_TOO_LONG
+  | typeof INDORSE_PROGRAM_ERROR__VERIFIER_SET_FULL
   | typeof INDORSE_PROGRAM_ERROR__ZERO_AMOUNT
+  | typeof INDORSE_PROGRAM_ERROR__ZERO_BOND
   | typeof INDORSE_PROGRAM_ERROR__ZERO_QUANTITY
 
 let indorseProgramErrorMessages: Record<IndorseProgramError, string> | undefined
 if (process.env['NODE_ENV'] !== 'production') {
   indorseProgramErrorMessages = {
     [INDORSE_PROGRAM_ERROR__ALREADY_VERIFIED]: `Report already verified or rejected`,
+    [INDORSE_PROGRAM_ERROR__ALREADY_VERIFIER]: `Key is already a bonded verifier`,
+    [INDORSE_PROGRAM_ERROR__ALREADY_VOTED]: `Verifier has already voted on this report`,
     [INDORSE_PROGRAM_ERROR__ESCROW_LOCKED]: `Escrow is locked — cancellation window has passed`,
     [INDORSE_PROGRAM_ERROR__ESCROW_NOT_FUNDED]: `Escrow is not in funded state`,
+    [INDORSE_PROGRAM_ERROR__INVALID_QUORUM]: `Quorum must be between 2 and the verifier-set maximum`,
     [INDORSE_PROGRAM_ERROR__INVALID_SEASON]: `Season end must be after season start`,
     [INDORSE_PROGRAM_ERROR__LABEL_TOO_LONG]: `Label too long (max 32 chars)`,
     [INDORSE_PROGRAM_ERROR__NAME_TOO_LONG]: `Farm name too long (max 64 chars)`,
@@ -122,7 +140,9 @@ if (process.env['NODE_ENV'] !== 'production') {
     [INDORSE_PROGRAM_ERROR__UNAUTHORISED_ORACLE]: `Caller is not the authorised weather oracle`,
     [INDORSE_PROGRAM_ERROR__UNAUTHORISED_VERIFIER]: `Caller is not the authorised verifier/admin`,
     [INDORSE_PROGRAM_ERROR__URI_TOO_LONG]: `URI too long (max 128 chars)`,
+    [INDORSE_PROGRAM_ERROR__VERIFIER_SET_FULL]: `The verifier set is full`,
     [INDORSE_PROGRAM_ERROR__ZERO_AMOUNT]: `Amount must be greater than zero`,
+    [INDORSE_PROGRAM_ERROR__ZERO_BOND]: `Bond amount must be greater than zero`,
     [INDORSE_PROGRAM_ERROR__ZERO_QUANTITY]: `Quantity must be greater than zero`,
   }
 }

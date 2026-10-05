@@ -46,6 +46,16 @@ describe('indorse_program', () => {
   let policyPda: PublicKey
   let policyVault: PublicKey
 
+  // Phase 1 — K-of-N verifier set (quorum k=2, two bonded members)
+  const K = 2
+  const BOND = 5_000_000 // 5 USDC per seat
+  let verifierSetPda: PublicKey
+  let bondVault: PublicKey
+  let verifierA: Keypair
+  let verifierB: Keypair
+  let verifierUsdcA: PublicKey
+  let verifierUsdcB: PublicKey
+
   const FARM_NAME = 'Green Valley Farm'
   const LAT_E6 = 34052000 // 34.052000 (LA)
   const LNG_E6 = -118243000 // -118.243000 (LA)
@@ -65,6 +75,33 @@ describe('indorse_program', () => {
   const ESCROW_USDC = 10_000_000 // 10 USDC
 
   const u32le = (n: number) => new anchor.BN(n).toArrayLike(Buffer, 'le', 4)
+
+  // Phase 1 helpers — quorum voting (k=2; members bonded in the setup test)
+  const tallyFor = (report: PublicKey) =>
+    PublicKey.findProgramAddressSync([Buffer.from('tally'), report.toBuffer()], program.programId)[0]
+
+  const castVote = (report: PublicKey, approve: boolean, by: Keypair) =>
+    program.methods
+      .castVote(approve)
+      .accounts({
+        voter: by.publicKey,
+        verifierSet: verifierSetPda,
+        report,
+        farm: farmPda,
+        tally: tallyFor(report),
+        systemProgram: SystemProgram.programId,
+      })
+      .signers([by])
+      .rpc()
+
+  // Anchor runs an instruction's `init` rent transfer before its account
+  // constraints, so a zero-lamport keypair that PAYS for an init (verifier-set
+  // payer, first-vote tally payer) dies on the transfer instead of reaching
+  // the gate the test is actually asserting. Fund transient signers first.
+  const fund = async (pubkey: PublicKey) => {
+    const sig = await provider.connection.requestAirdrop(pubkey, 1_000_000_000)
+    await provider.connection.confirmTransaction(sig, 'confirmed')
+  }
   const i64le = (n: number) => new anchor.BN(n).toArrayLike(Buffer, 'le', 8)
 
   before(async () => {
@@ -98,6 +135,9 @@ describe('indorse_program', () => {
 
     // Derive the program-treasury PDA (refunds sweep to its USDC ATA)
     ;[treasuryPda] = PublicKey.findProgramAddressSync([Buffer.from('treasury')], program.programId)
+
+    // Derive the verifier-set PDA (Phase 1 — K-of-N quorum lives here)
+    ;[verifierSetPda] = PublicKey.findProgramAddressSync([Buffer.from('verifier_set')], program.programId)
 
     // Create reward token mint
     rewardMint = await createMint(provider.connection, authority, authority.publicKey, null, 6)
@@ -326,54 +366,181 @@ describe('indorse_program', () => {
     }
   })
 
-  it('Reject verifying by a key outside the verifier role', async () => {
-    const stranger = Keypair.generate()
+  // ── Verifier set (Phase 1 — K-of-N quorum with bonded stakes) ────────────
 
+  it('Set up USDC accounts for farmer and treasury', async () => {
+    usdcMint = await createMint(provider.connection, owner, owner.publicKey, null, 6)
+    ownerUsdc = await createAccount(provider.connection, owner, usdcMint, owner.publicKey)
+    await mintTo(provider.connection, owner, usdcMint, ownerUsdc, owner, 1_000_000_000)
+
+    // Treasury token account owned by the admin (the provider wallet in tests)
+    adminUsdc = await createAccount(provider.connection, owner, usdcMint, provider.wallet.publicKey)
+    await mintTo(provider.connection, owner, usdcMint, adminUsdc, owner, 1_000_000_000) // 1000 USDC float
+
+    // Program treasury: the canonical USDC ATA of the treasury PDA — where
+    // settle/revoke sweep refunds, and the only source withdraw_treasury reads.
+    // The owner is a PDA, hence allowOwnerOffCurve.
+    treasuryUsdc = (await getOrCreateAssociatedTokenAccount(provider.connection, owner, usdcMint, treasuryPda, true))
+      .address
+
+    ;[policyPda] = PublicKey.findProgramAddressSync(
+      [Buffer.from('policy'), farmPda.toBuffer(), u32le(0)],
+      program.programId,
+    )
+    ;[policyVault] = PublicKey.findProgramAddressSync(
+      [Buffer.from('insurance_vault'), farmPda.toBuffer(), u32le(0)],
+      program.programId,
+    )
+  })
+
+  it('Initialises the verifier set with an admin-only quorum of two', async () => {
+    const stranger = Keypair.generate()
+    await fund(stranger.publicKey) // pays init rent; the gate must still reject
+
+    // Only config.admin may set the rules.
     try {
       await program.methods
-        .verifyScoutReport(true)
+        .initVerifierSet(K, new anchor.BN(BOND))
         .accounts({
-          verifier: stranger.publicKey,
+          authority: stranger.publicKey,
           config: configPda,
-          report: reportPda,
-          farm: farmPda,
+          verifierSet: verifierSetPda,
+          systemProgram: SystemProgram.programId,
         })
         .signers([stranger])
         .rpc()
+      assert.fail('Should have thrown an error')
+    } catch (err) {
+      assert.include(err.message, 'program admin')
+    }
+
+    // k = 1 would recreate the single-verifier regime Phase 1 removed.
+    try {
+      await program.methods
+        .initVerifierSet(1, new anchor.BN(BOND))
+        .accounts({
+          authority: provider.wallet.publicKey,
+          config: configPda,
+          verifierSet: verifierSetPda,
+          systemProgram: SystemProgram.programId,
+        })
+        .rpc()
+      assert.fail('Should have thrown an error')
+    } catch (err) {
+      assert.include(err.message, 'Quorum must be')
+    }
+
+    await program.methods
+      .initVerifierSet(K, new anchor.BN(BOND))
+      .accounts({
+        authority: provider.wallet.publicKey,
+        config: configPda,
+        verifierSet: verifierSetPda,
+        systemProgram: SystemProgram.programId,
+      })
+      .rpc()
+
+    const set = await program.account.verifierSet.fetch(verifierSetPda)
+    assert.equal(set.k, K)
+    assert.equal(Number(set.bondAmount), BOND)
+    assert.equal(set.members.length, 0)
+
+    // The bond vault is the set's canonical USDC ATA (created externally,
+    // the same pattern as the treasury). Owner is a PDA → allowOwnerOffCurve.
+    bondVault = (await getOrCreateAssociatedTokenAccount(provider.connection, owner, usdcMint, verifierSetPda, true))
+      .address
+  })
+
+  it('Bonds two members into the set and refuses a duplicate join', async () => {
+    verifierA = Keypair.generate()
+    verifierB = Keypair.generate()
+    await fund(verifierA.publicKey) // first vote pays the tally's rent
+    await fund(verifierB.publicKey)
+    verifierUsdcA = await createAccount(provider.connection, owner, usdcMint, verifierA.publicKey)
+    verifierUsdcB = await createAccount(provider.connection, owner, usdcMint, verifierB.publicKey)
+    await mintTo(provider.connection, owner, usdcMint, verifierUsdcA, owner, BOND)
+    await mintTo(provider.connection, owner, usdcMint, verifierUsdcB, owner, BOND)
+
+    const join = (by: Keypair, usdc: PublicKey) =>
+      program.methods
+        .postBond()
+        .accounts({
+          member: by.publicKey,
+          verifierSet: verifierSetPda,
+          bondVault,
+          usdcMint,
+          memberUsdc: usdc,
+          tokenProgram: anchor.utils.token.TOKEN_PROGRAM_ID,
+        })
+        .signers([by])
+        .rpc()
+
+    await join(verifierA, verifierUsdcA)
+    await join(verifierB, verifierUsdcB)
+
+    try {
+      await join(verifierA, verifierUsdcA)
+      assert.fail('Should have thrown an error')
+    } catch (err) {
+      assert.include(err.message, 'already a bonded verifier')
+    }
+
+    const set = await program.account.verifierSet.fetch(verifierSetPda)
+    assert.deepEqual(
+      set.members.map((m) => m.toBase58()),
+      [verifierA.publicKey.toBase58(), verifierB.publicKey.toBase58()],
+    )
+    const vault = await getAccount(provider.connection, bondVault)
+    assert.equal(Number(vault.amount), 2 * BOND)
+  })
+
+  it('Reject voting by a key outside the verifier set', async () => {
+    const stranger = Keypair.generate()
+    await fund(stranger.publicKey) // pays tally init rent; the gate must still reject
+
+    try {
+      await castVote(reportPda, true, stranger)
       assert.fail('Should have thrown an error')
     } catch (err) {
       assert.include(err.message, 'authorised verifier')
     }
   })
 
-  it('Verify a scout report (approved)', async () => {
-    await program.methods
-      .verifyScoutReport(true)
-      .accounts({
-        verifier: provider.wallet.publicKey,
-        config: configPda,
-        report: reportPda,
-        farm: farmPda,
-      })
-      .rpc()
+  it('Approves a scout report only at quorum, one vote per member', async () => {
+    // One bonded vote with k=2: still pending — a single key can no longer
+    // verify a report on its own.
+    await castVote(reportPda, true, verifierA)
+    const half = await program.account.scoutReport.fetch(reportPda)
+    assert.deepEqual(half.status, { pending: {} })
 
+    // The same member cannot vote twice while the tally is open.
+    try {
+      await castVote(reportPda, true, verifierA)
+      assert.fail('Should have thrown an error')
+    } catch (err) {
+      assert.include(err.message, 'already voted')
+    }
+
+    // The second bonded member's vote reaches quorum and finalizes.
+    await castVote(reportPda, true, verifierB)
     const reportAccount = await program.account.scoutReport.fetch(reportPda)
-
     assert.deepEqual(reportAccount.status, { verified: {} })
-    assert.equal(reportAccount.verifier.toBase58(), provider.wallet.publicKey.toBase58())
+    assert.equal(reportAccount.verifier.toBase58(), verifierB.publicKey.toBase58())
+
+    // Farm counter preserved from the old single-verifier path.
+    const farmAccount = await program.account.farm.fetch(farmPda)
+    assert.equal(farmAccount.verifiedReportCount, 1)
+
+    // The tally keeps both votes for audit.
+    const tally = await program.account.tally.fetch(tallyFor(reportPda))
+    assert.equal(tally.approvals, 2)
+    assert.equal(tally.rejections, 0)
+    assert.equal(tally.votes.length, 2)
   })
 
-  it('Reject verifying an already-verified report', async () => {
+  it('Reject voting on an already-verified report', async () => {
     try {
-      await program.methods
-        .verifyScoutReport(true)
-        .accounts({
-          verifier: provider.wallet.publicKey,
-          config: configPda,
-          report: reportPda,
-          farm: farmPda,
-        })
-        .rpc()
+      await castVote(reportPda, true, verifierA)
       assert.fail('Should have thrown an error')
     } catch (err) {
       assert.include(err.message, 'already verified or rejected')
@@ -384,11 +551,11 @@ describe('indorse_program', () => {
     const vaultBefore = await getAccount(provider.connection, rewardVault)
     const reporterBefore = await getAccount(provider.connection, reporterTokenAccount)
 
+    // Permissionless since the gates moved: the Verified status is the only
+    // gate, and REPORT_REWARD (== REWARD_AMOUNT) is protocol-fixed.
     await program.methods
-      .rewardReport(new anchor.BN(REWARD_AMOUNT))
+      .rewardReport()
       .accounts({
-        authority: provider.wallet.publicKey,
-        config: configPda,
         report: reportPda,
         rewardAuthority: rewardAuthorityPda,
         rewardVault: rewardVault,
@@ -423,13 +590,11 @@ describe('indorse_program', () => {
       .signers([reporter])
       .rpc()
 
-    // Try to reward without verifying
+    // Try to reward without a quorum approval
     try {
       await program.methods
-        .rewardReport(new anchor.BN(REWARD_AMOUNT))
+        .rewardReport()
         .accounts({
-          authority: provider.wallet.publicKey,
-          config: configPda,
           report: report2Pda,
           rewardAuthority: rewardAuthorityPda,
           rewardVault: rewardVault,
@@ -444,7 +609,7 @@ describe('indorse_program', () => {
     }
   })
 
-  it('Verify and reject a scout report', async () => {
+  it('Rejects a scout report at quorum', async () => {
     // Create a new report (index 2)
     const [report3Pda] = PublicKey.findProgramAddressSync(
       [Buffer.from('report'), farmPda.toBuffer(), new anchor.BN(2).toArrayLike(Buffer, 'le', 4)],
@@ -462,47 +627,89 @@ describe('indorse_program', () => {
       .signers([reporter])
       .rpc()
 
-    // Reject it
-    await program.methods
-      .verifyScoutReport(false)
-      .accounts({
-        verifier: provider.wallet.publicKey,
-        config: configPda,
-        report: report3Pda,
-        farm: farmPda,
-      })
-      .rpc()
+    // Reject it: two bonded no-votes reach quorum. Rejection does not bump
+    // the farm's verified count — only approvals do.
+    await castVote(report3Pda, false, verifierA)
+    await castVote(report3Pda, false, verifierB)
 
     const reportAccount = await program.account.scoutReport.fetch(report3Pda)
     assert.deepEqual(reportAccount.status, { rejected: {} })
+    assert.equal(reportAccount.verifier.toBase58(), verifierB.publicKey.toBase58())
+    const farmAccount = await program.account.farm.fetch(farmPda)
+    assert.equal(farmAccount.verifiedReportCount, 1)
+  })
+
+  it('Exits the verifier set with the bond returned', async () => {
+    const before = (await getAccount(provider.connection, verifierUsdcA)).amount
+
+    await program.methods
+      .removeVerifier()
+      .accounts({
+        member: verifierA.publicKey,
+        verifierSet: verifierSetPda,
+        bondVault,
+        usdcMint,
+        memberUsdc: verifierUsdcA,
+        tokenProgram: anchor.utils.token.TOKEN_PROGRAM_ID,
+      })
+      .signers([verifierA])
+      .rpc()
+
+    const after = (await getAccount(provider.connection, verifierUsdcA)).amount
+    assert.equal(Number(after), Number(before) + BOND)
+    const vault = await getAccount(provider.connection, bondVault)
+    assert.equal(Number(vault.amount), BOND)
+    const set = await program.account.verifierSet.fetch(verifierSetPda)
+    assert.equal(set.members.length, 1)
+  })
+
+  it('Slash moves a bond to the treasury, admin only', async () => {
+    // A member cannot slash — only config.admin.
+    try {
+      await program.methods
+        .slashVerifier(verifierB.publicKey)
+        .accounts({
+          authority: verifierB.publicKey,
+          config: configPda,
+          verifierSet: verifierSetPda,
+          treasury: treasuryPda,
+          bondVault,
+          treasuryUsdc,
+          usdcMint,
+          tokenProgram: anchor.utils.token.TOKEN_PROGRAM_ID,
+        })
+        .signers([verifierB])
+        .rpc()
+      assert.fail('Should have thrown an error')
+    } catch (err) {
+      assert.include(err.message, 'program admin')
+    }
+
+    const treasuryBefore = (await getAccount(provider.connection, treasuryUsdc)).amount
+
+    await program.methods
+      .slashVerifier(verifierB.publicKey)
+      .accounts({
+        authority: provider.wallet.publicKey,
+        config: configPda,
+        verifierSet: verifierSetPda,
+        treasury: treasuryPda,
+        bondVault,
+        treasuryUsdc,
+        usdcMint,
+        tokenProgram: anchor.utils.token.TOKEN_PROGRAM_ID,
+      })
+      .rpc()
+
+    const set = await program.account.verifierSet.fetch(verifierSetPda)
+    assert.equal(set.members.length, 0)
+    const vault = await getAccount(provider.connection, bondVault)
+    assert.equal(Number(vault.amount), 0)
+    const treasuryAfter = (await getAccount(provider.connection, treasuryUsdc)).amount
+    assert.equal(Number(treasuryAfter), Number(treasuryBefore) + BOND)
   })
 
   // ── Treasury-pool insurance ────────────────────────────────────────────────
-
-  it('Set up USDC accounts for farmer and treasury', async () => {
-    usdcMint = await createMint(provider.connection, owner, owner.publicKey, null, 6)
-    ownerUsdc = await createAccount(provider.connection, owner, usdcMint, owner.publicKey)
-    await mintTo(provider.connection, owner, usdcMint, ownerUsdc, owner, 1_000_000_000)
-
-    // Treasury token account owned by the admin (the provider wallet in tests)
-    adminUsdc = await createAccount(provider.connection, owner, usdcMint, provider.wallet.publicKey)
-    await mintTo(provider.connection, owner, usdcMint, adminUsdc, owner, 1_000_000_000) // 1000 USDC float
-
-    // Program treasury: the canonical USDC ATA of the treasury PDA — where
-    // settle/revoke sweep refunds, and the only source withdraw_treasury reads.
-    // The owner is a PDA, hence allowOwnerOffCurve.
-    treasuryUsdc = (await getOrCreateAssociatedTokenAccount(provider.connection, owner, usdcMint, treasuryPda, true))
-      .address
-
-    ;[policyPda] = PublicKey.findProgramAddressSync(
-      [Buffer.from('policy'), farmPda.toBuffer(), u32le(0)],
-      program.programId,
-    )
-    ;[policyVault] = PublicKey.findProgramAddressSync(
-      [Buffer.from('insurance_vault'), farmPda.toBuffer(), u32le(0)],
-      program.programId,
-    )
-  })
 
   it('Create a policy with only the farmer signing', async () => {
     await program.methods

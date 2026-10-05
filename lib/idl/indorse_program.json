@@ -94,6 +94,112 @@
       "args": []
     },
     {
+      "name": "cast_vote",
+      "docs": [
+        "Cast one quorum vote on a pending report — any bonded member, one",
+        "vote each. The first side to reach `verifier_set.k` finalises the",
+        "report (an approval also bumps the farm's verified count); from then",
+        "on the report's `Pending` gate closes the tally, so late votes fail",
+        "honestly instead of flipping a result."
+      ],
+      "discriminator": [
+        20,
+        212,
+        15,
+        189,
+        69,
+        180,
+        69,
+        151
+      ],
+      "accounts": [
+        {
+          "name": "voter",
+          "docs": [
+            "Pays the tally account's rent on the report's first vote."
+          ],
+          "writable": true,
+          "signer": true
+        },
+        {
+          "name": "verifier_set",
+          "docs": [
+            "Membership gate: only a bonded seat may vote. Checked before the",
+            "tally's `init_if_needed`, so a stranger's failed vote costs nothing."
+          ],
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  118,
+                  101,
+                  114,
+                  105,
+                  102,
+                  105,
+                  101,
+                  114,
+                  95,
+                  115,
+                  101,
+                  116
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "name": "report",
+          "docs": [
+            "The Pending gate is also the tally's close: once a side reaches `k`",
+            "the status flips and every later vote fails here."
+          ],
+          "writable": true
+        },
+        {
+          "name": "farm",
+          "docs": [
+            "Farm must match the report so a finalizing approval bumps",
+            "verified_report_count (the old single-verifier behaviour, preserved)."
+          ],
+          "writable": true
+        },
+        {
+          "name": "tally",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  116,
+                  97,
+                  108,
+                  108,
+                  121
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "report"
+              }
+            ]
+          }
+        },
+        {
+          "name": "system_program",
+          "address": "11111111111111111111111111111111"
+        }
+      ],
+      "args": [
+        {
+          "name": "approve",
+          "type": "bool"
+        }
+      ]
+    },
+    {
       "name": "create_escrow",
       "docs": [
         "Buyer deposits USDC into an escrow PDA tied to a specific harvest batch.",
@@ -472,6 +578,152 @@
       ]
     },
     {
+      "name": "init_verifier_set",
+      "docs": [
+        "Approve or reject a pending scout report.",
+        "Bootstrap the verifier set once: quorum `k` and the USDC bond each",
+        "member must post. Membership is earned separately via `post_bond`, so",
+        "this only fixes the rules — governance (`config.admin`) owns them."
+      ],
+      "discriminator": [
+        30,
+        43,
+        62,
+        51,
+        10,
+        14,
+        217,
+        215
+      ],
+      "accounts": [
+        {
+          "name": "authority",
+          "docs": [
+            "Role gate: only `config.admin` sets the rules. Also pays the PDA's",
+            "rent on init, hence `mut`."
+          ],
+          "writable": true,
+          "signer": true
+        },
+        {
+          "name": "config"
+        },
+        {
+          "name": "verifier_set",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  118,
+                  101,
+                  114,
+                  105,
+                  102,
+                  105,
+                  101,
+                  114,
+                  95,
+                  115,
+                  101,
+                  116
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "name": "system_program",
+          "address": "11111111111111111111111111111111"
+        }
+      ],
+      "args": [
+        {
+          "name": "k",
+          "type": "u8"
+        },
+        {
+          "name": "bond_amount",
+          "type": "u64"
+        }
+      ]
+    },
+    {
+      "name": "post_bond",
+      "docs": [
+        "Join the set by posting the bond: the member's own USDC account pays",
+        "into the program-held bond vault, so the seat — not the protocol —",
+        "carries the collateral. Bonds leave only two ways: back to the member",
+        "via `remove_verifier`, or to the treasury via a governed slash."
+      ],
+      "discriminator": [
+        168,
+        151,
+        202,
+        119,
+        163,
+        58,
+        147,
+        247
+      ],
+      "accounts": [
+        {
+          "name": "member",
+          "writable": true,
+          "signer": true
+        },
+        {
+          "name": "verifier_set",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  118,
+                  101,
+                  114,
+                  105,
+                  102,
+                  105,
+                  101,
+                  114,
+                  95,
+                  115,
+                  101,
+                  116
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "name": "bond_vault",
+          "docs": [
+            "The set's canonical bond-vault ATA — validated by address (created",
+            "once by the cutover script, like the treasury's), never trusted blind."
+          ],
+          "writable": true
+        },
+        {
+          "name": "usdc_mint",
+          "docs": [
+            "The bond mint — every collateral account must agree with it."
+          ]
+        },
+        {
+          "name": "member_usdc",
+          "writable": true
+        },
+        {
+          "name": "token_program",
+          "address": "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA"
+        }
+      ],
+      "args": []
+    },
+    {
       "name": "register_farm",
       "docs": [
         "Create a farm PDA for the signing owner."
@@ -610,6 +862,75 @@
         },
         {
           "name": "farmer_usdc",
+          "writable": true
+        },
+        {
+          "name": "token_program",
+          "address": "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA"
+        }
+      ],
+      "args": []
+    },
+    {
+      "name": "remove_verifier",
+      "docs": [
+        "Leave the set with the bond returned — a voluntary exit keeps a",
+        "captured verifier from being frozen out of their own collateral.",
+        "Votes already cast on open tallies keep counting."
+      ],
+      "discriminator": [
+        179,
+        9,
+        132,
+        183,
+        233,
+        23,
+        172,
+        111
+      ],
+      "accounts": [
+        {
+          "name": "member",
+          "writable": true,
+          "signer": true
+        },
+        {
+          "name": "verifier_set",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  118,
+                  101,
+                  114,
+                  105,
+                  102,
+                  105,
+                  101,
+                  114,
+                  95,
+                  115,
+                  101,
+                  116
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "name": "bond_vault",
+          "writable": true
+        },
+        {
+          "name": "usdc_mint"
+        },
+        {
+          "name": "member_usdc",
+          "docs": [
+            "Where the returned bond lands — must be the exiting member's account."
+          ],
           "writable": true
         },
         {
@@ -761,7 +1082,11 @@
     {
       "name": "reward_report",
       "docs": [
-        "Transfer SKR tokens from the reward vault to the reporter."
+        "Transfer SKR tokens from the reward vault to the reporter. Anyone may",
+        "trigger it once a quorum approved the report: the destination is",
+        "pinned to `report.reporter` and the amount is protocol-fixed, so a",
+        "caller can neither redirect nor inflate the payout — the state",
+        "machine (Pending → Verified → Rewarded) is the whole gate."
       ],
       "discriminator": [
         149,
@@ -775,20 +1100,11 @@
       ],
       "accounts": [
         {
-          "name": "authority",
-          "docs": [
-            "Role gate: only `config.verifier` may pay out rewards."
-          ],
-          "signer": true
-        },
-        {
-          "name": "config",
-          "docs": [
-            "The role lives here — rotating it is `set_roles`, not a redeploy."
-          ]
-        },
-        {
           "name": "report",
+          "docs": [
+            "No signer gate: the handler's Verified-status check is the whole",
+            "gate, and the payout's destination and amount are both protocol-pinned."
+          ],
           "writable": true
         },
         {
@@ -838,12 +1154,7 @@
           "address": "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA"
         }
       ],
-      "args": [
-        {
-          "name": "amount",
-          "type": "u64"
-        }
-      ]
+      "args": []
     },
     {
       "name": "set_roles",
@@ -1058,6 +1369,110 @@
         }
       ],
       "args": []
+    },
+    {
+      "name": "slash_verifier",
+      "docs": [
+        "Governed slash: `config.admin` removes a member and moves their bond",
+        "to the protocol treasury. Phase 1 deliberately ships no *automatic*",
+        "slashing rules — minority/abstention economics get designed against",
+        "real verifier behaviour, not invented up front. This is the honest",
+        "lever until then: explicit, admin-gated, evented."
+      ],
+      "discriminator": [
+        133,
+        226,
+        237,
+        187,
+        178,
+        10,
+        116,
+        203
+      ],
+      "accounts": [
+        {
+          "name": "authority",
+          "docs": [
+            "Role gate: only `config.admin` may destroy a bond."
+          ],
+          "signer": true
+        },
+        {
+          "name": "config"
+        },
+        {
+          "name": "verifier_set",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  118,
+                  101,
+                  114,
+                  105,
+                  102,
+                  105,
+                  101,
+                  114,
+                  95,
+                  115,
+                  101,
+                  116
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "name": "treasury",
+          "docs": [
+            "authority (same PDA as `withdraw_treasury`)."
+          ],
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  116,
+                  114,
+                  101,
+                  97,
+                  115,
+                  117,
+                  114,
+                  121
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "name": "bond_vault",
+          "writable": true
+        },
+        {
+          "name": "treasury_usdc",
+          "docs": [
+            "The slashed bond moves here: the treasury's canonical USDC ATA."
+          ],
+          "writable": true
+        },
+        {
+          "name": "usdc_mint"
+        },
+        {
+          "name": "token_program",
+          "address": "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA"
+        }
+      ],
+      "args": [
+        {
+          "name": "target",
+          "type": "pubkey"
+        }
+      ]
     },
     {
       "name": "submit_harvest_batch",
@@ -1325,54 +1740,6 @@
       ]
     },
     {
-      "name": "verify_scout_report",
-      "docs": [
-        "Approve or reject a pending scout report."
-      ],
-      "discriminator": [
-        195,
-        245,
-        205,
-        232,
-        143,
-        27,
-        24,
-        218
-      ],
-      "accounts": [
-        {
-          "name": "verifier",
-          "docs": [
-            "Role gate: only `config.verifier` may verify reports."
-          ],
-          "signer": true
-        },
-        {
-          "name": "config",
-          "docs": [
-            "The role lives here — rotating it is `set_roles`, not a redeploy."
-          ]
-        },
-        {
-          "name": "report",
-          "writable": true
-        },
-        {
-          "name": "farm",
-          "docs": [
-            "Farm must match the report so we can increment verified_report_count"
-          ],
-          "writable": true
-        }
-      ],
-      "args": [
-        {
-          "name": "approved",
-          "type": "bool"
-        }
-      ]
-    },
-    {
       "name": "withdraw_treasury",
       "docs": [
         "Move accumulated refunds out of the program treasury into the admin's",
@@ -1530,6 +1897,32 @@
         175,
         42,
         243
+      ]
+    },
+    {
+      "name": "Tally",
+      "discriminator": [
+        126,
+        11,
+        29,
+        33,
+        32,
+        101,
+        239,
+        25
+      ]
+    },
+    {
+      "name": "VerifierSet",
+      "discriminator": [
+        227,
+        16,
+        215,
+        74,
+        157,
+        114,
+        239,
+        185
       ]
     },
     {
@@ -1743,6 +2136,71 @@
       ]
     },
     {
+      "name": "VerifierExited",
+      "discriminator": [
+        97,
+        6,
+        71,
+        183,
+        83,
+        252,
+        19,
+        209
+      ]
+    },
+    {
+      "name": "VerifierJoined",
+      "discriminator": [
+        184,
+        210,
+        93,
+        129,
+        170,
+        147,
+        31,
+        70
+      ]
+    },
+    {
+      "name": "VerifierSetInitialized",
+      "discriminator": [
+        32,
+        180,
+        222,
+        5,
+        0,
+        108,
+        30,
+        149
+      ]
+    },
+    {
+      "name": "VerifierSlashed",
+      "discriminator": [
+        41,
+        11,
+        233,
+        16,
+        87,
+        34,
+        95,
+        136
+      ]
+    },
+    {
+      "name": "VoteCast",
+      "discriminator": [
+        39,
+        53,
+        195,
+        104,
+        188,
+        17,
+        225,
+        213
+      ]
+    },
+    {
       "name": "WeatherReadingSubmitted",
       "discriminator": [
         160,
@@ -1886,6 +2344,31 @@
       "code": 6025,
       "name": "UnauthorisedAdmin",
       "msg": "Caller is not the authorised program admin"
+    },
+    {
+      "code": 6026,
+      "name": "InvalidQuorum",
+      "msg": "Quorum must be between 2 and the verifier-set maximum"
+    },
+    {
+      "code": 6027,
+      "name": "ZeroBond",
+      "msg": "Bond amount must be greater than zero"
+    },
+    {
+      "code": 6028,
+      "name": "AlreadyVerifier",
+      "msg": "Key is already a bonded verifier"
+    },
+    {
+      "code": 6029,
+      "name": "VerifierSetFull",
+      "msg": "The verifier set is full"
+    },
+    {
+      "code": 6030,
+      "name": "AlreadyVoted",
+      "msg": "Verifier has already voted on this report"
     }
   ],
   "types": [
@@ -1914,7 +2397,10 @@
           {
             "name": "verifier",
             "docs": [
-              "Verifies scout reports and pays out rewards."
+              "Vestigial after Phase 1: report verification moved to the bonded",
+              "K-of-N verifier set, and reward claims became permissionless. The",
+              "field survives so the account layout doesn't migrate; `set_roles`",
+              "still rotates it, but nothing gates on it."
             ],
             "type": "pubkey"
           },
@@ -2520,6 +3006,10 @@
           },
           {
             "name": "verifier",
+            "docs": [
+              "The voter whose vote pushed the tally to quorum — finalizer, not",
+              "sole authority (Phase 1 replaced the single verifier)."
+            ],
             "type": "pubkey"
           },
           {
@@ -2574,6 +3064,61 @@
       }
     },
     {
+      "name": "Tally",
+      "docs": [
+        "Phase 1 — per-report vote record (seeds [\"tally\", report]). Created by",
+        "the report's first vote; the report's Pending gate closes it once a side",
+        "reaches quorum, so late votes fail instead of flipping the result."
+      ],
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "report",
+            "type": "pubkey"
+          },
+          {
+            "name": "approvals",
+            "type": "u8"
+          },
+          {
+            "name": "rejections",
+            "type": "u8"
+          },
+          {
+            "name": "votes",
+            "type": {
+              "vec": {
+                "defined": {
+                  "name": "TallyVote"
+                }
+              }
+            }
+          },
+          {
+            "name": "bump",
+            "type": "u8"
+          }
+        ]
+      }
+    },
+    {
+      "name": "TallyVote",
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "voter",
+            "type": "pubkey"
+          },
+          {
+            "name": "approve",
+            "type": "bool"
+          }
+        ]
+      }
+    },
+    {
       "name": "TreasuryWithdrawn",
       "type": {
         "kind": "struct",
@@ -2585,6 +3130,138 @@
           {
             "name": "destination",
             "type": "pubkey"
+          }
+        ]
+      }
+    },
+    {
+      "name": "VerifierExited",
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "member",
+            "type": "pubkey"
+          },
+          {
+            "name": "bond",
+            "type": "u64"
+          }
+        ]
+      }
+    },
+    {
+      "name": "VerifierJoined",
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "member",
+            "type": "pubkey"
+          },
+          {
+            "name": "bond",
+            "type": "u64"
+          }
+        ]
+      }
+    },
+    {
+      "name": "VerifierSet",
+      "docs": [
+        "Phase 1 — K-of-N verifier set: membership with bonded stakes.",
+        "One PDA (seeds [\"verifier_set\"]) holds the quorum, the bond price of a",
+        "seat and the current members; per-report votes live in the `Tally`."
+      ],
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "k",
+            "docs": [
+              "Quorum: first side to reach this many votes finalises the report."
+            ],
+            "type": "u8"
+          },
+          {
+            "name": "bond_amount",
+            "docs": [
+              "USDC (atomic units) each member posts to join — fixed at init."
+            ],
+            "type": "u64"
+          },
+          {
+            "name": "members",
+            "docs": [
+              "Bonded members; the MAX_VERIFIERS bound keeps the account fixed-size."
+            ],
+            "type": {
+              "vec": "pubkey"
+            }
+          },
+          {
+            "name": "bump",
+            "type": "u8"
+          }
+        ]
+      }
+    },
+    {
+      "name": "VerifierSetInitialized",
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "k",
+            "type": "u8"
+          },
+          {
+            "name": "bond_amount",
+            "type": "u64"
+          }
+        ]
+      }
+    },
+    {
+      "name": "VerifierSlashed",
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "member",
+            "type": "pubkey"
+          },
+          {
+            "name": "amount",
+            "type": "u64"
+          }
+        ]
+      }
+    },
+    {
+      "name": "VoteCast",
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "report",
+            "type": "pubkey"
+          },
+          {
+            "name": "voter",
+            "type": "pubkey"
+          },
+          {
+            "name": "approve",
+            "type": "bool"
+          },
+          {
+            "name": "approvals",
+            "type": "u8"
+          },
+          {
+            "name": "rejections",
+            "type": "u8"
           }
         ]
       }

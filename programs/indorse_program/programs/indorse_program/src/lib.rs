@@ -4,10 +4,21 @@ use anchor_spl::token::{self, Mint, Token, TokenAccount, Transfer};
 declare_id!("GVenujqgMJZCvYPKqMmPiAXQp7o3mwQbXw1nSBu3U5Ht");
 
 /// Bootstrap authority — the only key that may create the `Config` PDA, and
-/// nothing else. Every runtime gate (verify, reward, oracle, settle, the
-/// treasury token checks) reads `config` instead of this const, so moving the
-/// protocol to a multisig is a `set_roles` transaction — never a redeploy.
+/// nothing else. Every runtime gate (oracle reading, settlement, treasury
+/// withdrawal, verifier-set governance) reads `config` instead of this const,
+/// so moving the protocol to a multisig is a `set_roles` transaction — never
+/// a redeploy.
 pub const ADMIN: Pubkey = anchor_lang::pubkey!("AXUTwBhtwbgAJGAZYKHXAJgSo4dMC29XrnbP91BPcYg8");
+
+/// Maximum members in the verifier set — bounds the fixed-size accounts so
+/// `post_bond` never needs a realloc.
+pub const MAX_VERIFIERS: usize = 7;
+
+/// Reward paid from the reward vault for one quorum-approved report.
+/// Protocol-fixed: `reward_report` is permissionless, so neither the amount
+/// nor the destination may be caller-chosen. Changing the schedule is a
+/// program upgrade, not a parameter.
+pub const REPORT_REWARD: u64 = 1_000_000;
 
 // ─────────────────────────────────────────────────────────────────────────────
 //  Program
@@ -160,40 +171,183 @@ pub mod indorse_program {
     }
 
     /// Approve or reject a pending scout report.
-    pub fn verify_scout_report(ctx: Context<VerifyScoutReport>, approved: bool) -> Result<()> {
-        let report = &mut ctx.accounts.report;
-        require!(
-            report.status == ReportStatus::Pending,
-            FarmError::AlreadyVerified
-        );
+    // =========================================================================
+    //  LAYER 1 — VERIFIER SET (K-of-N quorum replaces the single verifier)
+    // =========================================================================
 
-        report.status = if approved {
-            ReportStatus::Verified
-        } else {
-            ReportStatus::Rejected
-        };
-        report.verifier = ctx.accounts.verifier.key();
+    /// Bootstrap the verifier set once: quorum `k` and the USDC bond each
+    /// member must post. Membership is earned separately via `post_bond`, so
+    /// this only fixes the rules — governance (`config.admin`) owns them.
+    pub fn init_verifier_set(ctx: Context<InitVerifierSet>, k: u8, bond_amount: u64) -> Result<()> {
+        require!(k >= 2 && k <= MAX_VERIFIERS as u8, FarmError::InvalidQuorum);
+        require!(bond_amount > 0, FarmError::ZeroBond);
 
-        // Keep a tally of verified reports on the farm for insurance premiums
-        if approved {
-            ctx.accounts.farm.verified_report_count = ctx
-                .accounts
-                .farm
-                .verified_report_count
-                .checked_add(1)
-                .ok_or(FarmError::Overflow)?;
-        }
+        let set = &mut ctx.accounts.verifier_set;
+        set.k = k;
+        set.bond_amount = bond_amount;
+        set.members = Vec::new();
+        set.bump = ctx.bumps.verifier_set;
 
-        emit!(ScoutReportVerified {
-            report: report.key(),
-            approved,
-            verifier: report.verifier,
-        });
+        emit!(VerifierSetInitialized { k, bond_amount });
         Ok(())
     }
 
-    /// Transfer SKR tokens from the reward vault to the reporter.
-    pub fn reward_report(ctx: Context<RewardReport>, amount: u64) -> Result<()> {
+    /// Join the set by posting the bond: the member's own USDC account pays
+    /// into the program-held bond vault, so the seat — not the protocol —
+    /// carries the collateral. Bonds leave only two ways: back to the member
+    /// via `remove_verifier`, or to the treasury via a governed slash.
+    pub fn post_bond(ctx: Context<PostBond>) -> Result<()> {
+        let member = ctx.accounts.member.key();
+        let set = &mut ctx.accounts.verifier_set;
+        require!(!set.members.contains(&member), FarmError::AlreadyVerifier);
+        require!(set.members.len() < MAX_VERIFIERS, FarmError::VerifierSetFull);
+        let bond = set.bond_amount;
+        set.members.push(member);
+
+        token::transfer(
+            CpiContext::new(
+                ctx.accounts.token_program.to_account_info(),
+                Transfer {
+                    from: ctx.accounts.member_usdc.to_account_info(),
+                    to: ctx.accounts.bond_vault.to_account_info(),
+                    authority: ctx.accounts.member.to_account_info(),
+                },
+            ),
+            bond,
+        )?;
+
+        emit!(VerifierJoined { member, bond });
+        Ok(())
+    }
+
+    /// Leave the set with the bond returned — a voluntary exit keeps a
+    /// captured verifier from being frozen out of their own collateral.
+    /// Votes already cast on open tallies keep counting.
+    pub fn remove_verifier(ctx: Context<RemoveVerifier>) -> Result<()> {
+        let member = ctx.accounts.member.key();
+        let set = &mut ctx.accounts.verifier_set;
+        let position = set
+            .members
+            .iter()
+            .position(|m| *m == member)
+            .ok_or(FarmError::UnauthorisedVerifier)?;
+        set.members.remove(position);
+        let bond = set.bond_amount;
+
+        let seeds = [b"verifier_set".as_ref(), &[ctx.bumps.verifier_set]];
+        token::transfer(
+            CpiContext::new_with_signer(
+                ctx.accounts.token_program.to_account_info(),
+                Transfer {
+                    from: ctx.accounts.bond_vault.to_account_info(),
+                    to: ctx.accounts.member_usdc.to_account_info(),
+                    authority: ctx.accounts.verifier_set.to_account_info(),
+                },
+                &[&seeds[..]],
+            ),
+            bond,
+        )?;
+
+        emit!(VerifierExited { member, bond });
+        Ok(())
+    }
+
+    /// Governed slash: `config.admin` removes a member and moves their bond
+    /// to the protocol treasury. Phase 1 deliberately ships no *automatic*
+    /// slashing rules — minority/abstention economics get designed against
+    /// real verifier behaviour, not invented up front. This is the honest
+    /// lever until then: explicit, admin-gated, evented.
+    pub fn slash_verifier(ctx: Context<SlashVerifier>, target: Pubkey) -> Result<()> {
+        let set = &mut ctx.accounts.verifier_set;
+        let position = set
+            .members
+            .iter()
+            .position(|m| *m == target)
+            .ok_or(FarmError::UnauthorisedVerifier)?;
+        set.members.remove(position);
+        let bond = set.bond_amount;
+
+        let seeds = [b"verifier_set".as_ref(), &[ctx.bumps.verifier_set]];
+        token::transfer(
+            CpiContext::new_with_signer(
+                ctx.accounts.token_program.to_account_info(),
+                Transfer {
+                    from: ctx.accounts.bond_vault.to_account_info(),
+                    to: ctx.accounts.treasury_usdc.to_account_info(),
+                    authority: ctx.accounts.verifier_set.to_account_info(),
+                },
+                &[&seeds[..]],
+            ),
+            bond,
+        )?;
+
+        emit!(VerifierSlashed { member: target, amount: bond });
+        Ok(())
+    }
+
+    /// Cast one quorum vote on a pending report — any bonded member, one
+    /// vote each. The first side to reach `verifier_set.k` finalises the
+    /// report (an approval also bumps the farm's verified count); from then
+    /// on the report's `Pending` gate closes the tally, so late votes fail
+    /// honestly instead of flipping a result.
+    pub fn cast_vote(ctx: Context<CastVote>, approve: bool) -> Result<()> {
+        let voter = ctx.accounts.voter.key();
+        let tally = &mut ctx.accounts.tally;
+        require!(
+            !tally.votes.iter().any(|vote| vote.voter == voter),
+            FarmError::AlreadyVoted
+        );
+
+        tally.votes.push(TallyVote { voter, approve });
+        if approve {
+            tally.approvals = tally.approvals.checked_add(1).ok_or(FarmError::Overflow)?;
+        } else {
+            tally.rejections = tally.rejections.checked_add(1).ok_or(FarmError::Overflow)?;
+        }
+        let (approvals, rejections) = (tally.approvals, tally.rejections);
+        emit!(VoteCast {
+            report: ctx.accounts.report.key(),
+            voter,
+            approve,
+            approvals,
+            rejections,
+        });
+
+        let k = ctx.accounts.verifier_set.k;
+        if approvals >= k || rejections >= k {
+            let approved = approvals >= k;
+            let report = &mut ctx.accounts.report;
+            report.status = if approved {
+                ReportStatus::Verified
+            } else {
+                ReportStatus::Rejected
+            };
+            report.verifier = voter;
+
+            if approved {
+                ctx.accounts.farm.verified_report_count = ctx
+                    .accounts
+                    .farm
+                    .verified_report_count
+                    .checked_add(1)
+                    .ok_or(FarmError::Overflow)?;
+            }
+
+            emit!(ScoutReportVerified {
+                report: report.key(),
+                approved,
+                verifier: voter,
+            });
+        }
+        Ok(())
+    }
+
+    /// Transfer SKR tokens from the reward vault to the reporter. Anyone may
+    /// trigger it once a quorum approved the report: the destination is
+    /// pinned to `report.reporter` and the amount is protocol-fixed, so a
+    /// caller can neither redirect nor inflate the payout — the state
+    /// machine (Pending → Verified → Rewarded) is the whole gate.
+    pub fn reward_report(ctx: Context<RewardReport>) -> Result<()> {
         let report = &mut ctx.accounts.report;
         require!(
             report.status == ReportStatus::Verified,
@@ -213,7 +367,7 @@ pub mod indorse_program {
                 },
                 signer,
             ),
-            amount,
+            REPORT_REWARD,
         )?;
 
         // Mark as paid so the vault cannot be drained twice for one report
@@ -222,7 +376,7 @@ pub mod indorse_program {
         emit!(ReportRewarded {
             report: report.key(),
             reporter: report.reporter,
-            amount,
+            amount: REPORT_REWARD,
         });
         Ok(())
     }
@@ -744,7 +898,10 @@ pub struct Config {
     /// Governance: rotates every role below (including itself) and the only
     /// key allowed to withdraw from the program treasury.
     pub admin: Pubkey,
-    /// Verifies scout reports and pays out rewards.
+    /// Vestigial after Phase 1: report verification moved to the bonded
+    /// K-of-N verifier set, and reward claims became permissionless. The
+    /// field survives so the account layout doesn't migrate; `set_roles`
+    /// still rotates it, but nothing gates on it.
     pub verifier: Pubkey,
     /// Posts weather readings.
     pub oracle: Pubkey,
@@ -783,12 +940,52 @@ pub struct ScoutReport {
     pub lng_e6: i64,
     pub ai_label: String, // max 32
     pub status: ReportStatus,
+    /// The voter whose vote pushed the tally to quorum — finalizer, not
+    /// sole authority (Phase 1 replaced the single verifier).
     pub verifier: Pubkey,
     pub timestamp: i64,
     pub bump: u8,
 }
 impl ScoutReport {
     pub const MAX_SIZE: usize = 32 + 32 + 4 + 32 + (4 + 128) + 8 + 8 + (4 + 32) + 1 + 32 + 8 + 1;
+}
+
+/// Phase 1 — K-of-N verifier set: membership with bonded stakes.
+/// One PDA (seeds ["verifier_set"]) holds the quorum, the bond price of a
+/// seat and the current members; per-report votes live in the `Tally`.
+#[account]
+pub struct VerifierSet {
+    /// Quorum: first side to reach this many votes finalises the report.
+    pub k: u8,
+    /// USDC (atomic units) each member posts to join — fixed at init.
+    pub bond_amount: u64,
+    /// Bonded members; the MAX_VERIFIERS bound keeps the account fixed-size.
+    pub members: Vec<Pubkey>,
+    pub bump: u8,
+}
+impl VerifierSet {
+    pub const MAX_SIZE: usize = 1 + 8 + 4 + (32 * MAX_VERIFIERS) + 1;
+}
+
+/// Phase 1 — per-report vote record (seeds ["tally", report]). Created by
+/// the report's first vote; the report's Pending gate closes it once a side
+/// reaches quorum, so late votes fail instead of flipping the result.
+#[account]
+pub struct Tally {
+    pub report: Pubkey,
+    pub approvals: u8,
+    pub rejections: u8,
+    pub votes: Vec<TallyVote>,
+    pub bump: u8,
+}
+impl Tally {
+    pub const MAX_SIZE: usize = 32 + 1 + 1 + 4 + ((32 + 1) * MAX_VERIFIERS) + 1;
+}
+
+#[derive(AnchorSerialize, AnchorDeserialize, Clone, Debug, PartialEq)]
+pub struct TallyVote {
+    pub voter: Pubkey,
+    pub approve: bool,
 }
 
 /// Layer 2 — Harvest batch with provenance snapshot
@@ -967,32 +1164,176 @@ pub struct SubmitScoutReport<'info> {
     pub system_program: Program<'info, System>,
 }
 
+/// Bootstrap the rules: quorum + bond price, one shot (the PDA's `init`
+/// refuses a second call). Membership itself arrives via `post_bond`.
 #[derive(Accounts)]
-pub struct VerifyScoutReport<'info> {
-    /// Role gate: only `config.verifier` may verify reports.
-    #[account(constraint = verifier.key() == config.verifier @ FarmError::UnauthorisedVerifier)]
-    pub verifier: Signer<'info>,
+pub struct InitVerifierSet<'info> {
+    /// Role gate: only `config.admin` sets the rules. Also pays the PDA's
+    /// rent on init, hence `mut`.
+    #[account(mut, constraint = authority.key() == config.admin @ FarmError::UnauthorisedAdmin)]
+    pub authority: Signer<'info>,
 
-    /// The role lives here — rotating it is `set_roles`, not a redeploy.
     pub config: Account<'info, Config>,
 
+    #[account(
+        init,
+        payer = authority,
+        space = 8 + VerifierSet::MAX_SIZE,
+        seeds = [b"verifier_set"],
+        bump
+    )]
+    pub verifier_set: Account<'info, VerifierSet>,
+
+    pub system_program: Program<'info, System>,
+}
+
+#[derive(Accounts)]
+pub struct PostBond<'info> {
     #[account(mut)]
+    pub member: Signer<'info>,
+
+    #[account(mut, seeds = [b"verifier_set"], bump)]
+    pub verifier_set: Account<'info, VerifierSet>,
+
+    /// The set's canonical bond-vault ATA — validated by address (created
+    /// once by the cutover script, like the treasury's), never trusted blind.
+    #[account(
+        mut,
+        constraint = bond_vault.key()
+            == anchor_spl::associated_token::get_associated_token_address(
+                &verifier_set.key(),
+                &usdc_mint.key(),
+            ) @ FarmError::TokenAccountInvalid
+    )]
+    pub bond_vault: Account<'info, TokenAccount>,
+
+    /// The bond mint — every collateral account must agree with it.
+    pub usdc_mint: Account<'info, Mint>,
+
+    #[account(
+        mut,
+        constraint = member_usdc.owner == member.key() @ FarmError::TokenAccountInvalid,
+        constraint = member_usdc.mint == usdc_mint.key() @ FarmError::TokenAccountInvalid
+    )]
+    pub member_usdc: Account<'info, TokenAccount>,
+
+    pub token_program: Program<'info, Token>,
+}
+
+#[derive(Accounts)]
+pub struct RemoveVerifier<'info> {
+    #[account(mut)]
+    pub member: Signer<'info>,
+
+    #[account(mut, seeds = [b"verifier_set"], bump)]
+    pub verifier_set: Account<'info, VerifierSet>,
+
+    #[account(
+        mut,
+        constraint = bond_vault.key()
+            == anchor_spl::associated_token::get_associated_token_address(
+                &verifier_set.key(),
+                &usdc_mint.key(),
+            ) @ FarmError::TokenAccountInvalid
+    )]
+    pub bond_vault: Account<'info, TokenAccount>,
+
+    pub usdc_mint: Account<'info, Mint>,
+
+    /// Where the returned bond lands — must be the exiting member's account.
+    #[account(
+        mut,
+        constraint = member_usdc.owner == member.key() @ FarmError::TokenAccountInvalid,
+        constraint = member_usdc.mint == usdc_mint.key() @ FarmError::TokenAccountInvalid
+    )]
+    pub member_usdc: Account<'info, TokenAccount>,
+
+    pub token_program: Program<'info, Token>,
+}
+
+#[derive(Accounts)]
+pub struct SlashVerifier<'info> {
+    /// Role gate: only `config.admin` may destroy a bond.
+    #[account(constraint = authority.key() == config.admin @ FarmError::UnauthorisedAdmin)]
+    pub authority: Signer<'info>,
+
+    pub config: Account<'info, Config>,
+
+    #[account(mut, seeds = [b"verifier_set"], bump)]
+    pub verifier_set: Account<'info, VerifierSet>,
+
+    /// CHECK: seeds-validated program treasury — the slash destination's
+    /// authority (same PDA as `withdraw_treasury`).
+    #[account(seeds = [b"treasury"], bump)]
+    pub treasury: UncheckedAccount<'info>,
+
+    #[account(
+        mut,
+        constraint = bond_vault.key()
+            == anchor_spl::associated_token::get_associated_token_address(
+                &verifier_set.key(),
+                &usdc_mint.key(),
+            ) @ FarmError::TokenAccountInvalid
+    )]
+    pub bond_vault: Account<'info, TokenAccount>,
+
+    /// The slashed bond moves here: the treasury's canonical USDC ATA.
+    #[account(
+        mut,
+        constraint = treasury_usdc.key()
+            == anchor_spl::associated_token::get_associated_token_address(
+                &treasury.key(),
+                &usdc_mint.key(),
+            ) @ FarmError::TokenAccountInvalid
+    )]
+    pub treasury_usdc: Account<'info, TokenAccount>,
+
+    pub usdc_mint: Account<'info, Mint>,
+
+    pub token_program: Program<'info, Token>,
+}
+
+#[derive(Accounts)]
+pub struct CastVote<'info> {
+    /// Pays the tally account's rent on the report's first vote.
+    #[account(mut)]
+    pub voter: Signer<'info>,
+
+    /// Membership gate: only a bonded seat may vote. Checked before the
+    /// tally's `init_if_needed`, so a stranger's failed vote costs nothing.
+    #[account(
+        seeds = [b"verifier_set"],
+        bump,
+        constraint = verifier_set.members.contains(&voter.key()) @ FarmError::UnauthorisedVerifier
+    )]
+    pub verifier_set: Account<'info, VerifierSet>,
+
+    /// The Pending gate is also the tally's close: once a side reaches `k`
+    /// the status flips and every later vote fails here.
+    #[account(mut, constraint = report.status == ReportStatus::Pending @ FarmError::AlreadyVerified)]
     pub report: Account<'info, ScoutReport>,
 
-    /// Farm must match the report so we can increment verified_report_count
+    /// Farm must match the report so a finalizing approval bumps
+    /// verified_report_count (the old single-verifier behaviour, preserved).
     #[account(mut, constraint = farm.key() == report.farm)]
     pub farm: Account<'info, Farm>,
+
+    #[account(
+        init_if_needed,
+        payer = voter,
+        space = 8 + Tally::MAX_SIZE,
+        seeds = [b"tally", report.key().as_ref()],
+        bump
+    )]
+    pub tally: Account<'info, Tally>,
+
+    pub system_program: Program<'info, System>,
 }
 
 #[derive(Accounts)]
 pub struct RewardReport<'info> {
-    /// Role gate: only `config.verifier` may pay out rewards.
-    #[account(constraint = authority.key() == config.verifier @ FarmError::UnauthorisedVerifier)]
-    pub authority: Signer<'info>,
-
-    /// The role lives here — rotating it is `set_roles`, not a redeploy.
-    pub config: Account<'info, Config>,
-
+    /// No signer gate: the handler's Verified-status check is the whole
+    /// gate, and the payout's destination and amount are both protocol-pinned.
     #[account(mut)]
     pub report: Account<'info, ScoutReport>,
 
@@ -1497,6 +1838,40 @@ pub struct TreasuryWithdrawn {
     pub destination: Pubkey,
 }
 
+// Phase 1 — verifier set & quorum voting
+#[event]
+pub struct VerifierSetInitialized {
+    pub k: u8,
+    pub bond_amount: u64,
+}
+
+#[event]
+pub struct VerifierJoined {
+    pub member: Pubkey,
+    pub bond: u64,
+}
+
+#[event]
+pub struct VerifierExited {
+    pub member: Pubkey,
+    pub bond: u64,
+}
+
+#[event]
+pub struct VerifierSlashed {
+    pub member: Pubkey,
+    pub amount: u64,
+}
+
+#[event]
+pub struct VoteCast {
+    pub report: Pubkey,
+    pub voter: Pubkey,
+    pub approve: bool,
+    pub approvals: u8,
+    pub rejections: u8,
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 //  Errors
 // ─────────────────────────────────────────────────────────────────────────────
@@ -1567,4 +1942,16 @@ pub enum FarmError {
     // Appended with the config (Layer 0) instructions.
     #[msg("Caller is not the authorised program admin")]
     UnauthorisedAdmin,
+
+    // Appended with the verifier-set (Phase 1) instructions.
+    #[msg("Quorum must be between 2 and the verifier-set maximum")]
+    InvalidQuorum,
+    #[msg("Bond amount must be greater than zero")]
+    ZeroBond,
+    #[msg("Key is already a bonded verifier")]
+    AlreadyVerifier,
+    #[msg("The verifier set is full")]
+    VerifierSetFull,
+    #[msg("Verifier has already voted on this report")]
+    AlreadyVoted,
 }

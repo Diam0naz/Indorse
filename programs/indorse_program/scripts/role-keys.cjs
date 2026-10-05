@@ -41,6 +41,24 @@ const roleKeypair = (role) => anchor.web3.Keypair.fromSeed(createHash('sha256').
 
 const deriveAll = () => Object.fromEntries(ROLES.map((r) => [r, roleKeypair(r)]))
 
+/**
+ * The signer for any config.admin-gated instruction: the derived admin key
+ * once config.admin already points at it, the bootstrap keypair before the
+ * first rotation, or an explicit error when neither holds the role. Shared
+ * with init-config.cjs so both scripts agree on who may sign.
+ */
+const pickAdminSigner = (currentAdminBase58, bootstrap) => {
+  const derived = roleKeypair('admin')
+  if (currentAdminBase58 === derived.publicKey.toBase58()) return derived
+  if (currentAdminBase58 === bootstrap.publicKey.toBase58()) return bootstrap
+  throw new Error(
+    `config.admin ${currentAdminBase58} matches neither the derived admin key nor ${KEY_PATH} — ` +
+      'sign it from whichever key does hold it',
+  )
+}
+
+module.exports = { ROLE_SEED, roleKeypair, deriveAll, pickAdminSigner }
+
 const printRoles = (roles) => {
   console.log(`derived from sha256("${ROLE_SEED}:<role>") → Keypair.fromSeed`)
   for (const name of ROLES) console.log(`  ${name.padEnd(9)} ${roles[name].publicKey.toBase58()}`)
@@ -92,17 +110,7 @@ async function main() {
 
   // set_roles is signed by whoever config.admin is *now*: the derived key
   // after a previous rotation, or the bootstrap keypair before the first one.
-  let signer
-  if (before.admin === derived.admin.publicKey.toBase58()) {
-    signer = derived.admin
-  } else if (before.admin === bootstrap.publicKey.toBase58()) {
-    signer = bootstrap
-  } else {
-    throw new Error(
-      `config.admin ${before.admin} matches neither the derived admin key nor ${KEY_PATH} — ` +
-        'rotate it from whichever key does hold it',
-    )
-  }
+  const signer = pickAdminSigner(before.admin, bootstrap)
 
   const signature = await program.methods
     .setRoles(targets.admin, targets.verifier, targets.oracle)
@@ -119,7 +127,10 @@ async function main() {
   })
 }
 
-main().catch((err) => {
-  console.error(err.message ?? err)
-  process.exit(1)
-})
+// CLI-only: requiring this module (init-config.cjs) must not run print mode.
+if (require.main === module) {
+  main().catch((err) => {
+    console.error(err.message ?? err)
+    process.exit(1)
+  })
+}

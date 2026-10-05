@@ -1,7 +1,7 @@
 /**
  * scripts/init-config.cjs — one-shot bootstrap of program state per ledger.
  *
- * Two pieces of state have to exist before the insurance paths can run:
+ * Four pieces of state have to exist before the protocol paths can run:
  *
  *  1. The config PDA (["config"]): authority lives in account data, but
  *     somebody has to create that account once per ledger — the hard-coded
@@ -16,19 +16,31 @@
  *     PDA, hence allowOwnerOffCurve). Skipped when the cluster has no USDC
  *     mint yet (fresh localnet — the integration tests mint their own).
  *
- * Re-running after a devnet reset is safe: both steps are idempotent.
+ *  3. The verifier set (["verifier_set"], Phase 1): quorum k and bond price,
+ *     signed by whoever holds config.admin *now* (derived key after the
+ *     role-keys rotation, bootstrap before it). Membership itself is a
+ *     per-member `post_bond` — deliberately not scripted, because each
+ *     verifier must pay their own bond from their own wallet.
+ *
+ *  4. The bond vault: the verifier set's canonical USDC ATA, validated by
+ *     address inside `post_bond` (same external-create pattern as the
+ *     treasury ATA).
+ *
+ * Re-running after a devnet reset is safe: all four steps are idempotent.
  *
  *   node scripts/init-config.cjs                          # devnet (default)
  *   RPC_URL=http://127.0.0.1:8899 node scripts/init-config.cjs   # localnet
  *
  * ADMIN / VERIFIER / ORACLE (base58) override the initial role keys;
- * USDC_MINT (base58) overrides the treasury mint.
+ * USDC_MINT (base58) overrides the treasury/bond mint; K and BOND_AMOUNT
+ * (atomic units, defaults 2 and 5 USDC) set the verifier-set rules.
  */
 const { readFileSync } = require('node:fs')
 const { homedir } = require('node:os')
 const { join, resolve } = require('node:path')
 const anchor = require('@coral-xyz/anchor')
 const { getOrCreateAssociatedTokenAccount } = require('@solana/spl-token')
+const { pickAdminSigner } = require('./role-keys.cjs')
 
 const RPC_URL = process.env.RPC_URL ?? 'https://api.devnet.solana.com'
 const KEY_PATH = process.env.SOLANA_KEYPAIR ?? join(homedir(), '.config/solana/id.json')
@@ -47,9 +59,10 @@ async function main() {
   const [treasuryPda] = anchor.web3.PublicKey.findProgramAddressSync([Buffer.from('treasury')], program.programId)
 
   // 1. Config PDA — one-shot, then read-only.
+  let config
   const existing = await connection.getAccountInfo(configPda)
   if (existing) {
-    const config = await program.account.config.fetch(configPda)
+    config = await program.account.config.fetch(configPda)
     console.log('config already initialised at', configPda.toBase58())
     console.log({
       admin: config.admin.toBase58(),
@@ -68,7 +81,7 @@ async function main() {
       })
       .rpc()
 
-    const config = await program.account.config.fetch(configPda)
+    config = await program.account.config.fetch(configPda)
     console.log('init_config', signature)
     console.log('config at', configPda.toBase58())
     console.log({
@@ -80,13 +93,66 @@ async function main() {
 
   // 2. Treasury USDC ATA — where settle/revoke sweep refunds.
   const usdcMint = new anchor.web3.PublicKey(process.env.USDC_MINT ?? '4zMMC9srt5Ri5X14GAgXhaHii3GnPAEERYPJgZJDncDU')
-  if (!(await connection.getAccountInfo(usdcMint))) {
+  const hasMint = Boolean(await connection.getAccountInfo(usdcMint))
+  if (hasMint) {
+    const treasuryUsdc = await getOrCreateAssociatedTokenAccount(connection, payer, usdcMint, treasuryPda, true)
+    console.log('treasury USDC ATA at', treasuryUsdc.address.toBase58())
+    console.log({ treasury: treasuryPda.toBase58(), mint: usdcMint.toBase58() })
+  } else {
     console.log('no USDC mint on this cluster (' + usdcMint.toBase58() + '); skipping the treasury ATA')
-    return
   }
-  const treasuryUsdc = await getOrCreateAssociatedTokenAccount(connection, payer, usdcMint, treasuryPda, true)
-  console.log('treasury USDC ATA at', treasuryUsdc.address.toBase58())
-  console.log({ treasury: treasuryPda.toBase58(), mint: usdcMint.toBase58() })
+
+  // 3. Verifier set (Phase 1) — signed by whoever holds config.admin *now*.
+  const [verifierSetPda] = anchor.web3.PublicKey.findProgramAddressSync(
+    [Buffer.from('verifier_set')],
+    program.programId,
+  )
+  if (await connection.getAccountInfo(verifierSetPda)) {
+    const set = await program.account.verifierSet.fetch(verifierSetPda)
+    console.log('verifier set already initialised at', verifierSetPda.toBase58())
+    console.log({ k: set.k, bondAmount: set.bondAmount.toString(), members: set.members.length })
+  } else {
+    const signer = pickAdminSigner(config.admin.toBase58(), payer)
+    const k = Number(process.env.K ?? 2)
+    const bond = new anchor.BN(process.env.BOND_AMOUNT ?? '5000000')
+
+    // init pays rent from the signer, and the derived admin starts empty —
+    // top it up from the bootstrap wallet first (bootstrap pays this fee too).
+    if ((await connection.getBalance(signer.publicKey)) < 10_000_000) {
+      const fundTx = new anchor.web3.Transaction().add(
+        anchor.web3.SystemProgram.transfer({
+          fromPubkey: payer.publicKey,
+          toPubkey: signer.publicKey,
+          lamports: 100_000_000,
+        }),
+      )
+      await provider.sendAndConfirm(fundTx)
+      console.log('funded', signer.publicKey.toBase58(), 'with 0.1 SOL for rent')
+    }
+
+    const signature = await program.methods
+      .initVerifierSet(k, bond)
+      .accounts({
+        authority: signer.publicKey,
+        config: configPda,
+        verifierSet: verifierSetPda,
+        systemProgram: anchor.web3.SystemProgram.programId,
+      })
+      .signers([signer])
+      .rpc()
+    console.log('init_verifier_set', signature)
+    console.log({ verifierSet: verifierSetPda.toBase58(), k, bondAmount: bond.toString() })
+  }
+
+  // 4. Bond vault — the verifier set's canonical USDC ATA (post_bond
+  //    validates it by address; the program never creates accounts).
+  if (hasMint) {
+    const bondVault = await getOrCreateAssociatedTokenAccount(connection, payer, usdcMint, verifierSetPda, true)
+    console.log('bond vault USDC ATA at', bondVault.address.toBase58())
+    console.log({ verifierSet: verifierSetPda.toBase58(), mint: usdcMint.toBase58() })
+  } else {
+    console.log('skipping the bond-vault ATA (no USDC mint on this cluster)')
+  }
 }
 
 main().catch((err) => {
