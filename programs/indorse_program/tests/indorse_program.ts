@@ -1,7 +1,14 @@
 import * as anchor from '@coral-xyz/anchor'
 import { Program } from '@coral-xyz/anchor'
 import { IndorseProgram } from '../target/types/indorse_program'
-import { Keypair, PublicKey, SystemProgram } from '@solana/web3.js'
+import {
+  Keypair,
+  PublicKey,
+  SystemProgram,
+  TransactionInstruction,
+  SYSVAR_INSTRUCTIONS_PUBKEY,
+  SYSVAR_SLOT_HASHES_PUBKEY,
+} from '@solana/web3.js'
 import {
   createMint,
   createAccount,
@@ -11,6 +18,7 @@ import {
   transfer,
 } from '@solana/spl-token'
 import { assert } from 'chai'
+import { createPrivateKey, sign as signEd25519 } from 'node:crypto'
 
 describe('indorse_program', () => {
   const provider = anchor.AnchorProvider.env()
@@ -84,6 +92,18 @@ describe('indorse_program', () => {
   const SEASON_END = 1_704_768_000
   const ESCROW_USDC = 10_000_000 // 10 USDC
 
+  // Phase 3B — Switchboard On-Demand receipt relay (role 1, permissionless).
+  // One fixed season and the probe's real job hash, so the suite pins the
+  // exact bytes devnet will; three enclave keys the admin may trust.
+  const SB_SEASON_START = 1_710_000_000
+  const SB_FEED = Keypair.generate().publicKey
+  const SB_FEED_HASH = Array.from(
+    Buffer.from('1e70a1ea0099fc2c5146d332ecd10824ba421cc2480ba74828640e94f3f84623', 'hex'),
+  )
+  const sbEnclaves = [Keypair.generate(), Keypair.generate(), Keypair.generate()]
+  let sbBindingPda: PublicKey
+  let sbTallyPda: PublicKey
+
   const u32le = (n: number) => new anchor.BN(n).toArrayLike(Buffer, 'le', 4)
 
   // Phase 1 helpers — quorum voting (k=2; members bonded in the setup test)
@@ -121,14 +141,14 @@ describe('indorse_program', () => {
       .rpc()
 
   // Phase 2 helper — post a season reading as one oracle-set member
-  const submitReading = (by: Keypair, mm: number) =>
+  const submitReading = (by: Keypair, mm: number, season = SEASON_START, tally = oraclePda) =>
     program.methods
-      .submitOracleReading(new anchor.BN(SEASON_START), mm)
+      .submitOracleReading(new anchor.BN(season), mm)
       .accounts({
         member: by.publicKey,
         oracleSet: oracleSetPda,
         farm: farmPda,
-        oracle: oraclePda,
+        oracle: tally,
         systemProgram: SystemProgram.programId,
       })
       .signers([by])
@@ -143,6 +163,93 @@ describe('indorse_program', () => {
     await provider.connection.confirmTransaction(sig, 'confirmed')
   }
   const i64le = (n: number) => new anchor.BN(n).toArrayLike(Buffer, 'le', 8)
+
+  // Phase 3B helpers — a Switchboard receipt is an 81-byte message signed by
+  // the job's enclave keys and carried in the same transaction as the submit
+  // instruction's Ed25519 precompile, whose verified signer/message pairs the
+  // program re-reads through the instructions sysvar.
+  const PKCS8_ED25519_PREFIX = Buffer.from('302e020100300506032b657004220420', 'hex')
+  const ED25519_VERIFY_PROGRAM = new PublicKey('Ed25519SigVerify111111111111111111111111111')
+
+  const signWithSeed = (message: Buffer, kp: Keypair) =>
+    signEd25519(
+      null,
+      message,
+      createPrivateKey({
+        key: Buffer.concat([PKCS8_ED25519_PREFIX, Buffer.from(kp.secretKey.subarray(0, 32))]),
+        format: 'der',
+        type: 'pkcs8',
+      }),
+    )
+
+  const i128le = (n: bigint) => {
+    const bytes = Buffer.alloc(16)
+    let rest = n
+    for (let i = 0; i < 16; i++) {
+      bytes[i] = Number(rest & 0xffn)
+      rest >>= 8n
+    }
+    return bytes
+  }
+
+  // slothash(32) ‖ feed hash(32) ‖ i128 value LE(16) ‖ min_samples(1) = 81 bytes
+  const receiptMessage = (slothash: Buffer, feedHash: number[], value: bigint) =>
+    Buffer.concat([slothash, Buffer.from(feedHash), i128le(value), Buffer.from([1])])
+
+  // The precompile's wire layout: num_signatures ‖ pad ‖ one 14-byte struct
+  // per signer (65535 = "this instruction", the sentinel solana-sdk and
+  // web3.js both emit), then the shared signature/public-key/message blobs.
+  const ed25519Instruction = (message: Buffer, signers: Keypair[]) => {
+    const n = signers.length
+    const sigBase = 2 + n * 14
+    const pkBase = sigBase + n * 64
+    const msgBase = pkBase + n * 32
+    const data = Buffer.alloc(msgBase + message.length)
+    data[0] = n
+    for (let i = 0; i < n; i++) {
+      const base = 2 + i * 14
+      data.writeUInt16LE(sigBase + i * 64, base)
+      data.writeUInt16LE(65535, base + 2)
+      data.writeUInt16LE(pkBase + i * 32, base + 4)
+      data.writeUInt16LE(65535, base + 6)
+      data.writeUInt16LE(msgBase, base + 8)
+      data.writeUInt16LE(message.length, base + 10)
+      data.writeUInt16LE(65535, base + 12)
+    }
+    signers.forEach((kp, i) => {
+      signWithSeed(message, kp).copy(data, sigBase + i * 64)
+      Buffer.from(kp.publicKey.toBytes()).copy(data, pkBase + i * 32)
+    })
+    message.copy(data, msgBase)
+    return new TransactionInstruction({ programId: ED25519_VERIFY_PROGRAM, keys: [], data })
+  }
+
+  // A still-live slothash: SlotHashes is 8-byte count, then count × (slot ‖ hash).
+  const freshSlothash = async (): Promise<Buffer> => {
+    const info = await provider.connection.getAccountInfo(SYSVAR_SLOT_HASHES_PUBKEY)
+    if (!info) throw new Error('SlotHashes sysvar missing')
+    return Buffer.from(info.data.subarray(16, 48))
+  }
+
+  // Relay a receipt exactly as any stranger would: one transaction carrying
+  // the precompile proof and the permissionless submit instruction; the
+  // relayer signs only to pay for a tally the season has not created yet.
+  const relayReceipt = (message: Buffer, enclaves: Keypair[], relayer: Keypair, withPrecompile = true) =>
+    program.methods
+      .submitSwitchboardReading(new anchor.BN(SB_SEASON_START), SB_FEED)
+      .accounts({
+        relayer: relayer.publicKey,
+        oracleSet: oracleSetPda,
+        farm: farmPda,
+        binding: sbBindingPda,
+        oracle: sbTallyPda,
+        instructions: SYSVAR_INSTRUCTIONS_PUBKEY,
+        slotHashes: SYSVAR_SLOT_HASHES_PUBKEY,
+        systemProgram: SystemProgram.programId,
+      })
+      .preInstructions(withPrecompile ? [ed25519Instruction(message, enclaves)] : [])
+      .signers([relayer])
+      .rpc()
 
   before(async () => {
     // Create test keypairs
@@ -185,6 +292,16 @@ describe('indorse_program', () => {
     // Derive the season weather tally PDA (per farm + season start)
     oraclePda = PublicKey.findProgramAddressSync(
       [Buffer.from('weather'), farmPda.toBuffer(), i64le(SEASON_START)],
+      program.programId,
+    )[0]
+
+    // Derive the Switchboard feed binding and its own season's tally
+    sbBindingPda = PublicKey.findProgramAddressSync(
+      [Buffer.from('sb_feed'), farmPda.toBuffer(), i64le(SB_SEASON_START), SB_FEED.toBuffer()],
+      program.programId,
+    )[0]
+    sbTallyPda = PublicKey.findProgramAddressSync(
+      [Buffer.from('weather'), farmPda.toBuffer(), i64le(SB_SEASON_START)],
       program.programId,
     )[0]
 
@@ -1146,6 +1263,226 @@ describe('indorse_program', () => {
       assert.fail('Should have thrown an error')
     } catch (err) {
       assert.include(err.message, 'authorised weather oracle')
+    }
+  })
+
+  // ── Switchboard On-Demand receipts (Phase 3B — role-1, permissionless) ────
+
+  const registerBinding = (
+    signers: PublicKey[],
+    by: PublicKey = provider.wallet.publicKey,
+    signerKeys: Keypair[] = [],
+    feedHash: number[] = SB_FEED_HASH,
+  ) =>
+    program.methods
+      .registerSwitchboardFeed(new anchor.BN(SB_SEASON_START), SB_FEED, feedHash, signers)
+      .accounts({
+        authority: by,
+        config: configPda,
+        farm: farmPda,
+        oracleSet: oracleSetPda,
+        binding: sbBindingPda,
+        systemProgram: SystemProgram.programId,
+      })
+      .signers(signerKeys)
+      .rpc()
+
+  it('Pins the feed binding only for a seated feed, an admin, and three keys', async () => {
+    const stranger = Keypair.generate()
+    await fund(stranger.publicKey) // init pays rent before the gate
+
+    // The trust root cannot be pinned before the feed holds an oracle seat.
+    try {
+      await registerBinding(sbEnclaves.map((k) => k.publicKey))
+      assert.fail('Should have thrown an error')
+    } catch (err) {
+      assert.include(err.message, 'authorised weather oracle')
+    }
+
+    await program.methods
+      .addOracle(SB_FEED)
+      .accounts({ authority: provider.wallet.publicKey, config: configPda, oracleSet: oracleSetPda })
+      .rpc()
+
+    // Only the config admin pins the quorum.
+    try {
+      await registerBinding(
+        sbEnclaves.map((k) => k.publicKey),
+        stranger.publicKey,
+        [stranger],
+      )
+      assert.fail('Should have thrown an error')
+    } catch (err) {
+      assert.include(err.message, 'program admin')
+    }
+
+    // Fewer than three keys is not a quorum…
+    try {
+      await registerBinding(sbEnclaves.slice(0, 2).map((k) => k.publicKey))
+      assert.fail('Should have thrown an error')
+    } catch (err) {
+      assert.include(err.message, 'three distinct signers')
+    }
+
+    // …and neither is three keys that are not distinct.
+    try {
+      await registerBinding([sbEnclaves[0].publicKey, sbEnclaves[0].publicKey, sbEnclaves[1].publicKey])
+      assert.fail('Should have thrown an error')
+    } catch (err) {
+      assert.include(err.message, 'three distinct signers')
+    }
+
+    await registerBinding(sbEnclaves.map((k) => k.publicKey))
+    const binding = await program.account.switchboardFeedBinding.fetch(sbBindingPda)
+    assert.equal(binding.farm.toBase58(), farmPda.toBase58())
+    assert.equal(Number(binding.seasonStart), SB_SEASON_START)
+    assert.equal(binding.feed.toBase58(), SB_FEED.toBase58())
+    assert.deepEqual(Array.from(binding.feedHash), SB_FEED_HASH)
+    assert.equal(binding.signers.length, 3)
+
+    // Re-running the registration is the rotation path — same seat, fresh
+    // pins — and must leave the binding intact.
+    await registerBinding(sbEnclaves.map((k) => k.publicKey))
+    const again = await program.account.switchboardFeedBinding.fetch(sbBindingPda)
+    assert.equal(again.signers.length, 3)
+  })
+
+  it('Refuses a receipt when the transaction carries no proof', async () => {
+    const relayer = Keypair.generate()
+    await fund(relayer.publicKey)
+
+    try {
+      await relayReceipt(await freshSlothash(), [], relayer, false)
+      assert.fail('Should have thrown an error')
+    } catch (err) {
+      assert.include(err.message, 'malformed')
+    }
+  })
+
+  it('Refuses a receipt signed by keys the admin never pinned', async () => {
+    const impostors = [Keypair.generate(), Keypair.generate(), Keypair.generate()]
+    const relayer = Keypair.generate()
+    await fund(relayer.publicKey)
+
+    const message = receiptMessage(await freshSlothash(), SB_FEED_HASH, 22_200_000_000_000_000_000n)
+    try {
+      await relayReceipt(message, impostors, relayer)
+      assert.fail('Should have thrown an error')
+    } catch (err) {
+      assert.include(err.message, 'pinned enclave quorum')
+    }
+  })
+
+  it('Refuses a receipt signed for a different job hash', async () => {
+    const relayer = Keypair.generate()
+    await fund(relayer.publicKey)
+
+    const foreign = SB_FEED_HASH.map((byte, i) => (i === 0 ? byte ^ 0xff : byte))
+    const message = receiptMessage(await freshSlothash(), foreign, 22_200_000_000_000_000_000n)
+    try {
+      await relayReceipt(message, sbEnclaves, relayer)
+      assert.fail('Should have thrown an error')
+    } catch (err) {
+      assert.include(err.message, 'malformed')
+    }
+  })
+
+  it('Refuses a receipt whose slothash left the recent window', async () => {
+    const relayer = Keypair.generate()
+    await fund(relayer.publicKey)
+
+    const message = receiptMessage(Buffer.alloc(32, 0xee), SB_FEED_HASH, 22_200_000_000_000_000_000n)
+    try {
+      await relayReceipt(message, sbEnclaves, relayer)
+      assert.fail('Should have thrown an error')
+    } catch (err) {
+      assert.include(err.message, 'stale')
+    }
+  })
+
+  it('Refuses a value that is not a whole 0.1 mm of rainfall', async () => {
+    const relayer = Keypair.generate()
+    await fund(relayer.publicKey)
+
+    // 22.15 mm sits between two 0.1 mm ticks — the job's scale cannot carry it.
+    const message = receiptMessage(await freshSlothash(), SB_FEED_HASH, 22_150_000_000_000_000_000n)
+    try {
+      await relayReceipt(message, sbEnclaves, relayer)
+      assert.fail('Should have thrown an error')
+    } catch (err) {
+      assert.include(err.message, 'whole 0.1 mm')
+    }
+  })
+
+  it('Relays a verified receipt permissionlessly into the tally', async () => {
+    const relayer = Keypair.generate() // not an admin, not a reader — the receipt is the authority
+    await fund(relayer.publicKey) // it pays only for the tally this season has not created
+
+    await relayReceipt(
+      receiptMessage(await freshSlothash(), SB_FEED_HASH, 22_200_000_000_000_000_000n),
+      sbEnclaves,
+      relayer,
+    )
+
+    const tally = await program.account.weatherOracle.fetch(sbTallyPda)
+    assert.equal(tally.farm.toBase58(), farmPda.toBase58())
+    assert.equal(Number(tally.seasonStart), SB_SEASON_START)
+    assert.equal(tally.readings.length, 1)
+    assert.equal(tally.readings[0].oracle.toBase58(), SB_FEED.toBase58())
+    assert.equal(tally.readings[0].totalRainfallMm, 222) // 22.2 mm
+    assert.isFalse(tally.finalized)
+  })
+
+  it('Freezes the receipt into the median once the seat quorum lands', async () => {
+    await submitReading(oracleA, 500, SB_SEASON_START, sbTallyPda)
+    let tally = await program.account.weatherOracle.fetch(sbTallyPda)
+    assert.equal(tally.readings.length, 2)
+    assert.isFalse(tally.finalized)
+
+    await submitReading(oracleB, 700, SB_SEASON_START, sbTallyPda)
+    tally = await program.account.weatherOracle.fetch(sbTallyPda)
+    assert.isTrue(tally.finalized)
+    // [222, 500, 700] → median 500 — a mean would be 474.
+    assert.equal(tally.totalRainfallMm, 500)
+    assert.equal(tally.readings.length, 3)
+
+    // A late receipt from valid enclaves cannot move a settled number.
+    const late = Keypair.generate()
+    await fund(late.publicKey)
+    try {
+      await relayReceipt(
+        receiptMessage(await freshSlothash(), SB_FEED_HASH, 99_900_000_000_000_000_000n),
+        sbEnclaves,
+        late,
+      )
+      assert.fail('Should have thrown an error')
+    } catch (err) {
+      assert.include(err.message, 'already final')
+    }
+  })
+
+  it('Re-pins the enclave set when the queue rotates its keys', async () => {
+    const rotated = [Keypair.generate(), Keypair.generate(), Keypair.generate()]
+    await registerBinding(rotated.map((k) => k.publicKey))
+
+    const binding = await program.account.switchboardFeedBinding.fetch(sbBindingPda)
+    assert.deepEqual(
+      binding.signers.map((k) => k.toBase58()),
+      rotated.map((k) => k.publicKey.toBase58()),
+    )
+
+    // The old keys are revoked the moment the admin re-pins.
+    const late = Keypair.generate()
+    await fund(late.publicKey)
+    try {
+      await relayReceipt(
+        receiptMessage(await freshSlothash(), SB_FEED_HASH, 22_200_000_000_000_000_000n),
+        sbEnclaves,
+        late,
+      )
+      assert.fail('Should have thrown an error')
+    } catch (err) {
+      assert.include(err.message, 'pinned enclave quorum')
     }
   })
 

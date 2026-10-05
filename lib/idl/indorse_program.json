@@ -1001,6 +1001,130 @@
       ]
     },
     {
+      "name": "register_switchboard_feed",
+      "docs": [
+        "Pin — or re-pin — the trust root for one farm/season's Switchboard",
+        "On-Demand job: the feed that holds an oracle-set seat, the fingerprint",
+        "of the exact task bytes its enclaves sign over, and the enclave keys",
+        "allowed to sign. `config.admin` only, mirroring how seats are assigned;",
+        "re-run it whenever the queue rotates its enclaves."
+      ],
+      "discriminator": [
+        148,
+        208,
+        196,
+        73,
+        161,
+        106,
+        34,
+        135
+      ],
+      "accounts": [
+        {
+          "name": "authority",
+          "docs": [
+            "Role gate: only `config.admin` pins a job's trust root — the same",
+            "authority that assigns oracle seats."
+          ],
+          "writable": true,
+          "signer": true
+        },
+        {
+          "name": "config"
+        },
+        {
+          "name": "farm"
+        },
+        {
+          "name": "oracle_set",
+          "docs": [
+            "Role-1 shape: the feed must already hold an oracle-set seat, so its",
+            "receipt enters the tally as an assigned reader — not a spare voice."
+          ],
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  111,
+                  114,
+                  97,
+                  99,
+                  108,
+                  101,
+                  95,
+                  115,
+                  101,
+                  116
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "name": "binding",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  115,
+                  98,
+                  95,
+                  102,
+                  101,
+                  101,
+                  100
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "farm"
+              },
+              {
+                "kind": "arg",
+                "path": "season_start"
+              },
+              {
+                "kind": "arg",
+                "path": "feed"
+              }
+            ]
+          }
+        },
+        {
+          "name": "system_program",
+          "address": "11111111111111111111111111111111"
+        }
+      ],
+      "args": [
+        {
+          "name": "season_start",
+          "type": "i64"
+        },
+        {
+          "name": "feed",
+          "type": "pubkey"
+        },
+        {
+          "name": "feed_hash",
+          "type": {
+            "array": [
+              "u8",
+              32
+            ]
+          }
+        },
+        {
+          "name": "signers",
+          "type": {
+            "vec": "pubkey"
+          }
+        }
+      ]
+    },
+    {
       "name": "release_escrow",
       "docs": [
         "Farmer releases the escrow, transferring funds to their wallet.",
@@ -2113,6 +2237,169 @@
       ]
     },
     {
+      "name": "submit_switchboard_reading",
+      "docs": [
+        "Relay a Switchboard receipt into the season tally. Permissionless by",
+        "construction: anyone may carry the bytes — the reading's authority is",
+        "the receipt itself, checked here against the admin-pinned binding:",
+        "this transaction's Ed25519 precompile proved the signatures, the",
+        "signed message is the 81-byte receipt layout for THE bound feed hash,",
+        "the signing keys are that feed's pinned enclaves, and the signed",
+        "slothash is still inside SlotHashes (≤512 slots old, so a receipt",
+        "cannot be replayed once the round it describes has cooled). The value",
+        "then enters the tally under the feed's seat and behaves exactly like",
+        "a reader's own submission — replaceable while the tally is open,",
+        "frozen into the median at k, untouchable once `finalized`."
+      ],
+      "discriminator": [
+        9,
+        1,
+        50,
+        162,
+        214,
+        126,
+        97,
+        208
+      ],
+      "accounts": [
+        {
+          "name": "relayer",
+          "docs": [
+            "Permissionless: the receipt's quorum carries the authority; this",
+            "signer only exists to pay for a tally the season hasn't created yet."
+          ],
+          "writable": true,
+          "signer": true
+        },
+        {
+          "name": "oracle_set",
+          "docs": [
+            "The seat may not be revoked underneath the binding — a receipt from",
+            "an unseated feed is no longer a reader's reading."
+          ],
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  111,
+                  114,
+                  97,
+                  99,
+                  108,
+                  101,
+                  95,
+                  115,
+                  101,
+                  116
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "name": "farm"
+        },
+        {
+          "name": "binding",
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  115,
+                  98,
+                  95,
+                  102,
+                  101,
+                  101,
+                  100
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "farm"
+              },
+              {
+                "kind": "arg",
+                "path": "season_start"
+              },
+              {
+                "kind": "arg",
+                "path": "feed"
+              }
+            ]
+          }
+        },
+        {
+          "name": "oracle",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  119,
+                  101,
+                  97,
+                  116,
+                  104,
+                  101,
+                  114
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "farm"
+              },
+              {
+                "kind": "arg",
+                "path": "season_start"
+              }
+            ]
+          }
+        },
+        {
+          "name": "instructions",
+          "docs": [
+            "The instructions sysvar — `load_instruction_at_checked` recovers the",
+            "ed25519 precompile instructions this transaction already executed,",
+            "whose verified signer/message pairs are the receipt. The address pin",
+            "is the security boundary: without it a caller could hand us an",
+            "instruction list the runtime never ran.",
+            "`address = INSTRUCTIONS_SYSVAR` pins it to the real sysvar."
+          ],
+          "address": "Sysvar1nstructions1111111111111111111111111"
+        },
+        {
+          "name": "slot_hashes",
+          "docs": [
+            "Freshness window: the receipt's signed slothash must still be among",
+            "the last 512 slots' hashes. `Sysvar<'info, SlotHashes>` cannot be",
+            "used — solana-sysvar refuses in-program deserialization of this",
+            "account — so the address is pinned and the bytes are read directly.",
+            "which bounds the count/length before scanning; `address =` pins it to",
+            "the real sysvar."
+          ],
+          "address": "SysvarS1otHashes111111111111111111111111111"
+        },
+        {
+          "name": "system_program",
+          "address": "11111111111111111111111111111111"
+        }
+      ],
+      "args": [
+        {
+          "name": "season_start",
+          "type": "i64"
+        },
+        {
+          "name": "feed",
+          "type": "pubkey"
+        }
+      ]
+    },
+    {
       "name": "withdraw_treasury",
       "docs": [
         "Move accumulated refunds out of the program treasury into the admin's",
@@ -2283,6 +2570,19 @@
         175,
         42,
         243
+      ]
+    },
+    {
+      "name": "SwitchboardFeedBinding",
+      "discriminator": [
+        102,
+        7,
+        75,
+        49,
+        126,
+        128,
+        81,
+        142
       ]
     },
     {
@@ -2545,6 +2845,19 @@
         117,
         233,
         173
+      ]
+    },
+    {
+      "name": "SwitchboardFeedRegistered",
+      "discriminator": [
+        96,
+        205,
+        120,
+        168,
+        41,
+        15,
+        215,
+        212
       ]
     },
     {
@@ -2863,6 +3176,31 @@
       "code": 6036,
       "name": "DropBelowQuorum",
       "msg": "Removal would take the verifier set below its quorum"
+    },
+    {
+      "code": 6037,
+      "name": "InvalidFeedRegistration",
+      "msg": "The feed registration needs at least three distinct signers"
+    },
+    {
+      "code": 6038,
+      "name": "InvalidSwitchboardReceipt",
+      "msg": "The Switchboard receipt is malformed or not signed for the bound feed"
+    },
+    {
+      "code": 6039,
+      "name": "StaleSwitchboardReceipt",
+      "msg": "The Switchboard receipt is stale: its slothash left the recent window"
+    },
+    {
+      "code": 6040,
+      "name": "UnauthorisedSwitchboardSigner",
+      "msg": "The Switchboard receipt lacks the pinned enclave quorum for this feed"
+    },
+    {
+      "code": 6041,
+      "name": "InvalidSwitchboardValue",
+      "msg": "The signed value is not a non-negative whole 0.1 mm of rainfall"
     }
   ],
   "types": [
@@ -3639,6 +3977,92 @@
           {
             "name": "verifier",
             "type": "pubkey"
+          }
+        ]
+      }
+    },
+    {
+      "name": "SwitchboardFeedBinding",
+      "docs": [
+        "Phase 3B — the admin-pinned trust root for one Switchboard On-Demand",
+        "job. Role-1 means the receipt itself carries the authority, so this",
+        "account is the only thing that decides whose signatures count and for",
+        "which job: `feed_hash` fingerprints the exact task bytes (a receipt for",
+        "any other job fails the match), and `signers` are the queue's enclave",
+        "keys as of registration — re-pin them if the queue rotates."
+      ],
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "farm",
+            "type": "pubkey"
+          },
+          {
+            "name": "season_start",
+            "type": "i64"
+          },
+          {
+            "name": "feed",
+            "docs": [
+              "The seat identity: occupies one oracle-set member slot and keys this",
+              "feed's readings in the season tally."
+            ],
+            "type": "pubkey"
+          },
+          {
+            "name": "feed_hash",
+            "docs": [
+              "Fingerprint of the job definition the enclaves sign over."
+            ],
+            "type": {
+              "array": [
+                "u8",
+                32
+              ]
+            }
+          },
+          {
+            "name": "signers",
+            "docs": [
+              "Enclave signer keys allowed to sign receipts for this binding."
+            ],
+            "type": {
+              "vec": "pubkey"
+            }
+          },
+          {
+            "name": "bump",
+            "type": "u8"
+          }
+        ]
+      }
+    },
+    {
+      "name": "SwitchboardFeedRegistered",
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "farm",
+            "type": "pubkey"
+          },
+          {
+            "name": "feed",
+            "type": "pubkey"
+          },
+          {
+            "name": "feed_hash",
+            "type": {
+              "array": [
+                "u8",
+                32
+              ]
+            }
+          },
+          {
+            "name": "signers",
+            "type": "u8"
           }
         ]
       }

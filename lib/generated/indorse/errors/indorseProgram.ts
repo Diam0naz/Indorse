@@ -88,6 +88,16 @@ export const INDORSE_PROGRAM_ERROR__READING_FINALIZED = 0x1792 // 6034
 export const INDORSE_PROGRAM_ERROR__READING_NOT_FINALIZED = 0x1793 // 6035
 /** DropBelowQuorum: Removal would take the verifier set below its quorum */
 export const INDORSE_PROGRAM_ERROR__DROP_BELOW_QUORUM = 0x1794 // 6036
+/** InvalidFeedRegistration: The feed registration needs at least three distinct signers */
+export const INDORSE_PROGRAM_ERROR__INVALID_FEED_REGISTRATION = 0x1795 // 6037
+/** InvalidSwitchboardReceipt: The Switchboard receipt is malformed or not signed for the bound feed */
+export const INDORSE_PROGRAM_ERROR__INVALID_SWITCHBOARD_RECEIPT = 0x1796 // 6038
+/** StaleSwitchboardReceipt: The Switchboard receipt is stale: its slothash left the recent window */
+export const INDORSE_PROGRAM_ERROR__STALE_SWITCHBOARD_RECEIPT = 0x1797 // 6039
+/** UnauthorisedSwitchboardSigner: The Switchboard receipt lacks the pinned enclave quorum for this feed */
+export const INDORSE_PROGRAM_ERROR__UNAUTHORISED_SWITCHBOARD_SIGNER = 0x1798 // 6040
+/** InvalidSwitchboardValue: The signed value is not a non-negative whole 0.1 mm of rainfall */
+export const INDORSE_PROGRAM_ERROR__INVALID_SWITCHBOARD_VALUE = 0x1799 // 6041
 
 export type IndorseProgramError =
   | typeof INDORSE_PROGRAM_ERROR__ALREADY_ORACLE
@@ -97,9 +107,12 @@ export type IndorseProgramError =
   | typeof INDORSE_PROGRAM_ERROR__DROP_BELOW_QUORUM
   | typeof INDORSE_PROGRAM_ERROR__ESCROW_LOCKED
   | typeof INDORSE_PROGRAM_ERROR__ESCROW_NOT_FUNDED
+  | typeof INDORSE_PROGRAM_ERROR__INVALID_FEED_REGISTRATION
   | typeof INDORSE_PROGRAM_ERROR__INVALID_MEDIAN_QUORUM
   | typeof INDORSE_PROGRAM_ERROR__INVALID_QUORUM
   | typeof INDORSE_PROGRAM_ERROR__INVALID_SEASON
+  | typeof INDORSE_PROGRAM_ERROR__INVALID_SWITCHBOARD_RECEIPT
+  | typeof INDORSE_PROGRAM_ERROR__INVALID_SWITCHBOARD_VALUE
   | typeof INDORSE_PROGRAM_ERROR__LABEL_TOO_LONG
   | typeof INDORSE_PROGRAM_ERROR__NAME_TOO_LONG
   | typeof INDORSE_PROGRAM_ERROR__NOTES_TOO_LONG
@@ -117,10 +130,12 @@ export type IndorseProgramError =
   | typeof INDORSE_PROGRAM_ERROR__REVOCATION_WINDOW_CLOSED
   | typeof INDORSE_PROGRAM_ERROR__REWARD_VAULT_INVALID
   | typeof INDORSE_PROGRAM_ERROR__SEASON_NOT_ENDED
+  | typeof INDORSE_PROGRAM_ERROR__STALE_SWITCHBOARD_RECEIPT
   | typeof INDORSE_PROGRAM_ERROR__TOKEN_ACCOUNT_INVALID
   | typeof INDORSE_PROGRAM_ERROR__UNAUTHORISED_ADMIN
   | typeof INDORSE_PROGRAM_ERROR__UNAUTHORISED_ESCROW
   | typeof INDORSE_PROGRAM_ERROR__UNAUTHORISED_ORACLE
+  | typeof INDORSE_PROGRAM_ERROR__UNAUTHORISED_SWITCHBOARD_SIGNER
   | typeof INDORSE_PROGRAM_ERROR__UNAUTHORISED_VERIFIER
   | typeof INDORSE_PROGRAM_ERROR__URI_TOO_LONG
   | typeof INDORSE_PROGRAM_ERROR__VERIFIER_SET_FULL
@@ -138,9 +153,12 @@ if (process.env['NODE_ENV'] !== 'production') {
     [INDORSE_PROGRAM_ERROR__DROP_BELOW_QUORUM]: `Removal would take the verifier set below its quorum`,
     [INDORSE_PROGRAM_ERROR__ESCROW_LOCKED]: `Escrow is locked — cancellation window has passed`,
     [INDORSE_PROGRAM_ERROR__ESCROW_NOT_FUNDED]: `Escrow is not in funded state`,
+    [INDORSE_PROGRAM_ERROR__INVALID_FEED_REGISTRATION]: `The feed registration needs at least three distinct signers`,
     [INDORSE_PROGRAM_ERROR__INVALID_MEDIAN_QUORUM]: `Oracle quorum must be an odd number from 3 to the oracle-set maximum`,
     [INDORSE_PROGRAM_ERROR__INVALID_QUORUM]: `Quorum must be between 2 and the verifier-set maximum`,
     [INDORSE_PROGRAM_ERROR__INVALID_SEASON]: `Season end must be after season start`,
+    [INDORSE_PROGRAM_ERROR__INVALID_SWITCHBOARD_RECEIPT]: `The Switchboard receipt is malformed or not signed for the bound feed`,
+    [INDORSE_PROGRAM_ERROR__INVALID_SWITCHBOARD_VALUE]: `The signed value is not a non-negative whole 0.1 mm of rainfall`,
     [INDORSE_PROGRAM_ERROR__LABEL_TOO_LONG]: `Label too long (max 32 chars)`,
     [INDORSE_PROGRAM_ERROR__NAME_TOO_LONG]: `Farm name too long (max 64 chars)`,
     [INDORSE_PROGRAM_ERROR__NOTES_TOO_LONG]: `Notes too long (max 256 chars)`,
@@ -158,10 +176,12 @@ if (process.env['NODE_ENV'] !== 'production') {
     [INDORSE_PROGRAM_ERROR__REVOCATION_WINDOW_CLOSED]: `Season has ended — the policy can no longer be revoked`,
     [INDORSE_PROGRAM_ERROR__REWARD_VAULT_INVALID]: `Reward vault does not belong to the program reward authority`,
     [INDORSE_PROGRAM_ERROR__SEASON_NOT_ENDED]: `Season has not ended yet`,
+    [INDORSE_PROGRAM_ERROR__STALE_SWITCHBOARD_RECEIPT]: `The Switchboard receipt is stale: its slothash left the recent window`,
     [INDORSE_PROGRAM_ERROR__TOKEN_ACCOUNT_INVALID]: `Token account owner or mint does not match the expected values`,
     [INDORSE_PROGRAM_ERROR__UNAUTHORISED_ADMIN]: `Caller is not the authorised program admin`,
     [INDORSE_PROGRAM_ERROR__UNAUTHORISED_ESCROW]: `Caller is not authorised for this escrow`,
     [INDORSE_PROGRAM_ERROR__UNAUTHORISED_ORACLE]: `Caller is not the authorised weather oracle`,
+    [INDORSE_PROGRAM_ERROR__UNAUTHORISED_SWITCHBOARD_SIGNER]: `The Switchboard receipt lacks the pinned enclave quorum for this feed`,
     [INDORSE_PROGRAM_ERROR__UNAUTHORISED_VERIFIER]: `Caller is not the authorised verifier/admin`,
     [INDORSE_PROGRAM_ERROR__URI_TOO_LONG]: `URI too long (max 128 chars)`,
     [INDORSE_PROGRAM_ERROR__VERIFIER_SET_FULL]: `The verifier set is full`,

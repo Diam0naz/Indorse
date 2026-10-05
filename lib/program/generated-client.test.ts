@@ -65,6 +65,7 @@ const INSTRUCTION_KINDS: Record<string, IndorseProgramInstruction> = {
   post_bond: IndorseProgramInstruction.PostBond,
   reconfigure_verifier_set: IndorseProgramInstruction.ReconfigureVerifierSet,
   register_farm: IndorseProgramInstruction.RegisterFarm,
+  register_switchboard_feed: IndorseProgramInstruction.RegisterSwitchboardFeed,
   release_escrow: IndorseProgramInstruction.ReleaseEscrow,
   release_verifier: IndorseProgramInstruction.ReleaseVerifier,
   remove_oracle: IndorseProgramInstruction.RemoveOracle,
@@ -77,6 +78,7 @@ const INSTRUCTION_KINDS: Record<string, IndorseProgramInstruction> = {
   submit_harvest_batch: IndorseProgramInstruction.SubmitHarvestBatch,
   submit_oracle_reading: IndorseProgramInstruction.SubmitOracleReading,
   submit_scout_report: IndorseProgramInstruction.SubmitScoutReport,
+  submit_switchboard_reading: IndorseProgramInstruction.SubmitSwitchboardReading,
   withdraw_treasury: IndorseProgramInstruction.WithdrawTreasury,
 }
 

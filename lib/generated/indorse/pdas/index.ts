@@ -6,6 +6,7 @@
  * @see https://github.com/codama-idl/codama
  */
 
+export * from './binding'
 export * from './config'
 export * from './escrow'
 export * from './escrowVault'

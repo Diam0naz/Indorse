@@ -41,6 +41,7 @@ import {
   getOracleSetCodec,
   getPolicyCodec,
   getScoutReportCodec,
+  getSwitchboardFeedBindingCodec,
   getTallyCodec,
   getVerifierSetCodec,
   getWeatherOracleCodec,
@@ -58,6 +59,8 @@ import {
   type PolicyArgs,
   type ScoutReport,
   type ScoutReportArgs,
+  type SwitchboardFeedBinding,
+  type SwitchboardFeedBindingArgs,
   type Tally,
   type TallyArgs,
   type VerifierSet,
@@ -78,6 +81,7 @@ import {
   getPostBondInstructionAsync,
   getReconfigureVerifierSetInstructionAsync,
   getRegisterFarmInstructionAsync,
+  getRegisterSwitchboardFeedInstructionAsync,
   getReleaseEscrowInstruction,
   getReleaseVerifierInstructionAsync,
   getRemoveOracleInstructionAsync,
@@ -90,6 +94,7 @@ import {
   getSubmitHarvestBatchInstruction,
   getSubmitOracleReadingInstructionAsync,
   getSubmitScoutReportInstruction,
+  getSubmitSwitchboardReadingInstructionAsync,
   getWithdrawTreasuryInstructionAsync,
   parseAddOracleInstruction,
   parseCancelEscrowInstruction,
@@ -103,6 +108,7 @@ import {
   parsePostBondInstruction,
   parseReconfigureVerifierSetInstruction,
   parseRegisterFarmInstruction,
+  parseRegisterSwitchboardFeedInstruction,
   parseReleaseEscrowInstruction,
   parseReleaseVerifierInstruction,
   parseRemoveOracleInstruction,
@@ -115,6 +121,7 @@ import {
   parseSubmitHarvestBatchInstruction,
   parseSubmitOracleReadingInstruction,
   parseSubmitScoutReportInstruction,
+  parseSubmitSwitchboardReadingInstruction,
   parseWithdrawTreasuryInstruction,
   type AddOracleAsyncInput,
   type CancelEscrowInput,
@@ -137,6 +144,7 @@ import {
   type ParsedPostBondInstruction,
   type ParsedReconfigureVerifierSetInstruction,
   type ParsedRegisterFarmInstruction,
+  type ParsedRegisterSwitchboardFeedInstruction,
   type ParsedReleaseEscrowInstruction,
   type ParsedReleaseVerifierInstruction,
   type ParsedRemoveOracleInstruction,
@@ -149,10 +157,12 @@ import {
   type ParsedSubmitHarvestBatchInstruction,
   type ParsedSubmitOracleReadingInstruction,
   type ParsedSubmitScoutReportInstruction,
+  type ParsedSubmitSwitchboardReadingInstruction,
   type ParsedWithdrawTreasuryInstruction,
   type PostBondAsyncInput,
   type ReconfigureVerifierSetAsyncInput,
   type RegisterFarmAsyncInput,
+  type RegisterSwitchboardFeedAsyncInput,
   type ReleaseEscrowInput,
   type ReleaseVerifierAsyncInput,
   type RemoveOracleAsyncInput,
@@ -165,9 +175,11 @@ import {
   type SubmitHarvestBatchInput,
   type SubmitOracleReadingAsyncInput,
   type SubmitScoutReportInput,
+  type SubmitSwitchboardReadingAsyncInput,
   type WithdrawTreasuryAsyncInput,
 } from '../instructions'
 import {
+  findBindingPda,
   findConfigPda,
   findEscrowPda,
   findEscrowVaultPda,
@@ -191,6 +203,7 @@ export enum IndorseProgramAccount {
   OracleSet,
   Policy,
   ScoutReport,
+  SwitchboardFeedBinding,
   Tally,
   VerifierSet,
   WeatherOracle,
@@ -266,6 +279,15 @@ export function identifyIndorseProgramAccount(
   if (
     containsBytes(
       data,
+      fixEncoderSize(getBytesEncoder(), 8).encode(new Uint8Array([102, 7, 75, 49, 126, 128, 81, 142])),
+      0,
+    )
+  ) {
+    return IndorseProgramAccount.SwitchboardFeedBinding
+  }
+  if (
+    containsBytes(
+      data,
       fixEncoderSize(getBytesEncoder(), 8).encode(new Uint8Array([126, 11, 29, 33, 32, 101, 239, 25])),
       0,
     )
@@ -314,6 +336,7 @@ export enum IndorseProgramEvent {
   RolesRotated,
   ScoutReportSubmitted,
   ScoutReportVerified,
+  SwitchboardFeedRegistered,
   TreasuryWithdrawn,
   VerifierExited,
   VerifierJoined,
@@ -486,6 +509,15 @@ export function identifyIndorseProgramEvent(
   if (
     containsBytes(
       data,
+      fixEncoderSize(getBytesEncoder(), 8).encode(new Uint8Array([96, 205, 120, 168, 41, 15, 215, 212])),
+      0,
+    )
+  ) {
+    return IndorseProgramEvent.SwitchboardFeedRegistered
+  }
+  if (
+    containsBytes(
+      data,
       fixEncoderSize(getBytesEncoder(), 8).encode(new Uint8Array([143, 181, 157, 169, 87, 155, 170, 46])),
       0,
     )
@@ -589,6 +621,7 @@ export enum IndorseProgramInstruction {
   PostBond,
   ReconfigureVerifierSet,
   RegisterFarm,
+  RegisterSwitchboardFeed,
   ReleaseEscrow,
   ReleaseVerifier,
   RemoveOracle,
@@ -601,6 +634,7 @@ export enum IndorseProgramInstruction {
   SubmitHarvestBatch,
   SubmitOracleReading,
   SubmitScoutReport,
+  SubmitSwitchboardReading,
   WithdrawTreasury,
 }
 
@@ -719,6 +753,15 @@ export function identifyIndorseProgramInstruction(
   if (
     containsBytes(
       data,
+      fixEncoderSize(getBytesEncoder(), 8).encode(new Uint8Array([148, 208, 196, 73, 161, 106, 34, 135])),
+      0,
+    )
+  ) {
+    return IndorseProgramInstruction.RegisterSwitchboardFeed
+  }
+  if (
+    containsBytes(
+      data,
       fixEncoderSize(getBytesEncoder(), 8).encode(new Uint8Array([146, 253, 129, 233, 20, 145, 181, 206])),
       0,
     )
@@ -827,6 +870,15 @@ export function identifyIndorseProgramInstruction(
   if (
     containsBytes(
       data,
+      fixEncoderSize(getBytesEncoder(), 8).encode(new Uint8Array([9, 1, 50, 162, 214, 126, 97, 208])),
+      0,
+    )
+  ) {
+    return IndorseProgramInstruction.SubmitSwitchboardReading
+  }
+  if (
+    containsBytes(
+      data,
       fixEncoderSize(getBytesEncoder(), 8).encode(new Uint8Array([40, 63, 122, 158, 144, 216, 83, 96])),
       0,
     )
@@ -854,6 +906,9 @@ export type ParsedIndorseProgramInstruction<TProgram extends string = 'GVenujqgM
       instructionType: IndorseProgramInstruction.ReconfigureVerifierSet
     } & ParsedReconfigureVerifierSetInstruction<TProgram>)
   | ({ instructionType: IndorseProgramInstruction.RegisterFarm } & ParsedRegisterFarmInstruction<TProgram>)
+  | ({
+      instructionType: IndorseProgramInstruction.RegisterSwitchboardFeed
+    } & ParsedRegisterSwitchboardFeedInstruction<TProgram>)
   | ({ instructionType: IndorseProgramInstruction.ReleaseEscrow } & ParsedReleaseEscrowInstruction<TProgram>)
   | ({ instructionType: IndorseProgramInstruction.ReleaseVerifier } & ParsedReleaseVerifierInstruction<TProgram>)
   | ({ instructionType: IndorseProgramInstruction.RemoveOracle } & ParsedRemoveOracleInstruction<TProgram>)
@@ -868,6 +923,9 @@ export type ParsedIndorseProgramInstruction<TProgram extends string = 'GVenujqgM
       instructionType: IndorseProgramInstruction.SubmitOracleReading
     } & ParsedSubmitOracleReadingInstruction<TProgram>)
   | ({ instructionType: IndorseProgramInstruction.SubmitScoutReport } & ParsedSubmitScoutReportInstruction<TProgram>)
+  | ({
+      instructionType: IndorseProgramInstruction.SubmitSwitchboardReading
+    } & ParsedSubmitSwitchboardReadingInstruction<TProgram>)
   | ({ instructionType: IndorseProgramInstruction.WithdrawTreasury } & ParsedWithdrawTreasuryInstruction<TProgram>)
 
 export function parseIndorseProgramInstruction<TProgram extends string>(
@@ -928,6 +986,13 @@ export function parseIndorseProgramInstruction<TProgram extends string>(
     case IndorseProgramInstruction.RegisterFarm: {
       assertIsInstructionWithAccounts(instruction)
       return { instructionType: IndorseProgramInstruction.RegisterFarm, ...parseRegisterFarmInstruction(instruction) }
+    }
+    case IndorseProgramInstruction.RegisterSwitchboardFeed: {
+      assertIsInstructionWithAccounts(instruction)
+      return {
+        instructionType: IndorseProgramInstruction.RegisterSwitchboardFeed,
+        ...parseRegisterSwitchboardFeedInstruction(instruction),
+      }
     }
     case IndorseProgramInstruction.ReleaseEscrow: {
       assertIsInstructionWithAccounts(instruction)
@@ -992,6 +1057,13 @@ export function parseIndorseProgramInstruction<TProgram extends string>(
         ...parseSubmitScoutReportInstruction(instruction),
       }
     }
+    case IndorseProgramInstruction.SubmitSwitchboardReading: {
+      assertIsInstructionWithAccounts(instruction)
+      return {
+        instructionType: IndorseProgramInstruction.SubmitSwitchboardReading,
+        ...parseSubmitSwitchboardReadingInstruction(instruction),
+      }
+    }
     case IndorseProgramInstruction.WithdrawTreasury: {
       assertIsInstructionWithAccounts(instruction)
       return {
@@ -1024,6 +1096,8 @@ export type IndorseProgramPluginAccounts = {
   oracleSet: ReturnType<typeof getOracleSetCodec> & SelfFetchFunctions<OracleSetArgs, OracleSet>
   policy: ReturnType<typeof getPolicyCodec> & SelfFetchFunctions<PolicyArgs, Policy>
   scoutReport: ReturnType<typeof getScoutReportCodec> & SelfFetchFunctions<ScoutReportArgs, ScoutReport>
+  switchboardFeedBinding: ReturnType<typeof getSwitchboardFeedBindingCodec> &
+    SelfFetchFunctions<SwitchboardFeedBindingArgs, SwitchboardFeedBinding>
   tally: ReturnType<typeof getTallyCodec> & SelfFetchFunctions<TallyArgs, Tally>
   verifierSet: ReturnType<typeof getVerifierSetCodec> & SelfFetchFunctions<VerifierSetArgs, VerifierSet>
   weatherOracle: ReturnType<typeof getWeatherOracleCodec> & SelfFetchFunctions<WeatherOracleArgs, WeatherOracle>
@@ -1056,6 +1130,9 @@ export type IndorseProgramPluginInstructions = {
   registerFarm: (
     input: RegisterFarmAsyncInput,
   ) => ReturnType<typeof getRegisterFarmInstructionAsync> & SelfPlanAndSendFunctions
+  registerSwitchboardFeed: (
+    input: RegisterSwitchboardFeedAsyncInput,
+  ) => ReturnType<typeof getRegisterSwitchboardFeedInstructionAsync> & SelfPlanAndSendFunctions
   releaseEscrow: (
     input: ReleaseEscrowInput,
   ) => ReturnType<typeof getReleaseEscrowInstruction> & SelfPlanAndSendFunctions
@@ -1090,6 +1167,9 @@ export type IndorseProgramPluginInstructions = {
   submitScoutReport: (
     input: SubmitScoutReportInput,
   ) => ReturnType<typeof getSubmitScoutReportInstruction> & SelfPlanAndSendFunctions
+  submitSwitchboardReading: (
+    input: SubmitSwitchboardReadingAsyncInput,
+  ) => ReturnType<typeof getSubmitSwitchboardReadingInstructionAsync> & SelfPlanAndSendFunctions
   withdrawTreasury: (
     input: WithdrawTreasuryAsyncInput,
   ) => ReturnType<typeof getWithdrawTreasuryInstructionAsync> & SelfPlanAndSendFunctions
@@ -1103,6 +1183,7 @@ export type IndorseProgramPluginPdas = {
   escrowVault: typeof findEscrowVaultPda
   farm: typeof findFarmPda
   config: typeof findConfigPda
+  binding: typeof findBindingPda
   treasury: typeof findTreasuryPda
   rewardAuthority: typeof findRewardAuthorityPda
   oracle: typeof findOraclePda
@@ -1126,6 +1207,7 @@ export function indorseProgramProgram() {
           oracleSet: addSelfFetchFunctions(client, getOracleSetCodec()),
           policy: addSelfFetchFunctions(client, getPolicyCodec()),
           scoutReport: addSelfFetchFunctions(client, getScoutReportCodec()),
+          switchboardFeedBinding: addSelfFetchFunctions(client, getSwitchboardFeedBindingCodec()),
           tally: addSelfFetchFunctions(client, getTallyCodec()),
           verifierSet: addSelfFetchFunctions(client, getVerifierSetCodec()),
           weatherOracle: addSelfFetchFunctions(client, getWeatherOracleCodec()),
@@ -1144,6 +1226,8 @@ export function indorseProgramProgram() {
           reconfigureVerifierSet: (input) =>
             addSelfPlanAndSendFunctions(client, getReconfigureVerifierSetInstructionAsync(input)),
           registerFarm: (input) => addSelfPlanAndSendFunctions(client, getRegisterFarmInstructionAsync(input)),
+          registerSwitchboardFeed: (input) =>
+            addSelfPlanAndSendFunctions(client, getRegisterSwitchboardFeedInstructionAsync(input)),
           releaseEscrow: (input) => addSelfPlanAndSendFunctions(client, getReleaseEscrowInstruction(input)),
           releaseVerifier: (input) => addSelfPlanAndSendFunctions(client, getReleaseVerifierInstructionAsync(input)),
           removeOracle: (input) => addSelfPlanAndSendFunctions(client, getRemoveOracleInstructionAsync(input)),
@@ -1157,6 +1241,8 @@ export function indorseProgramProgram() {
           submitOracleReading: (input) =>
             addSelfPlanAndSendFunctions(client, getSubmitOracleReadingInstructionAsync(input)),
           submitScoutReport: (input) => addSelfPlanAndSendFunctions(client, getSubmitScoutReportInstruction(input)),
+          submitSwitchboardReading: (input) =>
+            addSelfPlanAndSendFunctions(client, getSubmitSwitchboardReadingInstructionAsync(input)),
           withdrawTreasury: (input) => addSelfPlanAndSendFunctions(client, getWithdrawTreasuryInstructionAsync(input)),
         },
         pdas: {
@@ -1167,6 +1253,7 @@ export function indorseProgramProgram() {
           escrowVault: findEscrowVaultPda,
           farm: findFarmPda,
           config: findConfigPda,
+          binding: findBindingPda,
           treasury: findTreasuryPda,
           rewardAuthority: findRewardAuthorityPda,
           oracle: findOraclePda,

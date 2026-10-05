@@ -1,4 +1,8 @@
 use anchor_lang::prelude::*;
+#[allow(deprecated)] // anchor 0.32 re-exports these from solana-instructions-sysvar
+use anchor_lang::solana_program::sysvar::instructions::{
+    load_current_index_checked, load_instruction_at_checked,
+};
 use anchor_spl::token::{self, Mint, Token, TokenAccount, Transfer};
 
 declare_id!("GVenujqgMJZCvYPKqMmPiAXQp7o3mwQbXw1nSBu3U5Ht");
@@ -23,6 +27,42 @@ pub const MAX_ORACLES: usize = 7;
 /// nor the destination may be caller-chosen. Changing the schedule is a
 /// program upgrade, not a parameter.
 pub const REPORT_REWARD: u64 = 1_000_000;
+
+/// Switchboard On-Demand job values are fixed-point with 18 decimals: the
+/// probe's 22.2 mm rainfall arrived as 22_200_000_000_000_000_000. Our
+/// tally unit is mm × 10, so one tally unit is 1e17 on the job scale — a
+/// receipt that doesn't divide evenly is refused, never rounded into a
+/// rainfall nobody reported.
+pub const SWITCHBOARD_UNIT_SCALE: u128 = 100_000_000_000_000_000; // 1e17
+
+/// The signed receipt message: slothash(32) ‖ feed_hash(32) ‖ value
+/// i128 LE(16) ‖ min_oracle_samples(1).
+pub const SWITCHBOARD_MESSAGE_LEN: usize = 81;
+
+/// Distinct pinned enclave signatures a receipt must carry, regardless of
+/// what the job itself declares.
+pub const SWITCHBOARD_MIN_SIGNERS: usize = 3;
+
+/// Solana's native ed25519 batch-verify program. A receipt's signatures are
+/// only true because this precompile ran successfully earlier in the same
+/// transaction — our instruction re-reads what it proved.
+pub const ED25519_VERIFY_PROGRAM: Pubkey =
+    anchor_lang::pubkey!("Ed25519SigVerify111111111111111111111111111");
+
+/// The instructions sysvar, pinned by `address` on the account that feeds
+/// `load_instruction_at_checked`: if it were anything else, a caller could
+/// hand us an instruction list the runtime never verified.
+pub const INSTRUCTIONS_SYSVAR: Pubkey =
+    anchor_lang::pubkey!("Sysvar1nstructions1111111111111111111111111");
+
+/// The SlotHashes sysvar, pinned by `address` because solana-sysvar 2.3+
+/// refuses in-program deserialization of `SlotHashes` outright
+/// (`from_account_info` → `UnsupportedSysvar`: the 20 KB account is "too
+/// large to bincode::deserialize"), and anchor reports that refusal as a
+/// misleading `AccountSysvarMismatch`. The freshness check therefore reads
+/// the raw bytes itself — this pin just guarantees they are the sysvar's.
+pub const SLOT_HASHES_SYSVAR: Pubkey =
+    anchor_lang::pubkey!("SysvarS1otHashes111111111111111111111111111");
 
 // ─────────────────────────────────────────────────────────────────────────────
 //  Program
@@ -775,49 +815,127 @@ pub mod indorse_program {
         season_start: i64,
         total_rainfall_mm: u32, // Accumulated rainfall for the season (mm × 10)
     ) -> Result<()> {
-        let oracle = &mut ctx.accounts.oracle;
-        require!(!oracle.finalized, FarmError::ReadingFinalized);
-
-        // A freshly initialised account is zeroed, so an unset farm is the
-        // tell that this call created the account (the first reading).
-        let created = oracle.farm == Pubkey::default();
-        oracle.farm = ctx.accounts.farm.key();
-        oracle.season_start = season_start;
-        oracle.bump = ctx.bumps.oracle;
-
+        // One tally writer with the receipt path below, so a reader and a
+        // relayed Switchboard receipt can never behave differently.
         let member = ctx.accounts.member.key();
-        match oracle.readings.iter_mut().find(|r| r.oracle == member) {
-            // Own replacement while the tally is open — a typo must not be
-            // counted, and it can never double-weight the reader.
-            Some(reading) => reading.total_rainfall_mm = total_rainfall_mm,
-            None => oracle.readings.push(OracleReading {
-                oracle: member,
-                total_rainfall_mm,
-            }),
-        }
+        let farm = ctx.accounts.farm.key();
+        let k = ctx.accounts.oracle_set.k;
+        let (created, froze, official) = record_reading(
+            &mut ctx.accounts.oracle,
+            member,
+            farm,
+            season_start,
+            total_rainfall_mm,
+            ctx.bumps.oracle,
+            k,
+        )?;
 
         emit!(WeatherReadingSubmitted {
-            oracle: oracle.key(),
-            farm: oracle.farm,
+            oracle: ctx.accounts.oracle.key(),
+            farm,
             total_rainfall_mm,
             created,
         });
-
-        let k = ctx.accounts.oracle_set.k as usize;
-        if oracle.readings.len() >= k {
-            oracle.readings.sort_by_key(|r| r.total_rainfall_mm);
-            // k is odd and the tally froze at exactly k readings, so the
-            // middle value is unambiguous.
-            let official = oracle.readings[k / 2].total_rainfall_mm;
-            oracle.total_rainfall_mm = official;
-            oracle.reading_timestamp = Clock::get()?.unix_timestamp;
-            oracle.finalized = true;
-
+        if froze {
             emit!(WeatherMedianFinalized {
-                oracle: oracle.key(),
-                farm: oracle.farm,
+                oracle: ctx.accounts.oracle.key(),
+                farm,
                 total_rainfall_mm: official,
-                readings: k as u8,
+                readings: k,
+            });
+        }
+        Ok(())
+    }
+
+    // =========================================================================
+    //  LAYER 3B — SWITCHBOARD RECEIPT READING (role-1: one seat at the table)
+    // =========================================================================
+
+    /// Pin — or re-pin — the trust root for one farm/season's Switchboard
+    /// On-Demand job: the feed that holds an oracle-set seat, the fingerprint
+    /// of the exact task bytes its enclaves sign over, and the enclave keys
+    /// allowed to sign. `config.admin` only, mirroring how seats are assigned;
+    /// re-run it whenever the queue rotates its enclaves.
+    pub fn register_switchboard_feed(
+        ctx: Context<RegisterSwitchboardFeed>,
+        season_start: i64,
+        feed: Pubkey,
+        feed_hash: [u8; 32],
+        signers: Vec<Pubkey>,
+    ) -> Result<()> {
+        require!(
+            signers.len() >= SWITCHBOARD_MIN_SIGNERS,
+            FarmError::InvalidFeedRegistration
+        );
+        let mut distinct: Vec<Pubkey> = Vec::with_capacity(signers.len());
+        for signer in &signers {
+            require!(!distinct.contains(signer), FarmError::InvalidFeedRegistration);
+            distinct.push(*signer);
+        }
+
+        let binding = &mut ctx.accounts.binding;
+        binding.farm = ctx.accounts.farm.key();
+        binding.season_start = season_start;
+        binding.feed = feed;
+        binding.feed_hash = feed_hash;
+        binding.signers = signers;
+        binding.bump = ctx.bumps.binding;
+
+        emit!(SwitchboardFeedRegistered {
+            farm: binding.farm,
+            feed,
+            feed_hash,
+            signers: binding.signers.len() as u8,
+        });
+        Ok(())
+    }
+
+    /// Relay a Switchboard receipt into the season tally. Permissionless by
+    /// construction: anyone may carry the bytes — the reading's authority is
+    /// the receipt itself, checked here against the admin-pinned binding:
+    /// this transaction's Ed25519 precompile proved the signatures, the
+    /// signed message is the 81-byte receipt layout for THE bound feed hash,
+    /// the signing keys are that feed's pinned enclaves, and the signed
+    /// slothash is still inside SlotHashes (≤512 slots old, so a receipt
+    /// cannot be replayed once the round it describes has cooled). The value
+    /// then enters the tally under the feed's seat and behaves exactly like
+    /// a reader's own submission — replaceable while the tally is open,
+    /// frozen into the median at k, untouchable once `finalized`.
+    pub fn submit_switchboard_reading(
+        ctx: Context<SubmitSwitchboardReading>,
+        season_start: i64,
+        feed: Pubkey,
+    ) -> Result<()> {
+        let total_rainfall_mm = verify_switchboard_receipt(
+            &ctx.accounts.instructions,
+            &ctx.accounts.slot_hashes,
+            &ctx.accounts.binding,
+        )?;
+
+        let farm = ctx.accounts.farm.key();
+        let k = ctx.accounts.oracle_set.k;
+        let (created, froze, official) = record_reading(
+            &mut ctx.accounts.oracle,
+            feed,
+            farm,
+            season_start,
+            total_rainfall_mm,
+            ctx.bumps.oracle,
+            k,
+        )?;
+
+        emit!(WeatherReadingSubmitted {
+            oracle: ctx.accounts.oracle.key(),
+            farm,
+            total_rainfall_mm,
+            created,
+        });
+        if froze {
+            emit!(WeatherMedianFinalized {
+                oracle: ctx.accounts.oracle.key(),
+                farm,
+                total_rainfall_mm: official,
+                readings: k,
             });
         }
         Ok(())
@@ -1036,6 +1154,212 @@ pub mod indorse_program {
         });
         Ok(())
     }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+//  Shared handlers — one tally writer and one receipt verifier, each used by
+//  more than one instruction. Kept outside the #[program] mod so neither can
+//  be mistaken for an instruction of its own.
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// Record one reading against a season tally under `identity` and freeze the
+/// median the moment `k` readings stand. Shared by the reader path
+/// (`submit_oracle_reading`) and the receipt path
+/// (`submit_switchboard_reading`) so the two can never drift: a source
+/// corrects its own entry while the tally is open — never double-weighting
+/// itself — and nothing moves after `finalized`.
+/// Returns `(created, froze, official)`.
+fn record_reading(
+    oracle: &mut WeatherOracle,
+    identity: Pubkey,
+    farm: Pubkey,
+    season_start: i64,
+    total_rainfall_mm: u32,
+    bump: u8,
+    k: u8,
+) -> Result<(bool, bool, u32)> {
+    require!(!oracle.finalized, FarmError::ReadingFinalized);
+
+    // A freshly initialised account is zeroed, so an unset farm is the
+    // tell that this call created the account (the season's first reading).
+    let created = oracle.farm == Pubkey::default();
+    oracle.farm = farm;
+    oracle.season_start = season_start;
+    oracle.bump = bump;
+
+    match oracle.readings.iter_mut().find(|r| r.oracle == identity) {
+        // Own replacement while the tally is open — a typo must not be
+        // counted, and it can never double-weight the source.
+        Some(reading) => reading.total_rainfall_mm = total_rainfall_mm,
+        None => oracle.readings.push(OracleReading {
+            oracle: identity,
+            total_rainfall_mm,
+        }),
+    }
+
+    let k_usize = k as usize;
+    if oracle.readings.len() >= k_usize {
+        oracle.readings.sort_by_key(|r| r.total_rainfall_mm);
+        // k is odd and the tally froze at exactly k readings, so the
+        // middle value is unambiguous.
+        let official = oracle.readings[k_usize / 2].total_rainfall_mm;
+        oracle.total_rainfall_mm = official;
+        oracle.reading_timestamp = Clock::get()?.unix_timestamp;
+        oracle.finalized = true;
+        return Ok((created, true, official));
+    }
+    Ok((created, false, 0))
+}
+
+/// Verify the Switchboard receipt carried by this transaction's Ed25519
+/// precompile instructions and return the rainfall it attests (mm × 10).
+///
+/// The trust chain, in order: (1) the precompile has already run when we
+/// execute — a bad signature aborts the whole transaction — so the signer/
+/// message pairs described by its offsets are proven true and we only
+/// re-read them; (2) the message is the documented 81-byte receipt layout
+/// and its feed hash equals the admin-pinned one, so a receipt for any other
+/// job is a foreign object; (3) the signatures come from enclave keys the
+/// admin pinned for this feed — with those keys honest, the value is the
+/// job's answer rather than the relayer's; (4) the signed slothash (that
+/// round's recent blockhash) must still sit in SlotHashes, so receipts die
+/// with the ≤512-slot window instead of being replayable forever; (5) the
+/// fixed-point value scales to a whole 0.1 mm — no rounding into a rainfall
+/// nobody reported.
+#[allow(deprecated)] // load_*_checked come from anchor's compat re-export
+fn verify_switchboard_receipt<'info>(
+    instructions: &AccountInfo<'info>,
+    slot_hashes: &AccountInfo<'info>,
+    binding: &SwitchboardFeedBinding,
+) -> Result<u32> {
+    let current = load_current_index_checked(instructions)
+        .map_err(|_| error!(FarmError::InvalidSwitchboardReceipt))?
+        as usize;
+    let pairs = collect_ed25519_pairs(instructions, current)?;
+    require!(!pairs.is_empty(), FarmError::InvalidSwitchboardReceipt);
+
+    // Well-formed receipts for THE bound job are the candidates.
+    let candidates: Vec<&Vec<u8>> = pairs
+        .iter()
+        .map(|(_, message)| message)
+        .filter(|message| {
+            message.len() == SWITCHBOARD_MESSAGE_LEN
+                && message[32..64] == binding.feed_hash[..]
+        })
+        .collect();
+    require!(!candidates.is_empty(), FarmError::InvalidSwitchboardReceipt);
+
+    // One message must carry a quorum: at least three distinct pinned
+    // enclave keys, and never fewer than the job's own min_oracle_samples.
+    let mut receipt: Option<&Vec<u8>> = None;
+    for message in candidates {
+        let needed = (message[80] as usize).max(SWITCHBOARD_MIN_SIGNERS);
+        let mut signers: Vec<&Pubkey> = Vec::new();
+        for (signer, signed) in &pairs {
+            if signed == message && binding.signers.contains(signer) && !signers.contains(&signer)
+            {
+                signers.push(signer);
+            }
+        }
+        if signers.len() >= needed {
+            receipt = Some(message);
+            break;
+        }
+    }
+    let receipt = receipt.ok_or(error!(FarmError::UnauthorisedSwitchboardSigner))?;
+
+    // Freshness: the signed slothash must still be among the recent slots'
+    // hashes — 8-byte bincode count, then count × (slot: u64 ‖ hash: 32).
+    let slothash = &receipt[0..32];
+    let data = slot_hashes
+        .try_borrow_data()
+        .map_err(|_| error!(FarmError::InvalidSwitchboardReceipt))?;
+    require!(data.len() >= 8, FarmError::InvalidSwitchboardReceipt);
+    let count = u64::from_le_bytes(data[0..8].try_into().unwrap()) as usize;
+    require!(
+        count <= 1024 && data.len() >= 8 + count * 40,
+        FarmError::InvalidSwitchboardReceipt
+    );
+    let fresh = (0..count).any(|i| {
+        let hash = 8 + i * 40 + 8; // skip the entry's slot number
+        data[hash..hash + 32] == slothash[..]
+    });
+    require!(fresh, FarmError::StaleSwitchboardReceipt);
+
+    // Job scale → tally unit: 18-decimal fixed-point, so 22.2 mm arrives as
+    // 22_200_000_000_000_000_000 = 222 × 1e17.
+    let raw = i128::from_le_bytes(receipt[64..80].try_into().unwrap());
+    require!(raw >= 0, FarmError::InvalidSwitchboardValue);
+    let raw = raw as u128;
+    require!(
+        raw % SWITCHBOARD_UNIT_SCALE == 0,
+        FarmError::InvalidSwitchboardValue
+    );
+    let mm10 = raw / SWITCHBOARD_UNIT_SCALE;
+    require!(mm10 <= u32::MAX as u128, FarmError::InvalidSwitchboardValue);
+    Ok(mm10 as u32)
+}
+
+/// Walk the Ed25519SigVerify precompile instructions ahead of this one and
+/// re-read the (signer, message) pairs their offsets describe. The runtime
+/// program formats its offsets as `num_signatures(1) ‖ padding(1) ‖ n × 14
+/// bytes` — signature offset/index, public-key offset/index, message
+/// offset/size/index — where an index of 65535 means "this instruction"
+/// (the sentinel both solana-sdk and web3.js emit, and the one the probe's
+/// switchboard-built receipt uses).
+#[allow(deprecated)] // load_instruction_at_checked comes from anchor's compat re-export
+fn collect_ed25519_pairs(
+    instructions_sysvar: &AccountInfo,
+    own_index: usize,
+) -> Result<Vec<(Pubkey, Vec<u8>)>> {
+    let mut pairs: Vec<(Pubkey, Vec<u8>)> = Vec::new();
+    for index in 0..own_index {
+        let ix = load_instruction_at_checked(index, instructions_sysvar)
+            .map_err(|_| error!(FarmError::InvalidSwitchboardReceipt))?;
+        if ix.program_id != ED25519_VERIFY_PROGRAM {
+            continue;
+        }
+        let data = ix.data;
+        if data.len() < 2 {
+            return err!(FarmError::InvalidSwitchboardReceipt);
+        }
+        let count = data[0] as usize;
+        if data.len() < 2 + count * 14 {
+            return err!(FarmError::InvalidSwitchboardReceipt);
+        }
+        for i in 0..count {
+            let base = 2 + i * 14;
+            let at = |offset: usize| -> usize {
+                usize::from(u16::from_le_bytes([data[offset], data[offset + 1]]))
+            };
+            let (pk_off, pk_ix, msg_off, msg_sz, msg_ix) =
+                (at(base + 4), at(base + 6), at(base + 8), at(base + 10), at(base + 12));
+            let pk_data = if pk_ix == u16::MAX as usize || pk_ix == index {
+                data.clone()
+            } else {
+                load_instruction_at_checked(pk_ix, instructions_sysvar)
+                    .map_err(|_| error!(FarmError::InvalidSwitchboardReceipt))?
+                    .data
+            };
+            let msg_data = if msg_ix == u16::MAX as usize || msg_ix == index {
+                data.clone()
+            } else {
+                load_instruction_at_checked(msg_ix, instructions_sysvar)
+                    .map_err(|_| error!(FarmError::InvalidSwitchboardReceipt))?
+                    .data
+            };
+            if pk_off + 32 > pk_data.len() || msg_off + msg_sz > msg_data.len() {
+                return err!(FarmError::InvalidSwitchboardReceipt);
+            }
+            let mut signer = [0u8; 32];
+            signer.copy_from_slice(&pk_data[pk_off..pk_off + 32]);
+            pairs.push((
+                Pubkey::new_from_array(signer),
+                msg_data[msg_off..msg_off + msg_sz].to_vec(),
+            ));
+        }
+    }
+    Ok(pairs)
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -1288,6 +1612,29 @@ pub struct OracleSet {
 }
 impl OracleSet {
     pub const MAX_SIZE: usize = 1 + 4 + (32 * MAX_ORACLES) + 1;
+}
+
+/// Phase 3B — the admin-pinned trust root for one Switchboard On-Demand
+/// job. Role-1 means the receipt itself carries the authority, so this
+/// account is the only thing that decides whose signatures count and for
+/// which job: `feed_hash` fingerprints the exact task bytes (a receipt for
+/// any other job fails the match), and `signers` are the queue's enclave
+/// keys as of registration — re-pin them if the queue rotates.
+#[account]
+pub struct SwitchboardFeedBinding {
+    pub farm: Pubkey,
+    pub season_start: i64,
+    /// The seat identity: occupies one oracle-set member slot and keys this
+    /// feed's readings in the season tally.
+    pub feed: Pubkey,
+    /// Fingerprint of the job definition the enclaves sign over.
+    pub feed_hash: [u8; 32],
+    /// Enclave signer keys allowed to sign receipts for this binding.
+    pub signers: Vec<Pubkey>,
+    pub bump: u8,
+}
+impl SwitchboardFeedBinding {
+    pub const MAX_SIZE: usize = 32 + 8 + 32 + 32 + 4 + (32 * MAX_ORACLES) + 1;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -1883,6 +2230,97 @@ pub struct SubmitOracleReading<'info> {
 }
 
 #[derive(Accounts)]
+#[instruction(season_start: i64, feed: Pubkey)]
+pub struct RegisterSwitchboardFeed<'info> {
+    /// Role gate: only `config.admin` pins a job's trust root — the same
+    /// authority that assigns oracle seats.
+    #[account(mut)]
+    pub authority: Signer<'info>,
+
+    #[account(constraint = authority.key() == config.admin @ FarmError::UnauthorisedAdmin)]
+    pub config: Account<'info, Config>,
+
+    pub farm: Account<'info, Farm>,
+
+    /// Role-1 shape: the feed must already hold an oracle-set seat, so its
+    /// receipt enters the tally as an assigned reader — not a spare voice.
+    #[account(
+        seeds = [b"oracle_set"],
+        bump,
+        constraint = oracle_set.members.contains(&feed) @ FarmError::UnauthorisedOracle
+    )]
+    pub oracle_set: Account<'info, OracleSet>,
+
+    #[account(
+        init_if_needed,
+        payer = authority,
+        space = 8 + SwitchboardFeedBinding::MAX_SIZE,
+        seeds = [b"sb_feed", farm.key().as_ref(), &season_start.to_le_bytes(), feed.as_ref()],
+        bump
+    )]
+    pub binding: Account<'info, SwitchboardFeedBinding>,
+
+    pub system_program: Program<'info, System>,
+}
+
+#[derive(Accounts)]
+#[instruction(season_start: i64, feed: Pubkey)]
+pub struct SubmitSwitchboardReading<'info> {
+    /// Permissionless: the receipt's quorum carries the authority; this
+    /// signer only exists to pay for a tally the season hasn't created yet.
+    #[account(mut)]
+    pub relayer: Signer<'info>,
+
+    /// The seat may not be revoked underneath the binding — a receipt from
+    /// an unseated feed is no longer a reader's reading.
+    #[account(
+        seeds = [b"oracle_set"],
+        bump,
+        constraint = oracle_set.members.contains(&feed) @ FarmError::UnauthorisedOracle
+    )]
+    pub oracle_set: Account<'info, OracleSet>,
+
+    pub farm: Account<'info, Farm>,
+
+    #[account(
+        seeds = [b"sb_feed", farm.key().as_ref(), &season_start.to_le_bytes(), feed.as_ref()],
+        bump
+    )]
+    pub binding: Account<'info, SwitchboardFeedBinding>,
+
+    #[account(
+        init_if_needed,
+        payer = relayer,
+        space = 8 + WeatherOracle::MAX_SIZE,
+        seeds = [b"weather", farm.key().as_ref(), &season_start.to_le_bytes()],
+        bump
+    )]
+    pub oracle: Account<'info, WeatherOracle>,
+
+    /// The instructions sysvar — `load_instruction_at_checked` recovers the
+    /// ed25519 precompile instructions this transaction already executed,
+    /// whose verified signer/message pairs are the receipt. The address pin
+    /// is the security boundary: without it a caller could hand us an
+    /// instruction list the runtime never ran.
+    /// CHECK: read only via `load_instruction_at_checked`/`load_current_index_checked`;
+    /// `address = INSTRUCTIONS_SYSVAR` pins it to the real sysvar.
+    #[account(address = INSTRUCTIONS_SYSVAR)]
+    pub instructions: UncheckedAccount<'info>,
+
+    /// Freshness window: the receipt's signed slothash must still be among
+    /// the last 512 slots' hashes. `Sysvar<'info, SlotHashes>` cannot be
+    /// used — solana-sysvar refuses in-program deserialization of this
+    /// account — so the address is pinned and the bytes are read directly.
+    /// CHECK: read only via `try_borrow_data` in `verify_switchboard_receipt`,
+    /// which bounds the count/length before scanning; `address =` pins it to
+    /// the real sysvar.
+    #[account(address = SLOT_HASHES_SYSVAR)]
+    pub slot_hashes: UncheckedAccount<'info>,
+
+    pub system_program: Program<'info, System>,
+}
+
+#[derive(Accounts)]
 pub struct SettlePolicy<'info> {
     /// Role gate: only `config.admin` can trigger settlement.
     #[account(constraint = settler.key() == config.admin @ FarmError::UnauthorisedVerifier)]
@@ -2240,6 +2678,15 @@ pub struct WeatherMedianFinalized {
     pub readings: u8,
 }
 
+// Layer 3B — Switchboard receipt reading (role-1)
+#[event]
+pub struct SwitchboardFeedRegistered {
+    pub farm: Pubkey,
+    pub feed: Pubkey,
+    pub feed_hash: [u8; 32],
+    pub signers: u8,
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 //  Errors
 // ─────────────────────────────────────────────────────────────────────────────
@@ -2338,4 +2785,16 @@ pub enum FarmError {
     // Appended with the Phase 3A governed reconfiguration instructions.
     #[msg("Removal would take the verifier set below its quorum")]
     DropBelowQuorum,
+
+    // Appended with the Switchboard receipt reading (role-1).
+    #[msg("The feed registration needs at least three distinct signers")]
+    InvalidFeedRegistration,
+    #[msg("The Switchboard receipt is malformed or not signed for the bound feed")]
+    InvalidSwitchboardReceipt,
+    #[msg("The Switchboard receipt is stale: its slothash left the recent window")]
+    StaleSwitchboardReceipt,
+    #[msg("The Switchboard receipt lacks the pinned enclave quorum for this feed")]
+    UnauthorisedSwitchboardSigner,
+    #[msg("The signed value is not a non-negative whole 0.1 mm of rainfall")]
+    InvalidSwitchboardValue,
 }
