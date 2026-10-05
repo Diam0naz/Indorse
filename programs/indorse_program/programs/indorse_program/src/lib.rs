@@ -2322,13 +2322,15 @@ pub struct SubmitSwitchboardReading<'info> {
 
 #[derive(Accounts)]
 pub struct SettlePolicy<'info> {
-    /// Role gate: only `config.admin` can trigger settlement.
-    #[account(constraint = settler.key() == config.admin @ FarmError::UnauthorisedVerifier)]
+    /// No role gate — the handler's own checks are the whole gate, and the
+    /// payout's destination, amount, and timing are all protocol-pinned
+    /// (the same shape as `reward_report`). This signer exists only to be
+    /// the named caller who carries the signature; the farmer, a relayer,
+    /// or a stranger may press the button once the median is frozen and the
+    /// clock has passed `season_end`. Gating it on a key would add a liveness
+    /// risk — one key deciding whether an objectively payable season pays —
+    /// with no fraud protection to show for it.
     pub settler: Signer<'info>,
-
-    /// Governance role — who may trigger settlement; the treasury below is
-    /// program-owned, so rotating admin moves settlement but not custody.
-    pub config: Account<'info, Config>,
 
     #[account(
         mut,

@@ -1661,7 +1661,6 @@ describe('indorse_program', () => {
         .settlePolicy()
         .accounts({
           settler: provider.wallet.publicKey,
-          config: configPda,
           policy: policyPda,
           insuranceVault: policyVault,
           oracle: oraclePda,
@@ -1713,7 +1712,6 @@ describe('indorse_program', () => {
         .settlePolicy()
         .accounts({
           settler: provider.wallet.publicKey,
-          config: configPda,
           policy: policyPda,
           insuranceVault: policyVault,
           oracle: oraclePda,
@@ -1729,14 +1727,17 @@ describe('indorse_program', () => {
     }
   })
 
-  it('Settle without a trigger: coverage returns to the treasury', async () => {
+  it('Settle without a trigger: coverage returns to the treasury, settled by a stranger', async () => {
     const treasuryBefore = (await getAccount(provider.connection, treasuryUsdc)).amount
 
+    // An unfunded stranger settles it: no admin key, no fee from the settler
+    // (the provider wallet is the fee payer). The gates — frozen median,
+    // ended season, pinned destinations — are the whole authority here.
+    const settler = Keypair.generate()
     await program.methods
       .settlePolicy()
       .accounts({
-        settler: provider.wallet.publicKey,
-        config: configPda,
+        settler: settler.publicKey,
         policy: policyPda,
         insuranceVault: policyVault,
         oracle: oraclePda,
@@ -1745,6 +1746,7 @@ describe('indorse_program', () => {
         insurerUsdc: treasuryUsdc,
         tokenProgram: anchor.utils.token.TOKEN_PROGRAM_ID,
       })
+      .signers([settler])
       .rpc()
 
     const settled = await program.account.policy.fetch(policyPda)
@@ -1757,6 +1759,98 @@ describe('indorse_program', () => {
     // The premium stays in the policy vault.
     const vault = await getAccount(provider.connection, policyVault)
     assert.equal(Number(vault.amount), PREMIUM)
+  })
+
+  it('Settle a breach: coverage pays the farmer, and a stranger presses the button', async () => {
+    // A second policy written at a 90.0 mm trigger: the same frozen 80.0 mm
+    // median that expired the 50 mm policy breaches this one. Opposite
+    // outcomes from one unchanged reading — the median serves both.
+    const BREACH_THRESHOLD_MM = 900
+    const [breachPda] = PublicKey.findProgramAddressSync(
+      [Buffer.from('policy'), farmPda.toBuffer(), u32le(2)],
+      program.programId,
+    )
+    const [breachVault] = PublicKey.findProgramAddressSync(
+      [Buffer.from('insurance_vault'), farmPda.toBuffer(), u32le(2)],
+      program.programId,
+    )
+    const treasuryWallet = (provider.wallet as anchor.Wallet).payer
+
+    await program.methods
+      .createPolicy(
+        'maize',
+        new anchor.BN(COVERAGE),
+        new anchor.BN(PREMIUM),
+        BREACH_THRESHOLD_MM,
+        new anchor.BN(SEASON_START),
+        new anchor.BN(SEASON_END),
+      )
+      .accounts({
+        farmer: owner.publicKey,
+        farm: farmPda,
+        policy: breachPda,
+        insuranceVault: breachVault,
+        farmerUsdc: ownerUsdc,
+        usdcMint,
+        tokenProgram: anchor.utils.token.TOKEN_PROGRAM_ID,
+        systemProgram: SystemProgram.programId,
+        rent: anchor.web3.SYSVAR_RENT_PUBKEY,
+      })
+      .signers([owner])
+      .rpc()
+
+    // Coverage top-up: a plain transfer, no instruction — the documented
+    // solvency gap says settle then fails at the CPI if this line is skipped.
+    await transfer(provider.connection, treasuryWallet, adminUsdc, breachVault, treasuryWallet, COVERAGE)
+
+    const farmerBefore = (await getAccount(provider.connection, ownerUsdc)).amount
+    const settler = Keypair.generate()
+
+    await program.methods
+      .settlePolicy()
+      .accounts({
+        settler: settler.publicKey,
+        policy: breachPda,
+        insuranceVault: breachVault,
+        oracle: oraclePda,
+        farmerUsdc: ownerUsdc,
+        treasury: treasuryPda,
+        insurerUsdc: treasuryUsdc,
+        tokenProgram: anchor.utils.token.TOKEN_PROGRAM_ID,
+      })
+      .signers([settler])
+      .rpc()
+
+    const settled = await program.account.policy.fetch(breachPda)
+    assert.deepEqual(settled.state, { paidOut: {} })
+
+    // The coverage lands with the farmer — pinned by owner, never by caller.
+    const farmerAfter = (await getAccount(provider.connection, ownerUsdc)).amount
+    assert.equal(Number(farmerAfter), Number(farmerBefore) + COVERAGE)
+
+    // The vault keeps only the premium; the payout cannot run twice.
+    const vault = await getAccount(provider.connection, breachVault)
+    assert.equal(Number(vault.amount), PREMIUM)
+
+    try {
+      await program.methods
+        .settlePolicy()
+        .accounts({
+          settler: settler.publicKey,
+          policy: breachPda,
+          insuranceVault: breachVault,
+          oracle: oraclePda,
+          farmerUsdc: ownerUsdc,
+          treasury: treasuryPda,
+          insurerUsdc: treasuryUsdc,
+          tokenProgram: anchor.utils.token.TOKEN_PROGRAM_ID,
+        })
+        .signers([settler])
+        .rpc()
+      assert.fail('Should have thrown an error')
+    } catch (err) {
+      assert.include(err.message, 'not active')
+    }
   })
 
   // ── Escrow lifecycle ───────────────────────────────────────────────────────

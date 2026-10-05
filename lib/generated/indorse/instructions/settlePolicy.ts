@@ -45,7 +45,6 @@ export function getSettlePolicyDiscriminatorBytes(): ReadonlyUint8Array {
 export type SettlePolicyInstruction<
   TProgram extends string = typeof INDORSE_PROGRAM_PROGRAM_ADDRESS,
   TAccountSettler extends string | AccountMeta<string> = string,
-  TAccountConfig extends string | AccountMeta<string> = string,
   TAccountPolicy extends string | AccountMeta<string> = string,
   TAccountInsuranceVault extends string | AccountMeta<string> = string,
   TAccountOracle extends string | AccountMeta<string> = string,
@@ -61,7 +60,6 @@ export type SettlePolicyInstruction<
       TAccountSettler extends string
         ? ReadonlySignerAccount<TAccountSettler> & AccountSignerMeta<TAccountSettler>
         : TAccountSettler,
-      TAccountConfig extends string ? ReadonlyAccount<TAccountConfig> : TAccountConfig,
       TAccountPolicy extends string ? WritableAccount<TAccountPolicy> : TAccountPolicy,
       TAccountInsuranceVault extends string ? WritableAccount<TAccountInsuranceVault> : TAccountInsuranceVault,
       TAccountOracle extends string ? ReadonlyAccount<TAccountOracle> : TAccountOracle,
@@ -97,7 +95,6 @@ export function getSettlePolicyInstructionDataCodec(): FixedSizeCodec<
 
 export type SettlePolicyAsyncInput<
   TAccountSettler extends string = string,
-  TAccountConfig extends string = string,
   TAccountPolicy extends string = string,
   TAccountInsuranceVault extends string = string,
   TAccountOracle extends string = string,
@@ -106,13 +103,17 @@ export type SettlePolicyAsyncInput<
   TAccountInsurerUsdc extends string = string,
   TAccountTokenProgram extends string = string,
 > = {
-  /** Role gate: only `config.admin` can trigger settlement. */
-  settler: TransactionSigner<TAccountSettler>
   /**
-   * Governance role — who may trigger settlement; the treasury below is
-   * program-owned, so rotating admin moves settlement but not custody.
+   * No role gate — the handler's own checks are the whole gate, and the
+   * payout's destination, amount, and timing are all protocol-pinned
+   * (the same shape as `reward_report`). This signer exists only to be
+   * the named caller who carries the signature; the farmer, a relayer,
+   * or a stranger may press the button once the median is frozen and the
+   * clock has passed `season_end`. Gating it on a key would add a liveness
+   * risk — one key deciding whether an objectively payable season pays —
+   * with no fraud protection to show for it.
    */
-  config: Address<TAccountConfig>
+  settler: TransactionSigner<TAccountSettler>
   policy: Address<TAccountPolicy>
   insuranceVault: Address<TAccountInsuranceVault>
   oracle: Address<TAccountOracle>
@@ -134,7 +135,6 @@ export type SettlePolicyAsyncInput<
 
 export async function getSettlePolicyInstructionAsync<
   TAccountSettler extends string,
-  TAccountConfig extends string,
   TAccountPolicy extends string,
   TAccountInsuranceVault extends string,
   TAccountOracle extends string,
@@ -146,7 +146,6 @@ export async function getSettlePolicyInstructionAsync<
 >(
   input: SettlePolicyAsyncInput<
     TAccountSettler,
-    TAccountConfig,
     TAccountPolicy,
     TAccountInsuranceVault,
     TAccountOracle,
@@ -160,7 +159,6 @@ export async function getSettlePolicyInstructionAsync<
   SettlePolicyInstruction<
     TProgramAddress,
     TAccountSettler,
-    TAccountConfig,
     TAccountPolicy,
     TAccountInsuranceVault,
     TAccountOracle,
@@ -176,7 +174,6 @@ export async function getSettlePolicyInstructionAsync<
   // Original accounts.
   const originalAccounts = {
     settler: { value: input.settler ?? null, isWritable: false },
-    config: { value: input.config ?? null, isWritable: false },
     policy: { value: input.policy ?? null, isWritable: true },
     insuranceVault: { value: input.insuranceVault ?? null, isWritable: true },
     oracle: { value: input.oracle ?? null, isWritable: false },
@@ -200,7 +197,6 @@ export async function getSettlePolicyInstructionAsync<
   return Object.freeze({
     accounts: [
       getAccountMeta('settler', accounts.settler),
-      getAccountMeta('config', accounts.config),
       getAccountMeta('policy', accounts.policy),
       getAccountMeta('insuranceVault', accounts.insuranceVault),
       getAccountMeta('oracle', accounts.oracle),
@@ -214,7 +210,6 @@ export async function getSettlePolicyInstructionAsync<
   } as SettlePolicyInstruction<
     TProgramAddress,
     TAccountSettler,
-    TAccountConfig,
     TAccountPolicy,
     TAccountInsuranceVault,
     TAccountOracle,
@@ -227,7 +222,6 @@ export async function getSettlePolicyInstructionAsync<
 
 export type SettlePolicyInput<
   TAccountSettler extends string = string,
-  TAccountConfig extends string = string,
   TAccountPolicy extends string = string,
   TAccountInsuranceVault extends string = string,
   TAccountOracle extends string = string,
@@ -236,13 +230,17 @@ export type SettlePolicyInput<
   TAccountInsurerUsdc extends string = string,
   TAccountTokenProgram extends string = string,
 > = {
-  /** Role gate: only `config.admin` can trigger settlement. */
-  settler: TransactionSigner<TAccountSettler>
   /**
-   * Governance role — who may trigger settlement; the treasury below is
-   * program-owned, so rotating admin moves settlement but not custody.
+   * No role gate — the handler's own checks are the whole gate, and the
+   * payout's destination, amount, and timing are all protocol-pinned
+   * (the same shape as `reward_report`). This signer exists only to be
+   * the named caller who carries the signature; the farmer, a relayer,
+   * or a stranger may press the button once the median is frozen and the
+   * clock has passed `season_end`. Gating it on a key would add a liveness
+   * risk — one key deciding whether an objectively payable season pays —
+   * with no fraud protection to show for it.
    */
-  config: Address<TAccountConfig>
+  settler: TransactionSigner<TAccountSettler>
   policy: Address<TAccountPolicy>
   insuranceVault: Address<TAccountInsuranceVault>
   oracle: Address<TAccountOracle>
@@ -264,7 +262,6 @@ export type SettlePolicyInput<
 
 export function getSettlePolicyInstruction<
   TAccountSettler extends string,
-  TAccountConfig extends string,
   TAccountPolicy extends string,
   TAccountInsuranceVault extends string,
   TAccountOracle extends string,
@@ -276,7 +273,6 @@ export function getSettlePolicyInstruction<
 >(
   input: SettlePolicyInput<
     TAccountSettler,
-    TAccountConfig,
     TAccountPolicy,
     TAccountInsuranceVault,
     TAccountOracle,
@@ -289,7 +285,6 @@ export function getSettlePolicyInstruction<
 ): SettlePolicyInstruction<
   TProgramAddress,
   TAccountSettler,
-  TAccountConfig,
   TAccountPolicy,
   TAccountInsuranceVault,
   TAccountOracle,
@@ -304,7 +299,6 @@ export function getSettlePolicyInstruction<
   // Original accounts.
   const originalAccounts = {
     settler: { value: input.settler ?? null, isWritable: false },
-    config: { value: input.config ?? null, isWritable: false },
     policy: { value: input.policy ?? null, isWritable: true },
     insuranceVault: { value: input.insuranceVault ?? null, isWritable: true },
     oracle: { value: input.oracle ?? null, isWritable: false },
@@ -325,7 +319,6 @@ export function getSettlePolicyInstruction<
   return Object.freeze({
     accounts: [
       getAccountMeta('settler', accounts.settler),
-      getAccountMeta('config', accounts.config),
       getAccountMeta('policy', accounts.policy),
       getAccountMeta('insuranceVault', accounts.insuranceVault),
       getAccountMeta('oracle', accounts.oracle),
@@ -339,7 +332,6 @@ export function getSettlePolicyInstruction<
   } as SettlePolicyInstruction<
     TProgramAddress,
     TAccountSettler,
-    TAccountConfig,
     TAccountPolicy,
     TAccountInsuranceVault,
     TAccountOracle,
@@ -356,30 +348,34 @@ export type ParsedSettlePolicyInstruction<
 > = {
   programAddress: Address<TProgram>
   accounts: {
-    /** Role gate: only `config.admin` can trigger settlement. */
-    settler: TAccountMetas[0]
     /**
-     * Governance role — who may trigger settlement; the treasury below is
-     * program-owned, so rotating admin moves settlement but not custody.
+     * No role gate — the handler's own checks are the whole gate, and the
+     * payout's destination, amount, and timing are all protocol-pinned
+     * (the same shape as `reward_report`). This signer exists only to be
+     * the named caller who carries the signature; the farmer, a relayer,
+     * or a stranger may press the button once the median is frozen and the
+     * clock has passed `season_end`. Gating it on a key would add a liveness
+     * risk — one key deciding whether an objectively payable season pays —
+     * with no fraud protection to show for it.
      */
-    config: TAccountMetas[1]
-    policy: TAccountMetas[2]
-    insuranceVault: TAccountMetas[3]
-    oracle: TAccountMetas[4]
-    farmerUsdc: TAccountMetas[5]
+    settler: TAccountMetas[0]
+    policy: TAccountMetas[1]
+    insuranceVault: TAccountMetas[2]
+    oracle: TAccountMetas[3]
+    farmerUsdc: TAccountMetas[4]
     /**
      * Program-owned treasury: refunds sweep to its canonical USDC ATA,
      * whoever `config.admin` happens to be.
      * `[b"treasury"]` under this program, so only the program's own PDA
      * passes — no state is read from it beyond the address.
      */
-    treasury: TAccountMetas[6]
+    treasury: TAccountMetas[5]
     /**
      * The treasury's canonical USDC ATA — validated by address, so the
      * sweep can only land in program custody.
      */
-    insurerUsdc: TAccountMetas[7]
-    tokenProgram: TAccountMetas[8]
+    insurerUsdc: TAccountMetas[6]
+    tokenProgram: TAccountMetas[7]
   }
   data: SettlePolicyInstructionData
 }
@@ -387,10 +383,10 @@ export type ParsedSettlePolicyInstruction<
 export function parseSettlePolicyInstruction<TProgram extends string, TAccountMetas extends readonly AccountMeta[]>(
   instruction: Instruction<TProgram> & InstructionWithAccounts<TAccountMetas> & InstructionWithData<ReadonlyUint8Array>,
 ): ParsedSettlePolicyInstruction<TProgram, TAccountMetas> {
-  if (instruction.accounts.length < 9) {
+  if (instruction.accounts.length < 8) {
     throw new SolanaError(SOLANA_ERROR__PROGRAM_CLIENTS__INSUFFICIENT_ACCOUNT_METAS, {
       actualAccountMetas: instruction.accounts.length,
-      expectedAccountMetas: 9,
+      expectedAccountMetas: 8,
     })
   }
   let accountIndex = 0
@@ -403,7 +399,6 @@ export function parseSettlePolicyInstruction<TProgram extends string, TAccountMe
     programAddress: instruction.programAddress,
     accounts: {
       settler: getNextAccount(),
-      config: getNextAccount(),
       policy: getNextAccount(),
       insuranceVault: getNextAccount(),
       oracle: getNextAccount(),

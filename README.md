@@ -18,7 +18,7 @@ Snapshot as of **2026-10-05** — all four quality gates green
 
 | Area                | State   | Notes                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                     |
 | ------------------- | ------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| On-chain program    | Shipped | 27 instructions — authority is data (the config PDA `839zrf…YzaY8` on devnet holds the admin/verifier/oracle roles every ops gate reads, rotated by `set_roles` instead of a redeploy), verification is a bonded K-of-N quorum (the verifier-set PDA `H4HnKfqu…XK` holds k, the seat price, and members with their recorded stakes; `cast_vote` finalizes a report at quorum; `reconfigure_verifier_set` rewrites the rules, voluntary exits stop at the k-member floor, and `release_verifier` is governance's fair-exit valve), season readings are a median (the oracle-set PDA `12FrAm…zTf` holds an odd k and its unbound readers; the k-th reading freezes the median and `settle_policy` trusts only a finalized one), and custody is program-owned (settle/revoke sweep refunds to the treasury PDA's USDC ATA; `withdraw_treasury` releases them to the admin only); deployed to devnet (`GVenujqgMJZCvYPKqMmPiAXQp7o3mwQbXw1nSBu3U5Ht`), IDL synced via `npm run idl:sync`; 43 Anchor integration cases plus an opt-in RPC smoke test, the full Phase 1/3A lifecycle (realloc on an old-layout account, quorum floor, governed reconfigure, freeze-on-contact, release valve, recorded-stake refunds) rehearsed end to end against the live devnet state, and (Phase 3B) a live Switchboard On-Demand receipt — 3 enclave signatures proved off-chain and on-chain — relayed permissionlessly into the season tally on devnet (`5cfMd1pv…RUS8`) |
+| On-chain program    | Shipped | 27 instructions — authority is data (the config PDA `839zrf…YzaY8` on devnet holds the admin/verifier/oracle roles every ops gate reads, rotated by `set_roles` instead of a redeploy), verification is a bonded K-of-N quorum (the verifier-set PDA `H4HnKfqu…XK` holds k, the seat price, and members with their recorded stakes; `cast_vote` finalizes a report at quorum; `reconfigure_verifier_set` rewrites the rules, voluntary exits stop at the k-member floor, and `release_verifier` is governance's fair-exit valve), season readings are a median (the oracle-set PDA `12FrAm…zTf` holds an odd k and its unbound readers; the k-th reading freezes the median and `settle_policy` trusts only a finalized one), and custody is program-owned (settle/revoke sweep refunds to the treasury PDA's USDC ATA; `withdraw_treasury` releases them to the admin only); deployed to devnet (`GVenujqgMJZCvYPKqMmPiAXQp7o3mwQbXw1nSBu3U5Ht`), IDL synced via `npm run idl:sync`; 44 Anchor integration cases plus an opt-in RPC smoke test, the full Phase 1/3A lifecycle (realloc on an old-layout account, quorum floor, governed reconfigure, freeze-on-contact, release valve, recorded-stake refunds) rehearsed end to end against the live devnet state, and (Phase 3B) a live Switchboard On-Demand receipt — 3 enclave signatures proved off-chain and on-chain — relayed permissionlessly into the season tally on devnet (`5cfMd1pv…RUS8`) |
 | Scout tab           | Shipped | Chain-fed log and field cards, attention banner, folding action stack, camera → AI diagnosis, the 3-step onboarding card for the no-farm state (scan works before setup — anchoring needs a farm), and a persisted scan store: captures survive restarts (`indorse.scout.v1`) and anchor through an outbox flush once a farm is reachable                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                 |
 | Provenance & escrow | Shipped | Score, evidence trail, harvest batches; escrow create → release / cancel-and-retry                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                        |
 | Weather             | Shipped | Policy setup, median-frozen oracle readings with error + retry, season chart plotted against the trigger — nothing reads as measured before the quorum finalizes it                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                       |
@@ -65,9 +65,12 @@ quorum so there is no liveness margin if a reader disappears (add spare
 `add_oracle` seats for that), a reader's own pre-quorum correction replaces
 rather than appends (once frozen the tally never moves), and `config.oracle`
 is vestigial for the same layout reason as `config.verifier`; the final
-device screenshots for the write-up are still outstanding; two on-chain
-design edges — coverage funding with no solvency check, and admin-gated
-settlement — are recorded under _Future work_ below.
+device screenshots for the write-up are still outstanding; the one
+remaining on-chain design edge — coverage funding with no solvency check —
+is recorded under _Future work_ below (the admin gate on `settle_policy`
+has since been removed: settlement is permissionless, its authority the
+frozen median plus the pinned payout destinations — same shape as
+`reward_report`).
 
 ---
 
@@ -106,20 +109,6 @@ payout:
 ```bash
 spl-token display <vault-pda>   # balance ≥ coverage_usdc, else transfer USDC in first
 ```
-
-### `settle_policy` is admin-gated — named centralization edge
-
-`SettlePolicy` requires `settler == config.admin`, so one key still decides
-whether a season's reading turns into a payout: the verifier quorum decides
-what is _true_, the admin decides _when (or whether)_ money moves. It sits
-beside the devnet per-role keys and the outstanding Squads handover as the
-remaining centralization edges. Phase 1 rationale: money moves under role
-control, and the role lives in the `config` PDA — rotating to a multisig is
-a `set_roles` transaction, never a redeploy. Judge-facing answer: the
-_trigger_ is already decentralized (Phase 2 froze the season median
-on-chain); what remains is who presses the button, and opening settlement
-to anyone once the reading is finalized — every payable condition is then
-objective on-chain state — is the direction marked here.
 
 ---
 
@@ -357,7 +346,7 @@ the season has not created yet.
 | `submit_oracle_reading`      | Post (or, pre-quorum, replace your own) season rainfall in the per-season tally; the `k`-th reading freezes the median and stamps `finalized` — readers only, one entry each                                                                                                                                                                 |
 | `register_switchboard_feed`  | Pin — or re-pin — the Switchboard job's trust root for one farm/season: feed, 32-byte job hash and ≥3 distinct enclave signers (`config.admin` only, feed must already hold an oracle-set seat; re-running is the queue's key-rotation path)                                                                                                 |
 | `submit_switchboard_reading` | Relay a Switchboard On-Demand receipt **permissionlessly**: re-read the ed25519 precompile's verified signer/message pairs through the address-pinned instructions sysvar, require the bound job hash, the pinned-enclave quorum, 512-slot freshness and an exact whole-0.1 mm value, then record it under the feed's seat in the same tally |
-| `settle_policy`              | Pay out or expire a policy after the season ends (`config.admin`) — no-trigger refunds are swept to the program treasury's USDC ATA (address-derived, mint-checked)                                                                                                                                                                          |
+| `settle_policy`              | Pay out or expire a policy after the season ends — **permissionless**: any signer may settle once the median is frozen and the season over (the caller influences nothing; destinations and amount are pinned) — no-trigger refunds are swept to the program treasury's USDC ATA (address-derived, mint-checked)                             |
 | `revoke_policy`              | Farmer revokes an active policy before the season ends: the premium returns from the policy vault, the treasury's top-up sweeps into the program treasury's USDC ATA, both accounts close (rents to the farmer) — refused once the season is over, when `settle_policy` takes over                                                           |
 | `withdraw_treasury`          | Move accumulated refunds out of the program treasury to the admin's own USDC account — the treasury PDA signs the transfer, `config.admin` gates it, and the destination must be the admin's account                                                                                                                                         |
 
@@ -521,7 +510,7 @@ seat** in season 1711920000's tally (relay tx `5cfMd1pv…RUS8`,
 `finalized = false` — one of three seats). Localnet covers the other side:
 9 integration cases (registration gates, missing proof, impostor signers,
 foreign job hash, stale slothash, fractional value, the permissionless happy
-path, the median freeze with a late-receipt refusal, and key rotation) — 43
+path, the median freeze with a late-receipt refusal, and key rotation) — 44
 in total. The script needs the probe workspace's Switchboard SDK
 (`SWB_DEPS=/tmp/opencode/sb-jobspec/node_modules`, the default).
 
@@ -757,7 +746,7 @@ npm run icons           # Regenerate the app icons
 
 ## Running Anchor tests
 
-The integration tests (43 cases: config authority rotation, the K-of-N
+The integration tests (44 cases: config authority rotation, the K-of-N
 verifier set — quorum approve/reject, double-vote refusal, governed
 reconfiguration with its bounds, the `k`-member exit floor, reprice-then-join
 stake accounting, the admin release valve, the governed slash, and
@@ -767,8 +756,9 @@ own replacement and the final freeze — the Switchboard receipt relay —
 binding registration gates, missing proof, impostor signers, foreign job
 hash, stale slothash, fractional value, the permissionless happy path, the
 median freeze and key rotation — program-treasury revoke/withdraw,
-scouting, rewards, treasury-pool insurance, escrow cancel/retry) need a local
-validator and the Anchor CLI. Plain `anchor test`
+scouting, rewards, treasury-pool insurance with both settle paths pressed
+by an unfunded stranger (refund and breach payout), escrow cancel/retry)
+need a local validator and the Anchor CLI. Plain `anchor test`
 tries to drive Surfpool in Anchor 0.32; in environments where Surfpool does
 not start, run against `solana-test-validator` directly. Note that
 Agave ≥ 2.2 rejects _new_ loader-v3 programs on a local validator, so the
