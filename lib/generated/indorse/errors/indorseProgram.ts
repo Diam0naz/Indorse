@@ -76,13 +76,25 @@ export const INDORSE_PROGRAM_ERROR__ALREADY_VERIFIER = 0x178c // 6028
 export const INDORSE_PROGRAM_ERROR__VERIFIER_SET_FULL = 0x178d // 6029
 /** AlreadyVoted: Verifier has already voted on this report */
 export const INDORSE_PROGRAM_ERROR__ALREADY_VOTED = 0x178e // 6030
+/** InvalidMedianQuorum: Oracle quorum must be an odd number from 3 to the oracle-set maximum */
+export const INDORSE_PROGRAM_ERROR__INVALID_MEDIAN_QUORUM = 0x178f // 6031
+/** AlreadyOracle: Key is already a reader in the oracle set */
+export const INDORSE_PROGRAM_ERROR__ALREADY_ORACLE = 0x1790 // 6032
+/** OracleSetFull: The oracle set is full */
+export const INDORSE_PROGRAM_ERROR__ORACLE_SET_FULL = 0x1791 // 6033
+/** ReadingFinalized: The season reading is already final */
+export const INDORSE_PROGRAM_ERROR__READING_FINALIZED = 0x1792 // 6034
+/** ReadingNotFinalized: The season reading has not reached quorum */
+export const INDORSE_PROGRAM_ERROR__READING_NOT_FINALIZED = 0x1793 // 6035
 
 export type IndorseProgramError =
+  | typeof INDORSE_PROGRAM_ERROR__ALREADY_ORACLE
   | typeof INDORSE_PROGRAM_ERROR__ALREADY_VERIFIED
   | typeof INDORSE_PROGRAM_ERROR__ALREADY_VERIFIER
   | typeof INDORSE_PROGRAM_ERROR__ALREADY_VOTED
   | typeof INDORSE_PROGRAM_ERROR__ESCROW_LOCKED
   | typeof INDORSE_PROGRAM_ERROR__ESCROW_NOT_FUNDED
+  | typeof INDORSE_PROGRAM_ERROR__INVALID_MEDIAN_QUORUM
   | typeof INDORSE_PROGRAM_ERROR__INVALID_QUORUM
   | typeof INDORSE_PROGRAM_ERROR__INVALID_SEASON
   | typeof INDORSE_PROGRAM_ERROR__LABEL_TOO_LONG
@@ -93,8 +105,11 @@ export type IndorseProgramError =
   | typeof INDORSE_PROGRAM_ERROR__NOT_VERIFIED
   | typeof INDORSE_PROGRAM_ERROR__ORACLE_FARM_MISMATCH
   | typeof INDORSE_PROGRAM_ERROR__ORACLE_SEASON_MISMATCH
+  | typeof INDORSE_PROGRAM_ERROR__ORACLE_SET_FULL
   | typeof INDORSE_PROGRAM_ERROR__OVERFLOW
   | typeof INDORSE_PROGRAM_ERROR__POLICY_NOT_ACTIVE
+  | typeof INDORSE_PROGRAM_ERROR__READING_FINALIZED
+  | typeof INDORSE_PROGRAM_ERROR__READING_NOT_FINALIZED
   | typeof INDORSE_PROGRAM_ERROR__REPORTER_TOKEN_INVALID
   | typeof INDORSE_PROGRAM_ERROR__REVOCATION_WINDOW_CLOSED
   | typeof INDORSE_PROGRAM_ERROR__REWARD_VAULT_INVALID
@@ -113,11 +128,13 @@ export type IndorseProgramError =
 let indorseProgramErrorMessages: Record<IndorseProgramError, string> | undefined
 if (process.env['NODE_ENV'] !== 'production') {
   indorseProgramErrorMessages = {
+    [INDORSE_PROGRAM_ERROR__ALREADY_ORACLE]: `Key is already a reader in the oracle set`,
     [INDORSE_PROGRAM_ERROR__ALREADY_VERIFIED]: `Report already verified or rejected`,
     [INDORSE_PROGRAM_ERROR__ALREADY_VERIFIER]: `Key is already a bonded verifier`,
     [INDORSE_PROGRAM_ERROR__ALREADY_VOTED]: `Verifier has already voted on this report`,
     [INDORSE_PROGRAM_ERROR__ESCROW_LOCKED]: `Escrow is locked — cancellation window has passed`,
     [INDORSE_PROGRAM_ERROR__ESCROW_NOT_FUNDED]: `Escrow is not in funded state`,
+    [INDORSE_PROGRAM_ERROR__INVALID_MEDIAN_QUORUM]: `Oracle quorum must be an odd number from 3 to the oracle-set maximum`,
     [INDORSE_PROGRAM_ERROR__INVALID_QUORUM]: `Quorum must be between 2 and the verifier-set maximum`,
     [INDORSE_PROGRAM_ERROR__INVALID_SEASON]: `Season end must be after season start`,
     [INDORSE_PROGRAM_ERROR__LABEL_TOO_LONG]: `Label too long (max 32 chars)`,
@@ -128,8 +145,11 @@ if (process.env['NODE_ENV'] !== 'production') {
     [INDORSE_PROGRAM_ERROR__NOT_VERIFIED]: `Report is not verified`,
     [INDORSE_PROGRAM_ERROR__ORACLE_FARM_MISMATCH]: `Oracle farm does not match policy farm`,
     [INDORSE_PROGRAM_ERROR__ORACLE_SEASON_MISMATCH]: `Oracle season does not match policy season`,
+    [INDORSE_PROGRAM_ERROR__ORACLE_SET_FULL]: `The oracle set is full`,
     [INDORSE_PROGRAM_ERROR__OVERFLOW]: `Counter overflow`,
     [INDORSE_PROGRAM_ERROR__POLICY_NOT_ACTIVE]: `Policy is not active`,
+    [INDORSE_PROGRAM_ERROR__READING_FINALIZED]: `The season reading is already final`,
+    [INDORSE_PROGRAM_ERROR__READING_NOT_FINALIZED]: `The season reading has not reached quorum`,
     [INDORSE_PROGRAM_ERROR__REPORTER_TOKEN_INVALID]: `Reporter token account does not match the report recipient or mint`,
     [INDORSE_PROGRAM_ERROR__REVOCATION_WINDOW_CLOSED]: `Season has ended — the policy can no longer be revoked`,
     [INDORSE_PROGRAM_ERROR__REWARD_VAULT_INVALID]: `Reward vault does not belong to the program reward authority`,

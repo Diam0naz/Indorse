@@ -20,6 +20,7 @@ import {
   findEscrowVaultPda,
   findFarmPda,
   findOraclePda,
+  findOracleSetPda,
   findRewardAuthorityPda,
   findTallyPda,
   findTreasuryPda,
@@ -36,6 +37,7 @@ import {
   escrowPda,
   escrowVaultPda,
   farmPda,
+  oracleSetPda,
   rewardAuthorityPda,
   tallyPda,
   treasuryPda,
@@ -51,16 +53,19 @@ const SEASON_START = 1_767_225_600
 
 /** Every IDL instruction mapped to the enum the generated client must return. */
 const INSTRUCTION_KINDS: Record<string, IndorseProgramInstruction> = {
+  add_oracle: IndorseProgramInstruction.AddOracle,
   cancel_escrow: IndorseProgramInstruction.CancelEscrow,
   cast_vote: IndorseProgramInstruction.CastVote,
   create_escrow: IndorseProgramInstruction.CreateEscrow,
   create_policy: IndorseProgramInstruction.CreatePolicy,
   delete_farm: IndorseProgramInstruction.DeleteFarm,
   init_config: IndorseProgramInstruction.InitConfig,
+  init_oracle_set: IndorseProgramInstruction.InitOracleSet,
   init_verifier_set: IndorseProgramInstruction.InitVerifierSet,
   post_bond: IndorseProgramInstruction.PostBond,
   register_farm: IndorseProgramInstruction.RegisterFarm,
   release_escrow: IndorseProgramInstruction.ReleaseEscrow,
+  remove_oracle: IndorseProgramInstruction.RemoveOracle,
   remove_verifier: IndorseProgramInstruction.RemoveVerifier,
   revoke_policy: IndorseProgramInstruction.RevokePolicy,
   reward_report: IndorseProgramInstruction.RewardReport,
@@ -68,8 +73,8 @@ const INSTRUCTION_KINDS: Record<string, IndorseProgramInstruction> = {
   settle_policy: IndorseProgramInstruction.SettlePolicy,
   slash_verifier: IndorseProgramInstruction.SlashVerifier,
   submit_harvest_batch: IndorseProgramInstruction.SubmitHarvestBatch,
+  submit_oracle_reading: IndorseProgramInstruction.SubmitOracleReading,
   submit_scout_report: IndorseProgramInstruction.SubmitScoutReport,
-  submit_weather_reading: IndorseProgramInstruction.SubmitWeatherReading,
   withdraw_treasury: IndorseProgramInstruction.WithdrawTreasury,
 }
 
@@ -110,6 +115,7 @@ describe('generated Codama client', () => {
     expect((await findConfigPda())[0]).toBe(await configPda())
     expect((await findTreasuryPda())[0]).toBe(await treasuryPda())
     expect((await findVerifierSetPda())[0]).toBe(await verifierSetPda())
+    expect((await findOracleSetPda())[0]).toBe(await oracleSetPda())
     expect((await findTallyPda({ report: address(REPORT) }))[0]).toBe(await tallyPda(REPORT))
   })
 })

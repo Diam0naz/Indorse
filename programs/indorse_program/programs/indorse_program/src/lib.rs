@@ -14,6 +14,10 @@ pub const ADMIN: Pubkey = anchor_lang::pubkey!("AXUTwBhtwbgAJGAZYKHXAJgSo4dMC29X
 /// `post_bond` never needs a realloc.
 pub const MAX_VERIFIERS: usize = 7;
 
+/// Maximum readers in the oracle set — bounds the fixed-size tally so a
+/// season's readings never need a realloc.
+pub const MAX_ORACLES: usize = 7;
+
 /// Reward paid from the reward vault for one quorum-approved report.
 /// Protocol-fixed: `reward_report` is permissionless, so neither the amount
 /// nor the destination may be caller-chosen. Changing the schedule is a
@@ -642,24 +646,85 @@ pub mod indorse_program {
     /// An authorised weather oracle posts a rainfall reading for a farm/season.
     ///
     /// PDA seeds: [b"weather", farm, season_start (i64 LE)]
-    pub fn submit_weather_reading(
-        ctx: Context<SubmitWeatherReading>,
+    // =========================================================================
+    //  LAYER 3 — ORACLE SET (median of k readers replaces the single key)
+    // =========================================================================
+
+    /// Bootstrap the reader set once: how many readers make a season reading
+    /// official. k must be odd and at least 3, so the median is a single
+    /// unambiguous middle value — and so no single key can be "the oracle".
+    pub fn init_oracle_set(ctx: Context<InitOracleSet>, k: u8) -> Result<()> {
+        require!(
+            k >= 3 && k <= MAX_ORACLES as u8 && k % 2 == 1,
+            FarmError::InvalidMedianQuorum
+        );
+
+        let set = &mut ctx.accounts.oracle_set;
+        set.k = k;
+        set.members = Vec::new();
+        set.bump = ctx.bumps.oracle_set;
+
+        emit!(OracleSetInitialized { k });
+        Ok(())
+    }
+
+    /// Add a reader (`config.admin` assigns seats — no bond, because the
+    /// median itself is the defence: one liar cannot move the middle value).
+    pub fn add_oracle(ctx: Context<ManageOracle>, member: Pubkey) -> Result<()> {
+        let set = &mut ctx.accounts.oracle_set;
+        require!(!set.members.contains(&member), FarmError::AlreadyOracle);
+        require!(set.members.len() < MAX_ORACLES, FarmError::OracleSetFull);
+        set.members.push(member);
+
+        emit!(OracleJoined { member });
+        Ok(())
+    }
+
+    /// Remove a reader (`config.admin`). Readings they already posted stay in
+    /// the tally — a removed reader cannot un-notice a season.
+    pub fn remove_oracle(ctx: Context<ManageOracle>, member: Pubkey) -> Result<()> {
+        let set = &mut ctx.accounts.oracle_set;
+        let position = set
+            .members
+            .iter()
+            .position(|m| *m == member)
+            .ok_or(FarmError::UnauthorisedOracle)?;
+        set.members.remove(position);
+
+        emit!(OracleRemoved { member });
+        Ok(())
+    }
+
+    /// Post (or replace, before quorum) this reader's season rainfall.
+    /// Reaching `oracle_set.k` readings computes the median — the middle of
+    /// the sorted readings — freezes it into `total_rainfall_mm`, stamps
+    /// `reading_timestamp`, and closes the account: later submissions fail
+    /// the `finalized` gate instead of moving a settled number.
+    pub fn submit_oracle_reading(
+        ctx: Context<SubmitOracleReading>,
         season_start: i64,
         total_rainfall_mm: u32, // Accumulated rainfall for the season (mm × 10)
-        reading_timestamp: i64,
     ) -> Result<()> {
         let oracle = &mut ctx.accounts.oracle;
-        // `init_if_needed` serves both the first reading and later corrections.
-        // A freshly initialised account is zeroed, so an unset authority is the
-        // tell that this call created the account rather than updating it.
-        let created = oracle.authority == Pubkey::default();
+        require!(!oracle.finalized, FarmError::ReadingFinalized);
 
+        // A freshly initialised account is zeroed, so an unset farm is the
+        // tell that this call created the account (the first reading).
+        let created = oracle.farm == Pubkey::default();
         oracle.farm = ctx.accounts.farm.key();
-        oracle.authority = ctx.accounts.authority.key();
         oracle.season_start = season_start;
-        oracle.total_rainfall_mm = total_rainfall_mm;
-        oracle.reading_timestamp = reading_timestamp;
         oracle.bump = ctx.bumps.oracle;
+
+        let member = ctx.accounts.member.key();
+        match oracle.readings.iter_mut().find(|r| r.oracle == member) {
+            // Own replacement while the tally is open — a typo must not be
+            // counted, and it can never double-weight the reader.
+            Some(reading) => reading.total_rainfall_mm = total_rainfall_mm,
+            None => oracle.readings.push(OracleReading {
+                oracle: member,
+                total_rainfall_mm,
+            }),
+        }
 
         emit!(WeatherReadingSubmitted {
             oracle: oracle.key(),
@@ -667,6 +732,24 @@ pub mod indorse_program {
             total_rainfall_mm,
             created,
         });
+
+        let k = ctx.accounts.oracle_set.k as usize;
+        if oracle.readings.len() >= k {
+            oracle.readings.sort_by_key(|r| r.total_rainfall_mm);
+            // k is odd and the tally froze at exactly k readings, so the
+            // middle value is unambiguous.
+            let official = oracle.readings[k / 2].total_rainfall_mm;
+            oracle.total_rainfall_mm = official;
+            oracle.reading_timestamp = Clock::get()?.unix_timestamp;
+            oracle.finalized = true;
+
+            emit!(WeatherMedianFinalized {
+                oracle: oracle.key(),
+                farm: oracle.farm,
+                total_rainfall_mm: official,
+                readings: k as u8,
+            });
+        }
         Ok(())
     }
 
@@ -688,6 +771,9 @@ pub mod indorse_program {
             oracle.season_start == policy.season_start,
             FarmError::OracleSeasonMismatch
         );
+        // The number that settles money must be the frozen median, not a
+        // partial tally that simply has an account.
+        require!(oracle.finalized, FarmError::ReadingNotFinalized);
 
         let now = Clock::get()?.unix_timestamp;
         require!(now >= policy.season_end, FarmError::SeasonNotEnded);
@@ -903,7 +989,9 @@ pub struct Config {
     /// field survives so the account layout doesn't migrate; `set_roles`
     /// still rotates it, but nothing gates on it.
     pub verifier: Pubkey,
-    /// Posts weather readings.
+    /// Vestigial after Phase 2: weather readings moved to the admin-managed
+    /// oracle set's median. Kept so the account layout doesn't migrate;
+    /// `set_roles` still rotates it, but nothing gates on it.
     pub oracle: Pubkey,
     pub bump: u8,
 }
@@ -1048,18 +1136,45 @@ impl Policy {
     pub const MAX_SIZE: usize = 32 + 32 + 4 + (4 + 32) + 8 + 8 + 4 + 8 + 8 + 4 + 1 + 1;
 }
 
-/// Layer 3 — Weather oracle reading (posted by authorised oracle keypair)
+/// Layer 3 — Season weather reading: a per-season tally whose frozen median
+/// settles policies (Phase 2 replaces the single oracle key).
 #[account]
 pub struct WeatherOracle {
     pub farm: Pubkey,
-    pub authority: Pubkey,
     pub season_start: i64,
-    pub total_rainfall_mm: u32, // Accumulated mm × 10 for precision
+    /// Official median (mm × 10) — written when the quorum lands; 0 until.
+    pub total_rainfall_mm: u32,
+    /// When the quorum froze the median.
     pub reading_timestamp: i64,
+    /// True once k readings landed — the only state `settle_policy` trusts.
+    pub finalized: bool,
+    /// One reading per oracle-set member (own replacement allowed
+    /// pre-quorum), bounded by MAX_ORACLES.
+    pub readings: Vec<OracleReading>,
     pub bump: u8,
 }
 impl WeatherOracle {
-    pub const MAX_SIZE: usize = 32 + 32 + 8 + 4 + 8 + 1;
+    pub const MAX_SIZE: usize = 32 + 8 + 4 + 8 + 1 + 4 + ((32 + 4) * MAX_ORACLES) + 1;
+}
+
+/// One reader's vote in the season tally.
+#[derive(AnchorSerialize, AnchorDeserialize, Clone, Debug, PartialEq)]
+pub struct OracleReading {
+    pub oracle: Pubkey,
+    pub total_rainfall_mm: u32,
+}
+
+/// Phase 2 — the admin-managed reader set: odd quorum k + members, no bonds
+/// (the median is the defence, not collateral).
+#[account]
+pub struct OracleSet {
+    /// Odd, 3..=MAX_ORACLES: readings needed to freeze the median.
+    pub k: u8,
+    pub members: Vec<Pubkey>,
+    pub bump: u8,
+}
+impl OracleSet {
+    pub const MAX_SIZE: usize = 1 + 4 + (32 * MAX_ORACLES) + 1;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -1524,24 +1639,61 @@ pub struct CreatePolicy<'info> {
     pub rent: Sysvar<'info, Rent>,
 }
 
+/// Bootstrap the reader rules: one-shot (the PDA's `init` refuses a second
+/// call). Seats arrive via `add_oracle`.
 #[derive(Accounts)]
-#[instruction(season_start: i64)]
-pub struct SubmitWeatherReading<'info> {
-    /// Role gate: only `config.oracle` may act as the weather oracle.
-    #[account(
-        mut,
-        constraint = authority.key() == config.oracle @ FarmError::UnauthorisedOracle
-    )]
+pub struct InitOracleSet<'info> {
+    /// Role gate: only `config.admin` sets the rules. Also pays the PDA's
+    /// rent on init, hence `mut`.
+    #[account(mut, constraint = authority.key() == config.admin @ FarmError::UnauthorisedAdmin)]
     pub authority: Signer<'info>,
 
-    /// The role lives here — rotating it is `set_roles`, not a redeploy.
     pub config: Account<'info, Config>,
+
+    #[account(
+        init,
+        payer = authority,
+        space = 8 + OracleSet::MAX_SIZE,
+        seeds = [b"oracle_set"],
+        bump
+    )]
+    pub oracle_set: Account<'info, OracleSet>,
+
+    pub system_program: Program<'info, System>,
+}
+
+#[derive(Accounts)]
+pub struct ManageOracle<'info> {
+    /// Role gate: only `config.admin` assigns or revokes reader seats.
+    #[account(constraint = authority.key() == config.admin @ FarmError::UnauthorisedAdmin)]
+    pub authority: Signer<'info>,
+
+    pub config: Account<'info, Config>,
+
+    #[account(mut, seeds = [b"oracle_set"], bump)]
+    pub oracle_set: Account<'info, OracleSet>,
+}
+
+#[derive(Accounts)]
+#[instruction(season_start: i64)]
+pub struct SubmitOracleReading<'info> {
+    /// Membership gate: only the admin-managed oracle set may read; also pays
+    /// the tally's rent on the season's first reading, hence `mut`.
+    #[account(mut)]
+    pub member: Signer<'info>,
+
+    #[account(
+        seeds = [b"oracle_set"],
+        bump,
+        constraint = oracle_set.members.contains(&member.key()) @ FarmError::UnauthorisedOracle
+    )]
+    pub oracle_set: Account<'info, OracleSet>,
 
     pub farm: Account<'info, Farm>,
 
     #[account(
         init_if_needed,
-        payer = authority,
+        payer = member,
         space = 8 + WeatherOracle::MAX_SIZE,
         seeds = [b"weather", farm.key().as_ref(), &season_start.to_le_bytes()],
         bump
@@ -1797,8 +1949,9 @@ pub struct WeatherReadingSubmitted {
     pub oracle: Pubkey,
     pub farm: Pubkey,
     pub total_rainfall_mm: u32,
-    /// True when this instruction created the oracle account (the first
-    /// reading for the farm/season); false when it overwrote an existing one.
+    /// True when this instruction created the tally (the season's first
+    /// reading); false when it added to — or replaced a value within — an
+    /// existing one.
     pub created: bool,
 }
 
@@ -1870,6 +2023,30 @@ pub struct VoteCast {
     pub approve: bool,
     pub approvals: u8,
     pub rejections: u8,
+}
+
+// Phase 2 — oracle median
+#[event]
+pub struct OracleSetInitialized {
+    pub k: u8,
+}
+
+#[event]
+pub struct OracleJoined {
+    pub member: Pubkey,
+}
+
+#[event]
+pub struct OracleRemoved {
+    pub member: Pubkey,
+}
+
+#[event]
+pub struct WeatherMedianFinalized {
+    pub oracle: Pubkey,
+    pub farm: Pubkey,
+    pub total_rainfall_mm: u32,
+    pub readings: u8,
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -1954,4 +2131,16 @@ pub enum FarmError {
     VerifierSetFull,
     #[msg("Verifier has already voted on this report")]
     AlreadyVoted,
+
+    // Appended with the oracle-set (Phase 2) instructions.
+    #[msg("Oracle quorum must be an odd number from 3 to the oracle-set maximum")]
+    InvalidMedianQuorum,
+    #[msg("Key is already a reader in the oracle set")]
+    AlreadyOracle,
+    #[msg("The oracle set is full")]
+    OracleSetFull,
+    #[msg("The season reading is already final")]
+    ReadingFinalized,
+    #[msg("The season reading has not reached quorum")]
+    ReadingNotFinalized,
 }

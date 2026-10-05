@@ -31,10 +31,15 @@ export interface Policy {
 
 export interface WeatherReading {
   farm: string
-  authority: string
   seasonStart: number
+  /** Official median (mm × 10) — 0 until the quorum froze the reading */
   totalRainfallMm: number
+  /** When the quorum froze the median */
   readingTimestamp: number
+  /** True once the set's quorum landed — only then does this number settle */
+  finalized: boolean
+  /** One reading per oracle-set member, in sorted order once finalized */
+  readings: { oracle: string; totalRainfallMm: number }[]
   bump: number
   address?: string
 }

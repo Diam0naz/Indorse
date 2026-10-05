@@ -43,8 +43,9 @@ export type WeatherReadingSubmittedEvent = {
   farm: Address
   totalRainfallMm: number
   /**
-   * True when this instruction created the oracle account (the first
-   * reading for the farm/season); false when it overwrote an existing one.
+   * True when this instruction created the tally (the season's first
+   * reading); false when it added to — or replaced a value within — an
+   * existing one.
    */
   created: boolean
 }

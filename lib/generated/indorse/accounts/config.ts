@@ -57,7 +57,11 @@ export type Config = {
    * still rotates it, but nothing gates on it.
    */
   verifier: Address
-  /** Posts weather readings. */
+  /**
+   * Vestigial after Phase 2: weather readings moved to the admin-managed
+   * oracle set's median. Kept so the account layout doesn't migrate;
+   * `set_roles` still rotates it, but nothing gates on it.
+   */
   oracle: Address
   bump: number
 }
@@ -75,7 +79,11 @@ export type ConfigArgs = {
    * still rotates it, but nothing gates on it.
    */
   verifier: Address
-  /** Posts weather readings. */
+  /**
+   * Vestigial after Phase 2: weather readings moved to the admin-managed
+   * oracle set's median. Kept so the account layout doesn't migrate;
+   * `set_roles` still rotates it, but nothing gates on it.
+   */
   oracle: Address
   bump: number
 }

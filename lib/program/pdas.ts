@@ -104,7 +104,7 @@ export function insuranceVaultPda(farm: string, policyCount: number): Promise<Ad
   return derive([encoder.encode('insurance_vault'), base58Encoder.encode(farm), u32Seed(policyCount)])
 }
 
-/** `["weather", farm, i64(seasonStart) LE]` — weather oracle account. */
+/** `["weather", farm, i64(seasonStart) LE]` — season reading tally; its frozen median settles policies. */
 export function weatherOraclePda(farm: string, seasonStart: number): Promise<Address> {
   return derive([encoder.encode('weather'), base58Encoder.encode(farm), i64Seed(seasonStart)])
 }
@@ -127,6 +127,11 @@ export function treasuryPda(): Promise<Address> {
 /** `["verifier_set"]` — Phase 1 K-of-N quorum: k, bond price, members. */
 export function verifierSetPda(): Promise<Address> {
   return derive([encoder.encode('verifier_set')])
+}
+
+/** `["oracle_set"]` — Phase 2 reader seats: odd quorum k, members, no bonds. */
+export function oracleSetPda(): Promise<Address> {
+  return derive([encoder.encode('oracle_set')])
 }
 
 /** `["tally", report]` — Phase 1 per-report vote record. */

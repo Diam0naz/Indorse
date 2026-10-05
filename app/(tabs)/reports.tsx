@@ -79,8 +79,12 @@ export default function WeatherScreen() {
   const isExpiring = hasPolicy && !isExpired && daysLeft <= 2
 
   const triggerMm = policy ? policy.triggerThresholdMm / 10 : 0
-  const rainfallMm = reading ? reading.totalRainfallMm / 10 : 0
-  const lastUpdate = reading ? formatTimestamp(reading.readingTimestamp) : '—'
+  // The tally's number only becomes fact at quorum: before the freeze the
+  // account exists with a zero median, and a zero is not a measurement.
+  const rainfallMm = reading?.finalized ? reading.totalRainfallMm / 10 : 0
+  const rainfallMmLabel = reading?.finalized ? t('wx.mm', { mm: rainfallMm }) : '—'
+  const lastUpdate = reading?.finalized ? formatTimestamp(reading.readingTimestamp) : '—'
+  const hasOfficialReading = !!reading?.finalized
   const policyLabel = policyQuery.policyAddress ? shortenAddress(policyQuery.policyAddress, 8) : '—'
 
   const expiryBanner = isExpired ? (
@@ -174,7 +178,7 @@ export default function WeatherScreen() {
           <View style={styles.reading}>
             <View style={styles.readingHeader}>
               <Text style={styles.readingLabel}>{t('wx.rainfall')}</Text>
-              <Text style={[styles.readingValue, { color: colors.sage }]}>{t('wx.mm', { mm: rainfallMm })}</Text>
+              <Text style={[styles.readingValue, { color: colors.sage }]}>{rainfallMmLabel}</Text>
             </View>
             <View style={styles.readingTrack}>
               <View
@@ -228,7 +232,7 @@ export default function WeatherScreen() {
         </Card>
 
         {/* ── Season chart ──────────────────────────────────────── */}
-        <SeasonChartCard rainfallMm={rainfallMm} triggerMm={triggerMm} hasReading={!!reading} />
+        <SeasonChartCard rainfallMm={rainfallMm} triggerMm={triggerMm} hasReading={hasOfficialReading} />
 
         {/* Setup flows — underwriting a policy against this farm's index. */}
         {policyOpen && farmAddress && farm ? (

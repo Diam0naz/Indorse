@@ -9,7 +9,7 @@
  *   seed = sha256(`${ROLE_SEED}:${role}`)     32 bytes, ROLE_SEED below
  *   key  = Keypair.fromSeed(seed)             ed25519, Solana's own fromSeed
  *
- *   node scripts/role-keys.cjs            # print the three public keys
+ *   node scripts/role-keys.cjs            # print the three role keys + oracle-set seats
  *   node scripts/role-keys.cjs rotate     # set_roles(...) on-chain (idempotent)
  *
  * WARNING — the seed string is public by design (the default below), so
@@ -42,6 +42,13 @@ const roleKeypair = (role) => anchor.web3.Keypair.fromSeed(createHash('sha256').
 const deriveAll = () => Object.fromEntries(ROLES.map((r) => [r, roleKeypair(r)]))
 
 /**
+ * The Phase 2 oracle-set seats: `oracle-1` … `oracle-n`, same formula as the
+ * config roles but membership, not authority — config.admin assigns them.
+ * n defaults to 3 (the odd quorum the devnet set is created with).
+ */
+const oracleReaders = (n = 3) => Array.from({ length: n }, (_, i) => roleKeypair(`oracle-${i + 1}`))
+
+/**
  * The signer for any config.admin-gated instruction: the derived admin key
  * once config.admin already points at it, the bootstrap keypair before the
  * first rotation, or an explicit error when neither holds the role. Shared
@@ -57,11 +64,13 @@ const pickAdminSigner = (currentAdminBase58, bootstrap) => {
   )
 }
 
-module.exports = { ROLE_SEED, roleKeypair, deriveAll, pickAdminSigner }
+module.exports = { ROLE_SEED, roleKeypair, deriveAll, oracleReaders, pickAdminSigner }
 
 const printRoles = (roles) => {
   console.log(`derived from sha256("${ROLE_SEED}:<role>") → Keypair.fromSeed`)
   for (const name of ROLES) console.log(`  ${name.padEnd(9)} ${roles[name].publicKey.toBase58()}`)
+  console.log(`oracle-set seats (Phase 2 readers):`)
+  oracleReaders().forEach((reader, i) => console.log(`  oracle-${i + 1}  ${reader.publicKey.toBase58()}`))
 }
 
 async function main() {

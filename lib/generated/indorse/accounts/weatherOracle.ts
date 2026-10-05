@@ -17,6 +17,10 @@ import {
   fixEncoderSize,
   getAddressDecoder,
   getAddressEncoder,
+  getArrayDecoder,
+  getArrayEncoder,
+  getBooleanDecoder,
+  getBooleanEncoder,
   getBytesDecoder,
   getBytesEncoder,
   getI64Decoder,
@@ -30,16 +34,17 @@ import {
   transformEncoder,
   type Account,
   type Address,
+  type Codec,
+  type Decoder,
   type EncodedAccount,
+  type Encoder,
   type FetchAccountConfig,
   type FetchAccountsConfig,
-  type FixedSizeCodec,
-  type FixedSizeDecoder,
-  type FixedSizeEncoder,
   type MaybeAccount,
   type MaybeEncodedAccount,
   type ReadonlyUint8Array,
 } from '@solana/kit'
+import { getOracleReadingDecoder, getOracleReadingEncoder, type OracleReading, type OracleReadingArgs } from '../types'
 
 export const WEATHER_ORACLE_DISCRIMINATOR: ReadonlyUint8Array = new Uint8Array([72, 134, 13, 212, 180, 3, 74, 162])
 
@@ -50,32 +55,49 @@ export function getWeatherOracleDiscriminatorBytes(): ReadonlyUint8Array {
 export type WeatherOracle = {
   discriminator: ReadonlyUint8Array
   farm: Address
-  authority: Address
   seasonStart: bigint
+  /** Official median (mm × 10) — written when the quorum lands; 0 until. */
   totalRainfallMm: number
+  /** When the quorum froze the median. */
   readingTimestamp: bigint
+  /** True once k readings landed — the only state `settle_policy` trusts. */
+  finalized: boolean
+  /**
+   * One reading per oracle-set member (own replacement allowed
+   * pre-quorum), bounded by MAX_ORACLES.
+   */
+  readings: Array<OracleReading>
   bump: number
 }
 
 export type WeatherOracleArgs = {
   farm: Address
-  authority: Address
   seasonStart: number | bigint
+  /** Official median (mm × 10) — written when the quorum lands; 0 until. */
   totalRainfallMm: number
+  /** When the quorum froze the median. */
   readingTimestamp: number | bigint
+  /** True once k readings landed — the only state `settle_policy` trusts. */
+  finalized: boolean
+  /**
+   * One reading per oracle-set member (own replacement allowed
+   * pre-quorum), bounded by MAX_ORACLES.
+   */
+  readings: Array<OracleReadingArgs>
   bump: number
 }
 
 /** Gets the encoder for {@link WeatherOracleArgs} account data. */
-export function getWeatherOracleEncoder(): FixedSizeEncoder<WeatherOracleArgs> {
+export function getWeatherOracleEncoder(): Encoder<WeatherOracleArgs> {
   return transformEncoder(
     getStructEncoder([
       ['discriminator', fixEncoderSize(getBytesEncoder(), 8)],
       ['farm', getAddressEncoder()],
-      ['authority', getAddressEncoder()],
       ['seasonStart', getI64Encoder()],
       ['totalRainfallMm', getU32Encoder()],
       ['readingTimestamp', getI64Encoder()],
+      ['finalized', getBooleanEncoder()],
+      ['readings', getArrayEncoder(getOracleReadingEncoder())],
       ['bump', getU8Encoder()],
     ]),
     (value) => ({ ...value, discriminator: WEATHER_ORACLE_DISCRIMINATOR }),
@@ -83,20 +105,21 @@ export function getWeatherOracleEncoder(): FixedSizeEncoder<WeatherOracleArgs> {
 }
 
 /** Gets the decoder for {@link WeatherOracle} account data. */
-export function getWeatherOracleDecoder(): FixedSizeDecoder<WeatherOracle> {
+export function getWeatherOracleDecoder(): Decoder<WeatherOracle> {
   return getStructDecoder([
     ['discriminator', fixDecoderSize(getBytesDecoder(), 8)],
     ['farm', getAddressDecoder()],
-    ['authority', getAddressDecoder()],
     ['seasonStart', getI64Decoder()],
     ['totalRainfallMm', getU32Decoder()],
     ['readingTimestamp', getI64Decoder()],
+    ['finalized', getBooleanDecoder()],
+    ['readings', getArrayDecoder(getOracleReadingDecoder())],
     ['bump', getU8Decoder()],
   ])
 }
 
 /** Gets the codec for {@link WeatherOracle} account data. */
-export function getWeatherOracleCodec(): FixedSizeCodec<WeatherOracleArgs, WeatherOracle> {
+export function getWeatherOracleCodec(): Codec<WeatherOracleArgs, WeatherOracle> {
   return combineCodec(getWeatherOracleEncoder(), getWeatherOracleDecoder())
 }
 
@@ -148,8 +171,4 @@ export async function fetchAllMaybeWeatherOracle(
 ): Promise<MaybeAccount<WeatherOracle>[]> {
   const maybeAccounts = await fetchEncodedAccounts(rpc, addresses, config)
   return maybeAccounts.map((maybeAccount) => decodeWeatherOracle(maybeAccount))
-}
-
-export function getWeatherOracleSize(): number {
-  return 93
 }

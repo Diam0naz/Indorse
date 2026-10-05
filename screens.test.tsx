@@ -153,7 +153,7 @@ const weatherScenario = vi.hoisted(() => ({
     premiumUsdc: number
   },
   policyAddress: null as string | null,
-  reading: null as null | { totalRainfallMm: number; readingTimestamp: number },
+  reading: null as null | { totalRainfallMm: number; readingTimestamp: number; finalized: boolean },
   oracleError: false,
   retry: vi.fn(),
 }))
@@ -218,8 +218,12 @@ function seasonPolicy() {
 }
 
 function seasonReading() {
-  // 212.0 mm of season rainfall, one day old.
-  return { totalRainfallMm: 2120, readingTimestamp: Math.floor(Date.now() / 1000) - 86_400 }
+  // 212.0 mm of season rainfall, one day old — frozen at quorum.
+  return {
+    totalRainfallMm: 2120,
+    readingTimestamp: Math.floor(Date.now() / 1000) - 86_400,
+    finalized: true,
+  }
 }
 
 describe('screen redesign', () => {
@@ -291,6 +295,23 @@ describe('screen redesign', () => {
     expect(screen.getByText('212 mm')).toBeTruthy()
     expect(screen.getByText('180 mm')).toBeTruthy()
     expect(screen.getByText('Payout triggers if season rainfall falls below 180 mm.')).toBeTruthy()
+  })
+
+  it('claims nothing before the quorum freezes the reading', async () => {
+    weatherScenario.policy = seasonPolicy()
+    weatherScenario.policyAddress = POLICY_ADDRESS
+    // A half-counted tally: the account exists but its median is not final.
+    weatherScenario.reading = { totalRainfallMm: 0, readingTimestamp: 0, finalized: false }
+    weatherScenario.oracleError = false
+
+    const screen = await renderWithProviders(<WeatherScreen />)
+
+    await screen.findByText('Live Oracle Readings', {}, LOAD)
+    // Zero is not a measurement: the rainfall value and its timestamp both
+    // wait as em-dashes (the axis keeps its 0 mm scale marker), and the
+    // chart holds its placeholder instead of drawing an unverified line.
+    expect(screen.getByText('No readings yet')).toBeTruthy()
+    expect(screen.getAllByText('—').length).toBeGreaterThanOrEqual(2)
   })
 
   it('shows the empty policy and chart states before anything is underwritten', async () => {

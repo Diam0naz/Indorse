@@ -1,7 +1,7 @@
 /**
  * scripts/init-config.cjs — one-shot bootstrap of program state per ledger.
  *
- * Four pieces of state have to exist before the protocol paths can run:
+ * Five pieces of state have to exist before the protocol paths can run:
  *
  *  1. The config PDA (["config"]): authority lives in account data, but
  *     somebody has to create that account once per ledger — the hard-coded
@@ -26,21 +26,28 @@
  *     address inside `post_bond` (same external-create pattern as the
  *     treasury ATA).
  *
- * Re-running after a devnet reset is safe: all four steps are idempotent.
+ *  5. The oracle set (["oracle_set"], Phase 2): odd quorum k (median rules)
+ *     plus its reader seats, assigned by config.admin. Unlike verifiers the
+ *     readers carry no bond — the median is the defence — so this script can
+ *     seat them itself: the deterministic `oracle-1…n` keys from role-keys,
+ *     each topped up for fees and the tally's first-rent.
+ *
+ * Re-running after a devnet reset is safe: all five steps are idempotent.
  *
  *   node scripts/init-config.cjs                          # devnet (default)
  *   RPC_URL=http://127.0.0.1:8899 node scripts/init-config.cjs   # localnet
  *
  * ADMIN / VERIFIER / ORACLE (base58) override the initial role keys;
  * USDC_MINT (base58) overrides the treasury/bond mint; K and BOND_AMOUNT
- * (atomic units, defaults 2 and 5 USDC) set the verifier-set rules.
+ * (atomic units, defaults 2 and 5 USDC) set the verifier-set rules;
+ * ORACLE_K (odd, default 3) sets the median quorum and reader count.
  */
 const { readFileSync } = require('node:fs')
 const { homedir } = require('node:os')
 const { join, resolve } = require('node:path')
 const anchor = require('@coral-xyz/anchor')
 const { getOrCreateAssociatedTokenAccount } = require('@solana/spl-token')
-const { pickAdminSigner } = require('./role-keys.cjs')
+const { oracleReaders, pickAdminSigner } = require('./role-keys.cjs')
 
 const RPC_URL = process.env.RPC_URL ?? 'https://api.devnet.solana.com'
 const KEY_PATH = process.env.SOLANA_KEYPAIR ?? join(homedir(), '.config/solana/id.json')
@@ -153,6 +160,86 @@ async function main() {
   } else {
     console.log('skipping the bond-vault ATA (no USDC mint on this cluster)')
   }
+
+  // 5. Oracle set (Phase 2) — the admin-managed reader seats; their median
+  //    (odd k) is the only season reading settle_policy will trust.
+  const [oracleSetPda] = anchor.web3.PublicKey.findProgramAddressSync([Buffer.from('oracle_set')], program.programId)
+  const k = Number(process.env.ORACLE_K ?? 3)
+  const readers = oracleReaders(k) // seats default to the quorum itself
+  let oracleSet
+  if (await connection.getAccountInfo(oracleSetPda)) {
+    oracleSet = await program.account.oracleSet.fetch(oracleSetPda)
+    console.log('oracle set already initialised at', oracleSetPda.toBase58())
+    console.log({ k: oracleSet.k, members: oracleSet.members.length })
+  } else {
+    const signer = pickAdminSigner(config.admin.toBase58(), payer)
+    // init pays rent from the signer, and the derived admin starts empty —
+    // top it up from the bootstrap wallet first (bootstrap pays this fee too).
+    if ((await connection.getBalance(signer.publicKey)) < 10_000_000) {
+      const fundTx = new anchor.web3.Transaction().add(
+        anchor.web3.SystemProgram.transfer({
+          fromPubkey: payer.publicKey,
+          toPubkey: signer.publicKey,
+          lamports: 100_000_000,
+        }),
+      )
+      await provider.sendAndConfirm(fundTx)
+      console.log('funded', signer.publicKey.toBase58(), 'with 0.1 SOL for rent')
+    }
+
+    const signature = await program.methods
+      .initOracleSet(k)
+      .accounts({
+        authority: signer.publicKey,
+        config: configPda,
+        oracleSet: oracleSetPda,
+        systemProgram: anchor.web3.SystemProgram.programId,
+      })
+      .signers([signer])
+      .rpc()
+    console.log('init_oracle_set', signature)
+    console.log({ oracleSet: oracleSetPda.toBase58(), k })
+    oracleSet = await program.account.oracleSet.fetch(oracleSetPda)
+  }
+
+  // Seats (idempotent): each deterministic reader gets a seat if it lacks
+  // one. Unlike verifiers they carry no bond, so the admin can seat them —
+  // but add_oracle still signs as config.admin, never as the reader.
+  const seated = new Set(oracleSet.members.map((m) => m.toBase58()))
+  const missing = readers.filter((reader) => !seated.has(reader.publicKey.toBase58()))
+  if (missing.length > 0) {
+    const signer = pickAdminSigner(config.admin.toBase58(), payer)
+    for (const reader of missing) {
+      const signature = await program.methods
+        .addOracle(reader.publicKey)
+        .accounts({ authority: signer.publicKey, config: configPda, oracleSet: oracleSetPda })
+        .signers([signer])
+        .rpc()
+      console.log('add_oracle', signature, reader.publicKey.toBase58())
+    }
+    oracleSet = await program.account.oracleSet.fetch(oracleSetPda)
+  }
+
+  // Gas for the readers: fees are paid by whoever submits, and the season's
+  // first reading also pays the tally's rent — so each seat carries SOL.
+  for (const reader of readers) {
+    if ((await connection.getBalance(reader.publicKey)) < 20_000_000) {
+      const fundTx = new anchor.web3.Transaction().add(
+        anchor.web3.SystemProgram.transfer({
+          fromPubkey: payer.publicKey,
+          toPubkey: reader.publicKey,
+          lamports: 50_000_000,
+        }),
+      )
+      await provider.sendAndConfirm(fundTx)
+      console.log('funded reader', reader.publicKey.toBase58(), 'with 0.05 SOL for fees + rent')
+    }
+  }
+  console.log({
+    oracleSet: oracleSetPda.toBase58(),
+    k: oracleSet.k,
+    members: oracleSet.members.map((m) => m.toBase58()),
+  })
 }
 
 main().catch((err) => {

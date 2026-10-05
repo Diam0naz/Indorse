@@ -56,6 +56,14 @@ describe('indorse_program', () => {
   let verifierUsdcA: PublicKey
   let verifierUsdcB: PublicKey
 
+  // Phase 2 — oracle-set median (odd quorum k=3, three unbound readers)
+  const ORACLE_K = 3
+  let oracleSetPda: PublicKey
+  let oraclePda: PublicKey
+  let oracleA: Keypair
+  let oracleB: Keypair
+  let oracleC: Keypair
+
   const FARM_NAME = 'Green Valley Farm'
   const LAT_E6 = 34052000 // 34.052000 (LA)
   const LNG_E6 = -118243000 // -118.243000 (LA)
@@ -71,7 +79,6 @@ describe('indorse_program', () => {
   const RAINFALL_MM = 800 // season read 80.0 mm → no trigger
   const SEASON_START = 1_700_000_000 // fixed past season (Nov 2023)
   const SEASON_END = 1_704_768_000
-  const READING_TS = 1_704_700_000
   const ESCROW_USDC = 10_000_000 // 10 USDC
 
   const u32le = (n: number) => new anchor.BN(n).toArrayLike(Buffer, 'le', 4)
@@ -89,6 +96,20 @@ describe('indorse_program', () => {
         report,
         farm: farmPda,
         tally: tallyFor(report),
+        systemProgram: SystemProgram.programId,
+      })
+      .signers([by])
+      .rpc()
+
+  // Phase 2 helper — post a season reading as one oracle-set member
+  const submitReading = (by: Keypair, mm: number) =>
+    program.methods
+      .submitOracleReading(new anchor.BN(SEASON_START), mm)
+      .accounts({
+        member: by.publicKey,
+        oracleSet: oracleSetPda,
+        farm: farmPda,
+        oracle: oraclePda,
         systemProgram: SystemProgram.programId,
       })
       .signers([by])
@@ -138,6 +159,15 @@ describe('indorse_program', () => {
 
     // Derive the verifier-set PDA (Phase 1 — K-of-N quorum lives here)
     ;[verifierSetPda] = PublicKey.findProgramAddressSync([Buffer.from('verifier_set')], program.programId)
+
+    // Derive the oracle-set PDA (Phase 2 — the admin-managed reader seats)
+    ;[oracleSetPda] = PublicKey.findProgramAddressSync([Buffer.from('oracle_set')], program.programId)
+
+    // Derive the season weather tally PDA (per farm + season start)
+    oraclePda = PublicKey.findProgramAddressSync(
+      [Buffer.from('weather'), farmPda.toBuffer(), i64le(SEASON_START)],
+      program.programId,
+    )[0]
 
     // Create reward token mint
     rewardMint = await createMint(provider.connection, authority, authority.publicKey, null, 6)
@@ -709,6 +739,145 @@ describe('indorse_program', () => {
     assert.equal(Number(treasuryAfter), Number(treasuryBefore) + BOND)
   })
 
+  // ── Oracle set (Phase 2 — median of an odd quorum, no bonds) ──────────────
+
+  it('Initialises the oracle set with an admin-only odd quorum of three', async () => {
+    const stranger = Keypair.generate()
+    await fund(stranger.publicKey) // init pays rent before the gate
+
+    // Only config.admin sets the rules.
+    try {
+      await program.methods
+        .initOracleSet(ORACLE_K)
+        .accounts({
+          authority: stranger.publicKey,
+          config: configPda,
+          oracleSet: oracleSetPda,
+          systemProgram: SystemProgram.programId,
+        })
+        .signers([stranger])
+        .rpc()
+      assert.fail('Should have thrown an error')
+    } catch (err) {
+      assert.include(err.message, 'program admin')
+    }
+
+    // An even quorum has no unambiguous middle value to return.
+    try {
+      await program.methods
+        .initOracleSet(2)
+        .accounts({
+          authority: provider.wallet.publicKey,
+          config: configPda,
+          oracleSet: oracleSetPda,
+          systemProgram: SystemProgram.programId,
+        })
+        .rpc()
+      assert.fail('Should have thrown an error')
+    } catch (err) {
+      assert.include(err.message, 'odd number')
+    }
+
+    // k=1 would recreate the single-reader regime Phase 2 removed.
+    try {
+      await program.methods
+        .initOracleSet(1)
+        .accounts({
+          authority: provider.wallet.publicKey,
+          config: configPda,
+          oracleSet: oracleSetPda,
+          systemProgram: SystemProgram.programId,
+        })
+        .rpc()
+      assert.fail('Should have thrown an error')
+    } catch (err) {
+      assert.include(err.message, 'odd number')
+    }
+
+    await program.methods
+      .initOracleSet(ORACLE_K)
+      .accounts({
+        authority: provider.wallet.publicKey,
+        config: configPda,
+        oracleSet: oracleSetPda,
+        systemProgram: SystemProgram.programId,
+      })
+      .rpc()
+
+    const set = await program.account.oracleSet.fetch(oracleSetPda)
+    assert.equal(set.k, ORACLE_K)
+    assert.equal(set.members.length, 0)
+  })
+
+  it('Assigns three reader seats and refuses duplicates', async () => {
+    oracleA = Keypair.generate()
+    oracleB = Keypair.generate()
+    oracleC = Keypair.generate()
+    // The season's first reader also pays the tally's rent.
+    await fund(oracleA.publicKey)
+
+    const add = (member: PublicKey, by: PublicKey = provider.wallet.publicKey, signers: Keypair[] = []) =>
+      program.methods
+        .addOracle(member)
+        .accounts({ authority: by, config: configPda, oracleSet: oracleSetPda })
+        .signers(signers)
+        .rpc()
+
+    await add(oracleA.publicKey)
+    await add(oracleB.publicKey)
+    await add(oracleC.publicKey)
+
+    // A seat cannot be taken twice.
+    try {
+      await add(oracleA.publicKey)
+      assert.fail('Should have thrown an error')
+    } catch (err) {
+      assert.include(err.message, 'already a reader')
+    }
+
+    // A non-admin cannot assign seats.
+    try {
+      await add(oracleB.publicKey, verifierB.publicKey, [verifierB])
+      assert.fail('Should have thrown an error')
+    } catch (err) {
+      assert.include(err.message, 'program admin')
+    }
+
+    // Removal revokes a seat; a reading already posted would persist.
+    await program.methods
+      .removeOracle(oracleC.publicKey)
+      .accounts({ authority: provider.wallet.publicKey, config: configPda, oracleSet: oracleSetPda })
+      .rpc()
+    let set = await program.account.oracleSet.fetch(oracleSetPda)
+    assert.equal(set.members.length, 2)
+
+    await add(oracleC.publicKey)
+    set = await program.account.oracleSet.fetch(oracleSetPda)
+    assert.equal(set.members.length, ORACLE_K)
+  })
+
+  it('Rejects a reading from outside the oracle set', async () => {
+    const stranger = Keypair.generate()
+    await fund(stranger.publicKey) // init_if_needed pays rent before the gate
+
+    try {
+      await program.methods
+        .submitOracleReading(new anchor.BN(SEASON_START), RAINFALL_MM)
+        .accounts({
+          member: stranger.publicKey,
+          oracleSet: oracleSetPda,
+          farm: farmPda,
+          oracle: oraclePda,
+          systemProgram: SystemProgram.programId,
+        })
+        .signers([stranger])
+        .rpc()
+      assert.fail('Should have thrown an error')
+    } catch (err) {
+      assert.include(err.message, 'authorised weather oracle')
+    }
+  })
+
   // ── Treasury-pool insurance ────────────────────────────────────────────────
 
   it('Create a policy with only the farmer signing', async () => {
@@ -870,25 +1039,65 @@ describe('indorse_program', () => {
     assert.equal(Number(adminAfter), Number(adminBefore) + AMOUNT)
   })
 
-  it('Post the season reading and reject a refund to a non-treasury account', async () => {
-    const [oraclePda] = PublicKey.findProgramAddressSync(
-      [Buffer.from('weather'), farmPda.toBuffer(), i64le(SEASON_START)],
-      program.programId,
-    )
+  it('Keeps the season reading open until quorum', async () => {
+    // One of three readers: stored in the tally, nothing official yet.
+    await submitReading(oracleA, 700)
+    const partial = await program.account.weatherOracle.fetch(oraclePda)
+    assert.isFalse(partial.finalized)
+    assert.equal(partial.totalRainfallMm, 0)
+    assert.equal(partial.readings.length, 1)
 
-    await program.methods
-      .submitWeatherReading(new anchor.BN(SEASON_START), RAINFALL_MM, new anchor.BN(READING_TS))
-      .accounts({
-        authority: provider.wallet.publicKey,
-        config: configPda,
-        farm: farmPda,
-        oracle: oraclePda,
-        systemProgram: SystemProgram.programId,
-      })
-      .rpc()
+    // Settle refuses a partial tally — the account existing is not quorum.
+    try {
+      await program.methods
+        .settlePolicy()
+        .accounts({
+          settler: provider.wallet.publicKey,
+          config: configPda,
+          policy: policyPda,
+          insuranceVault: policyVault,
+          oracle: oraclePda,
+          farmerUsdc: ownerUsdc,
+          treasury: treasuryPda,
+          insurerUsdc: treasuryUsdc,
+          tokenProgram: anchor.utils.token.TOKEN_PROGRAM_ID,
+        })
+        .rpc()
+      assert.fail('Should have thrown an error')
+    } catch (err) {
+      assert.include(err.message, 'has not reached quorum')
+    }
+  })
+
+  it('Replaces its own reading before quorum (never double-counts)', async () => {
+    // The same reader corrects 70.0 mm → 60.0 mm while the tally is open.
+    await submitReading(oracleA, 600)
+    const tally = await program.account.weatherOracle.fetch(oraclePda)
+    assert.equal(tally.readings.length, 1)
+    assert.equal(tally.readings[0].totalRainfallMm, 600)
+    assert.equal(tally.readings[0].oracle.toBase58(), oracleA.publicKey.toBase58())
+    assert.isFalse(tally.finalized)
+  })
+
+  it('Post the season reading and reject a refund to a non-treasury account', async () => {
+    // Complete the quorum: [600, 800, 900] → median 800 (a mean would be
+    // 766.7 — the median, not the average, is what settles).
+    await submitReading(oracleB, 800)
+    await submitReading(oracleC, 900)
 
     const oracle = await program.account.weatherOracle.fetch(oraclePda)
+    assert.isTrue(oracle.finalized)
     assert.equal(oracle.totalRainfallMm, RAINFALL_MM)
+    assert.equal(oracle.readings.length, ORACLE_K)
+    assert.isAbove(Number(oracle.readingTimestamp), 0)
+
+    // A late reader cannot move a settled number.
+    try {
+      await submitReading(oracleA, 123)
+      assert.fail('Should have thrown an error')
+    } catch (err) {
+      assert.include(err.message, 'already final')
+    }
 
     // Refund destination owned by the farmer, not the treasury → rejected.
     try {
@@ -913,10 +1122,6 @@ describe('indorse_program', () => {
   })
 
   it('Settle without a trigger: coverage returns to the treasury', async () => {
-    const [oraclePda] = PublicKey.findProgramAddressSync(
-      [Buffer.from('weather'), farmPda.toBuffer(), i64le(SEASON_START)],
-      program.programId,
-    )
     const treasuryBefore = (await getAccount(provider.connection, treasuryUsdc)).amount
 
     await program.methods

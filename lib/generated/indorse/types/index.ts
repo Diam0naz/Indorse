@@ -7,6 +7,7 @@
  */
 
 export * from './escrowState'
+export * from './oracleReading'
 export * from './policyState'
 export * from './reportStatus'
 export * from './tallyVote'

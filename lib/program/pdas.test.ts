@@ -22,6 +22,7 @@ import {
   escrowVaultPda,
   farmPda,
   insuranceVaultPda,
+  oracleSetPda,
   policyPda,
   reportPda,
   rewardAuthorityPda,
@@ -143,9 +144,9 @@ describe('PDA helpers vs IDL seed metadata', () => {
     )
   })
 
-  it('weather oracle — ["weather", farm, i64(season_start)]', async () => {
+  it('weather reading tally — ["weather", farm, i64(season_start)]', async () => {
     expect(await weatherOraclePda(FARM, CTX.seasonStart)).toBe(
-      await deriveFromIdl('submit_weather_reading', 'oracle', CTX),
+      await deriveFromIdl('submit_oracle_reading', 'oracle', CTX),
     )
   })
 
@@ -163,6 +164,10 @@ describe('PDA helpers vs IDL seed metadata', () => {
 
   it('verifier set — single literal seed', async () => {
     expect(await verifierSetPda()).toBe(await deriveFromIdl('init_verifier_set', 'verifier_set', CTX))
+  })
+
+  it('oracle set — single literal seed', async () => {
+    expect(await oracleSetPda()).toBe(await deriveFromIdl('init_oracle_set', 'oracle_set', CTX))
   })
 
   it('tally — ["tally", report]', async () => {

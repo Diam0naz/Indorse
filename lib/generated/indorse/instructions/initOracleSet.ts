@@ -12,12 +12,10 @@ import {
   fixEncoderSize,
   getBytesDecoder,
   getBytesEncoder,
-  getI64Decoder,
-  getI64Encoder,
   getStructDecoder,
   getStructEncoder,
-  getU32Decoder,
-  getU32Encoder,
+  getU8Decoder,
+  getU8Encoder,
   SOLANA_ERROR__PROGRAM_CLIENTS__INSUFFICIENT_ACCOUNT_METAS,
   SolanaError,
   transformEncoder,
@@ -36,29 +34,23 @@ import {
   type WritableAccount,
   type WritableSignerAccount,
 } from '@solana/kit'
-import {
-  getAccountMetaFactory,
-  getAddressFromResolvedInstructionAccount,
-  getNonNullResolvedInstructionInput,
-  type ResolvedInstructionAccount,
-} from '@solana/program-client-core'
-import { findOraclePda } from '../pdas'
+import { getAccountMetaFactory, type ResolvedInstructionAccount } from '@solana/program-client-core'
+import { findOracleSetPda } from '../pdas'
 import { INDORSE_PROGRAM_PROGRAM_ADDRESS } from '../programs'
 
-export const SUBMIT_WEATHER_READING_DISCRIMINATOR: ReadonlyUint8Array = new Uint8Array([
-  179, 120, 118, 89, 76, 254, 15, 107,
+export const INIT_ORACLE_SET_DISCRIMINATOR: ReadonlyUint8Array = new Uint8Array([
+  134, 136, 220, 182, 182, 246, 251, 144,
 ])
 
-export function getSubmitWeatherReadingDiscriminatorBytes(): ReadonlyUint8Array {
-  return fixEncoderSize(getBytesEncoder(), 8).encode(SUBMIT_WEATHER_READING_DISCRIMINATOR)
+export function getInitOracleSetDiscriminatorBytes(): ReadonlyUint8Array {
+  return fixEncoderSize(getBytesEncoder(), 8).encode(INIT_ORACLE_SET_DISCRIMINATOR)
 }
 
-export type SubmitWeatherReadingInstruction<
+export type InitOracleSetInstruction<
   TProgram extends string = typeof INDORSE_PROGRAM_PROGRAM_ADDRESS,
   TAccountAuthority extends string | AccountMeta<string> = string,
   TAccountConfig extends string | AccountMeta<string> = string,
-  TAccountFarm extends string | AccountMeta<string> = string,
-  TAccountOracle extends string | AccountMeta<string> = string,
+  TAccountOracleSet extends string | AccountMeta<string> = string,
   TAccountSystemProgram extends string | AccountMeta<string> = '11111111111111111111111111111111',
   TRemainingAccounts extends readonly AccountMeta<string>[] = [],
 > = Instruction<TProgram> &
@@ -69,98 +61,68 @@ export type SubmitWeatherReadingInstruction<
         ? WritableSignerAccount<TAccountAuthority> & AccountSignerMeta<TAccountAuthority>
         : TAccountAuthority,
       TAccountConfig extends string ? ReadonlyAccount<TAccountConfig> : TAccountConfig,
-      TAccountFarm extends string ? ReadonlyAccount<TAccountFarm> : TAccountFarm,
-      TAccountOracle extends string ? WritableAccount<TAccountOracle> : TAccountOracle,
+      TAccountOracleSet extends string ? WritableAccount<TAccountOracleSet> : TAccountOracleSet,
       TAccountSystemProgram extends string ? ReadonlyAccount<TAccountSystemProgram> : TAccountSystemProgram,
       ...TRemainingAccounts,
     ]
   >
 
-export type SubmitWeatherReadingInstructionData = {
-  discriminator: ReadonlyUint8Array
-  seasonStart: bigint
-  totalRainfallMm: number
-  readingTimestamp: bigint
-}
+export type InitOracleSetInstructionData = { discriminator: ReadonlyUint8Array; k: number }
 
-export type SubmitWeatherReadingInstructionDataArgs = {
-  seasonStart: number | bigint
-  totalRainfallMm: number
-  readingTimestamp: number | bigint
-}
+export type InitOracleSetInstructionDataArgs = { k: number }
 
-export function getSubmitWeatherReadingInstructionDataEncoder(): FixedSizeEncoder<SubmitWeatherReadingInstructionDataArgs> {
+export function getInitOracleSetInstructionDataEncoder(): FixedSizeEncoder<InitOracleSetInstructionDataArgs> {
   return transformEncoder(
     getStructEncoder([
       ['discriminator', fixEncoderSize(getBytesEncoder(), 8)],
-      ['seasonStart', getI64Encoder()],
-      ['totalRainfallMm', getU32Encoder()],
-      ['readingTimestamp', getI64Encoder()],
+      ['k', getU8Encoder()],
     ]),
-    (value) => ({ ...value, discriminator: SUBMIT_WEATHER_READING_DISCRIMINATOR }),
+    (value) => ({ ...value, discriminator: INIT_ORACLE_SET_DISCRIMINATOR }),
   )
 }
 
-export function getSubmitWeatherReadingInstructionDataDecoder(): FixedSizeDecoder<SubmitWeatherReadingInstructionData> {
+export function getInitOracleSetInstructionDataDecoder(): FixedSizeDecoder<InitOracleSetInstructionData> {
   return getStructDecoder([
     ['discriminator', fixDecoderSize(getBytesDecoder(), 8)],
-    ['seasonStart', getI64Decoder()],
-    ['totalRainfallMm', getU32Decoder()],
-    ['readingTimestamp', getI64Decoder()],
+    ['k', getU8Decoder()],
   ])
 }
 
-export function getSubmitWeatherReadingInstructionDataCodec(): FixedSizeCodec<
-  SubmitWeatherReadingInstructionDataArgs,
-  SubmitWeatherReadingInstructionData
+export function getInitOracleSetInstructionDataCodec(): FixedSizeCodec<
+  InitOracleSetInstructionDataArgs,
+  InitOracleSetInstructionData
 > {
-  return combineCodec(getSubmitWeatherReadingInstructionDataEncoder(), getSubmitWeatherReadingInstructionDataDecoder())
+  return combineCodec(getInitOracleSetInstructionDataEncoder(), getInitOracleSetInstructionDataDecoder())
 }
 
-export type SubmitWeatherReadingAsyncInput<
+export type InitOracleSetAsyncInput<
   TAccountAuthority extends string = string,
   TAccountConfig extends string = string,
-  TAccountFarm extends string = string,
-  TAccountOracle extends string = string,
+  TAccountOracleSet extends string = string,
   TAccountSystemProgram extends string = string,
 > = {
-  /** Role gate: only `config.oracle` may act as the weather oracle. */
+  /**
+   * Role gate: only `config.admin` sets the rules. Also pays the PDA's
+   * rent on init, hence `mut`.
+   */
   authority: TransactionSigner<TAccountAuthority>
-  /** The role lives here — rotating it is `set_roles`, not a redeploy. */
   config: Address<TAccountConfig>
-  farm: Address<TAccountFarm>
-  oracle?: Address<TAccountOracle>
+  oracleSet?: Address<TAccountOracleSet>
   systemProgram?: Address<TAccountSystemProgram>
-  seasonStart: SubmitWeatherReadingInstructionDataArgs['seasonStart']
-  totalRainfallMm: SubmitWeatherReadingInstructionDataArgs['totalRainfallMm']
-  readingTimestamp: SubmitWeatherReadingInstructionDataArgs['readingTimestamp']
+  k: InitOracleSetInstructionDataArgs['k']
 }
 
-export async function getSubmitWeatherReadingInstructionAsync<
+export async function getInitOracleSetInstructionAsync<
   TAccountAuthority extends string,
   TAccountConfig extends string,
-  TAccountFarm extends string,
-  TAccountOracle extends string,
+  TAccountOracleSet extends string,
   TAccountSystemProgram extends string,
   TProgramAddress extends Address = typeof INDORSE_PROGRAM_PROGRAM_ADDRESS,
 >(
-  input: SubmitWeatherReadingAsyncInput<
-    TAccountAuthority,
-    TAccountConfig,
-    TAccountFarm,
-    TAccountOracle,
-    TAccountSystemProgram
-  >,
+  input: InitOracleSetAsyncInput<TAccountAuthority, TAccountConfig, TAccountOracleSet, TAccountSystemProgram>,
   config?: { programAddress?: TProgramAddress },
 ): Promise<
-  SubmitWeatherReadingInstruction<
-    TProgramAddress,
-    TAccountAuthority,
-    TAccountConfig,
-    TAccountFarm,
-    TAccountOracle,
-    TAccountSystemProgram
-  >
+  InitOracleSetInstruction<TProgramAddress, TAccountAuthority, TAccountConfig, TAccountOracleSet, TAccountSystemProgram>
 > {
   // Program address.
   const programAddress = config?.programAddress ?? INDORSE_PROGRAM_PROGRAM_ADDRESS
@@ -169,8 +131,7 @@ export async function getSubmitWeatherReadingInstructionAsync<
   const originalAccounts = {
     authority: { value: input.authority ?? null, isWritable: true },
     config: { value: input.config ?? null, isWritable: false },
-    farm: { value: input.farm ?? null, isWritable: false },
-    oracle: { value: input.oracle ?? null, isWritable: true },
+    oracleSet: { value: input.oracleSet ?? null, isWritable: true },
     systemProgram: { value: input.systemProgram ?? null, isWritable: false },
   }
   const accounts = originalAccounts as Record<keyof typeof originalAccounts, ResolvedInstructionAccount>
@@ -179,14 +140,8 @@ export async function getSubmitWeatherReadingInstructionAsync<
   const args = { ...input }
 
   // Resolve default values.
-  if (!accounts.oracle.value) {
-    accounts.oracle.value = await findOraclePda(
-      {
-        farm: getAddressFromResolvedInstructionAccount('farm', accounts.farm.value),
-        seasonStart: getNonNullResolvedInstructionInput('seasonStart', args.seasonStart),
-      },
-      { programAddress },
-    )
+  if (!accounts.oracleSet.value) {
+    accounts.oracleSet.value = await findOracleSetPda({ programAddress })
   }
   if (!accounts.systemProgram.value) {
     accounts.systemProgram.value = '11111111111111111111111111111111' as Address<'11111111111111111111111111111111'>
@@ -197,63 +152,51 @@ export async function getSubmitWeatherReadingInstructionAsync<
     accounts: [
       getAccountMeta('authority', accounts.authority),
       getAccountMeta('config', accounts.config),
-      getAccountMeta('farm', accounts.farm),
-      getAccountMeta('oracle', accounts.oracle),
+      getAccountMeta('oracleSet', accounts.oracleSet),
       getAccountMeta('systemProgram', accounts.systemProgram),
     ],
-    data: getSubmitWeatherReadingInstructionDataEncoder().encode(args as SubmitWeatherReadingInstructionDataArgs),
+    data: getInitOracleSetInstructionDataEncoder().encode(args as InitOracleSetInstructionDataArgs),
     programAddress,
-  } as SubmitWeatherReadingInstruction<
+  } as InitOracleSetInstruction<
     TProgramAddress,
     TAccountAuthority,
     TAccountConfig,
-    TAccountFarm,
-    TAccountOracle,
+    TAccountOracleSet,
     TAccountSystemProgram
   >)
 }
 
-export type SubmitWeatherReadingInput<
+export type InitOracleSetInput<
   TAccountAuthority extends string = string,
   TAccountConfig extends string = string,
-  TAccountFarm extends string = string,
-  TAccountOracle extends string = string,
+  TAccountOracleSet extends string = string,
   TAccountSystemProgram extends string = string,
 > = {
-  /** Role gate: only `config.oracle` may act as the weather oracle. */
+  /**
+   * Role gate: only `config.admin` sets the rules. Also pays the PDA's
+   * rent on init, hence `mut`.
+   */
   authority: TransactionSigner<TAccountAuthority>
-  /** The role lives here — rotating it is `set_roles`, not a redeploy. */
   config: Address<TAccountConfig>
-  farm: Address<TAccountFarm>
-  oracle: Address<TAccountOracle>
+  oracleSet: Address<TAccountOracleSet>
   systemProgram?: Address<TAccountSystemProgram>
-  seasonStart: SubmitWeatherReadingInstructionDataArgs['seasonStart']
-  totalRainfallMm: SubmitWeatherReadingInstructionDataArgs['totalRainfallMm']
-  readingTimestamp: SubmitWeatherReadingInstructionDataArgs['readingTimestamp']
+  k: InitOracleSetInstructionDataArgs['k']
 }
 
-export function getSubmitWeatherReadingInstruction<
+export function getInitOracleSetInstruction<
   TAccountAuthority extends string,
   TAccountConfig extends string,
-  TAccountFarm extends string,
-  TAccountOracle extends string,
+  TAccountOracleSet extends string,
   TAccountSystemProgram extends string,
   TProgramAddress extends Address = typeof INDORSE_PROGRAM_PROGRAM_ADDRESS,
 >(
-  input: SubmitWeatherReadingInput<
-    TAccountAuthority,
-    TAccountConfig,
-    TAccountFarm,
-    TAccountOracle,
-    TAccountSystemProgram
-  >,
+  input: InitOracleSetInput<TAccountAuthority, TAccountConfig, TAccountOracleSet, TAccountSystemProgram>,
   config?: { programAddress?: TProgramAddress },
-): SubmitWeatherReadingInstruction<
+): InitOracleSetInstruction<
   TProgramAddress,
   TAccountAuthority,
   TAccountConfig,
-  TAccountFarm,
-  TAccountOracle,
+  TAccountOracleSet,
   TAccountSystemProgram
 > {
   // Program address.
@@ -263,8 +206,7 @@ export function getSubmitWeatherReadingInstruction<
   const originalAccounts = {
     authority: { value: input.authority ?? null, isWritable: true },
     config: { value: input.config ?? null, isWritable: false },
-    farm: { value: input.farm ?? null, isWritable: false },
-    oracle: { value: input.oracle ?? null, isWritable: true },
+    oracleSet: { value: input.oracleSet ?? null, isWritable: true },
     systemProgram: { value: input.systemProgram ?? null, isWritable: false },
   }
   const accounts = originalAccounts as Record<keyof typeof originalAccounts, ResolvedInstructionAccount>
@@ -282,49 +224,45 @@ export function getSubmitWeatherReadingInstruction<
     accounts: [
       getAccountMeta('authority', accounts.authority),
       getAccountMeta('config', accounts.config),
-      getAccountMeta('farm', accounts.farm),
-      getAccountMeta('oracle', accounts.oracle),
+      getAccountMeta('oracleSet', accounts.oracleSet),
       getAccountMeta('systemProgram', accounts.systemProgram),
     ],
-    data: getSubmitWeatherReadingInstructionDataEncoder().encode(args as SubmitWeatherReadingInstructionDataArgs),
+    data: getInitOracleSetInstructionDataEncoder().encode(args as InitOracleSetInstructionDataArgs),
     programAddress,
-  } as SubmitWeatherReadingInstruction<
+  } as InitOracleSetInstruction<
     TProgramAddress,
     TAccountAuthority,
     TAccountConfig,
-    TAccountFarm,
-    TAccountOracle,
+    TAccountOracleSet,
     TAccountSystemProgram
   >)
 }
 
-export type ParsedSubmitWeatherReadingInstruction<
+export type ParsedInitOracleSetInstruction<
   TProgram extends string = typeof INDORSE_PROGRAM_PROGRAM_ADDRESS,
   TAccountMetas extends readonly AccountMeta[] = readonly AccountMeta[],
 > = {
   programAddress: Address<TProgram>
   accounts: {
-    /** Role gate: only `config.oracle` may act as the weather oracle. */
+    /**
+     * Role gate: only `config.admin` sets the rules. Also pays the PDA's
+     * rent on init, hence `mut`.
+     */
     authority: TAccountMetas[0]
-    /** The role lives here — rotating it is `set_roles`, not a redeploy. */
     config: TAccountMetas[1]
-    farm: TAccountMetas[2]
-    oracle: TAccountMetas[3]
-    systemProgram: TAccountMetas[4]
+    oracleSet: TAccountMetas[2]
+    systemProgram: TAccountMetas[3]
   }
-  data: SubmitWeatherReadingInstructionData
+  data: InitOracleSetInstructionData
 }
 
-export function parseSubmitWeatherReadingInstruction<
-  TProgram extends string,
-  TAccountMetas extends readonly AccountMeta[],
->(
+export function parseInitOracleSetInstruction<TProgram extends string, TAccountMetas extends readonly AccountMeta[]>(
   instruction: Instruction<TProgram> & InstructionWithAccounts<TAccountMetas> & InstructionWithData<ReadonlyUint8Array>,
-): ParsedSubmitWeatherReadingInstruction<TProgram, TAccountMetas> {
-  if (instruction.accounts.length < 5) {
+): ParsedInitOracleSetInstruction<TProgram, TAccountMetas> {
+  if (instruction.accounts.length < 4) {
     throw new SolanaError(SOLANA_ERROR__PROGRAM_CLIENTS__INSUFFICIENT_ACCOUNT_METAS, {
       actualAccountMetas: instruction.accounts.length,
-      expectedAccountMetas: 5,
+      expectedAccountMetas: 4,
     })
   }
   let accountIndex = 0
@@ -338,10 +276,9 @@ export function parseSubmitWeatherReadingInstruction<
     accounts: {
       authority: getNextAccount(),
       config: getNextAccount(),
-      farm: getNextAccount(),
-      oracle: getNextAccount(),
+      oracleSet: getNextAccount(),
       systemProgram: getNextAccount(),
     },
-    data: getSubmitWeatherReadingInstructionDataDecoder().decode(instruction.data),
+    data: getInitOracleSetInstructionDataDecoder().decode(instruction.data),
   }
 }

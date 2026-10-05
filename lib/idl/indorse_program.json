@@ -8,6 +8,64 @@
   },
   "instructions": [
     {
+      "name": "add_oracle",
+      "docs": [
+        "Add a reader (`config.admin` assigns seats — no bond, because the",
+        "median itself is the defence: one liar cannot move the middle value)."
+      ],
+      "discriminator": [
+        185,
+        165,
+        165,
+        167,
+        208,
+        207,
+        55,
+        35
+      ],
+      "accounts": [
+        {
+          "name": "authority",
+          "docs": [
+            "Role gate: only `config.admin` assigns or revokes reader seats."
+          ],
+          "signer": true
+        },
+        {
+          "name": "config"
+        },
+        {
+          "name": "oracle_set",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  111,
+                  114,
+                  97,
+                  99,
+                  108,
+                  101,
+                  95,
+                  115,
+                  101,
+                  116
+                ]
+              }
+            ]
+          }
+        }
+      ],
+      "args": [
+        {
+          "name": "member",
+          "type": "pubkey"
+        }
+      ]
+    },
+    {
       "name": "cancel_escrow",
       "docs": [
         "Buyer cancels and reclaims funds ONLY before the lock_until timestamp."
@@ -578,6 +636,74 @@
       ]
     },
     {
+      "name": "init_oracle_set",
+      "docs": [
+        "An authorised weather oracle posts a rainfall reading for a farm/season.",
+        "",
+        "PDA seeds: [b\"weather\", farm, season_start (i64 LE)]",
+        "Bootstrap the reader set once: how many readers make a season reading",
+        "official. k must be odd and at least 3, so the median is a single",
+        "unambiguous middle value — and so no single key can be \"the oracle\"."
+      ],
+      "discriminator": [
+        134,
+        136,
+        220,
+        182,
+        182,
+        246,
+        251,
+        144
+      ],
+      "accounts": [
+        {
+          "name": "authority",
+          "docs": [
+            "Role gate: only `config.admin` sets the rules. Also pays the PDA's",
+            "rent on init, hence `mut`."
+          ],
+          "writable": true,
+          "signer": true
+        },
+        {
+          "name": "config"
+        },
+        {
+          "name": "oracle_set",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  111,
+                  114,
+                  97,
+                  99,
+                  108,
+                  101,
+                  95,
+                  115,
+                  101,
+                  116
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "name": "system_program",
+          "address": "11111111111111111111111111111111"
+        }
+      ],
+      "args": [
+        {
+          "name": "k",
+          "type": "u8"
+        }
+      ]
+    },
+    {
       "name": "init_verifier_set",
       "docs": [
         "Approve or reject a pending scout report.",
@@ -870,6 +996,64 @@
         }
       ],
       "args": []
+    },
+    {
+      "name": "remove_oracle",
+      "docs": [
+        "Remove a reader (`config.admin`). Readings they already posted stay in",
+        "the tally — a removed reader cannot un-notice a season."
+      ],
+      "discriminator": [
+        60,
+        93,
+        51,
+        197,
+        182,
+        42,
+        170,
+        26
+      ],
+      "accounts": [
+        {
+          "name": "authority",
+          "docs": [
+            "Role gate: only `config.admin` assigns or revokes reader seats."
+          ],
+          "signer": true
+        },
+        {
+          "name": "config"
+        },
+        {
+          "name": "oracle_set",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  111,
+                  114,
+                  97,
+                  99,
+                  108,
+                  101,
+                  95,
+                  115,
+                  101,
+                  116
+                ]
+              }
+            ]
+          }
+        }
+      ],
+      "args": [
+        {
+          "name": "member",
+          "type": "pubkey"
+        }
+      ]
     },
     {
       "name": "remove_verifier",
@@ -1571,6 +1755,104 @@
       ]
     },
     {
+      "name": "submit_oracle_reading",
+      "docs": [
+        "Post (or replace, before quorum) this reader's season rainfall.",
+        "Reaching `oracle_set.k` readings computes the median — the middle of",
+        "the sorted readings — freezes it into `total_rainfall_mm`, stamps",
+        "`reading_timestamp`, and closes the account: later submissions fail",
+        "the `finalized` gate instead of moving a settled number."
+      ],
+      "discriminator": [
+        9,
+        79,
+        44,
+        17,
+        102,
+        51,
+        7,
+        127
+      ],
+      "accounts": [
+        {
+          "name": "member",
+          "docs": [
+            "Membership gate: only the admin-managed oracle set may read; also pays",
+            "the tally's rent on the season's first reading, hence `mut`."
+          ],
+          "writable": true,
+          "signer": true
+        },
+        {
+          "name": "oracle_set",
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  111,
+                  114,
+                  97,
+                  99,
+                  108,
+                  101,
+                  95,
+                  115,
+                  101,
+                  116
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "name": "farm"
+        },
+        {
+          "name": "oracle",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  119,
+                  101,
+                  97,
+                  116,
+                  104,
+                  101,
+                  114
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "farm"
+              },
+              {
+                "kind": "arg",
+                "path": "season_start"
+              }
+            ]
+          }
+        },
+        {
+          "name": "system_program",
+          "address": "11111111111111111111111111111111"
+        }
+      ],
+      "args": [
+        {
+          "name": "season_start",
+          "type": "i64"
+        },
+        {
+          "name": "total_rainfall_mm",
+          "type": "u32"
+        }
+      ]
+    },
+    {
       "name": "submit_scout_report",
       "docs": [
         "Submit a new scout report (photo hash + GPS + AI label)."
@@ -1653,89 +1935,6 @@
         {
           "name": "ai_label",
           "type": "string"
-        }
-      ]
-    },
-    {
-      "name": "submit_weather_reading",
-      "docs": [
-        "An authorised weather oracle posts a rainfall reading for a farm/season.",
-        "",
-        "PDA seeds: [b\"weather\", farm, season_start (i64 LE)]"
-      ],
-      "discriminator": [
-        179,
-        120,
-        118,
-        89,
-        76,
-        254,
-        15,
-        107
-      ],
-      "accounts": [
-        {
-          "name": "authority",
-          "docs": [
-            "Role gate: only `config.oracle` may act as the weather oracle."
-          ],
-          "writable": true,
-          "signer": true
-        },
-        {
-          "name": "config",
-          "docs": [
-            "The role lives here — rotating it is `set_roles`, not a redeploy."
-          ]
-        },
-        {
-          "name": "farm"
-        },
-        {
-          "name": "oracle",
-          "writable": true,
-          "pda": {
-            "seeds": [
-              {
-                "kind": "const",
-                "value": [
-                  119,
-                  101,
-                  97,
-                  116,
-                  104,
-                  101,
-                  114
-                ]
-              },
-              {
-                "kind": "account",
-                "path": "farm"
-              },
-              {
-                "kind": "arg",
-                "path": "season_start"
-              }
-            ]
-          }
-        },
-        {
-          "name": "system_program",
-          "address": "11111111111111111111111111111111"
-        }
-      ],
-      "args": [
-        {
-          "name": "season_start",
-          "type": "i64"
-        },
-        {
-          "name": "total_rainfall_mm",
-          "type": "u32"
-        },
-        {
-          "name": "reading_timestamp",
-          "type": "i64"
         }
       ]
     },
@@ -1871,6 +2070,19 @@
         174,
         126,
         159
+      ]
+    },
+    {
+      "name": "OracleSet",
+      "discriminator": [
+        128,
+        26,
+        73,
+        134,
+        218,
+        90,
+        126,
+        42
       ]
     },
     {
@@ -2029,6 +2241,45 @@
         10,
         202,
         173
+      ]
+    },
+    {
+      "name": "OracleJoined",
+      "discriminator": [
+        82,
+        191,
+        89,
+        95,
+        232,
+        215,
+        179,
+        109
+      ]
+    },
+    {
+      "name": "OracleRemoved",
+      "discriminator": [
+        62,
+        112,
+        125,
+        81,
+        128,
+        93,
+        194,
+        96
+      ]
+    },
+    {
+      "name": "OracleSetInitialized",
+      "discriminator": [
+        144,
+        147,
+        228,
+        14,
+        194,
+        123,
+        60,
+        253
       ]
     },
     {
@@ -2201,6 +2452,19 @@
       ]
     },
     {
+      "name": "WeatherMedianFinalized",
+      "discriminator": [
+        126,
+        37,
+        142,
+        206,
+        99,
+        94,
+        21,
+        226
+      ]
+    },
+    {
       "name": "WeatherReadingSubmitted",
       "discriminator": [
         160,
@@ -2369,6 +2633,31 @@
       "code": 6030,
       "name": "AlreadyVoted",
       "msg": "Verifier has already voted on this report"
+    },
+    {
+      "code": 6031,
+      "name": "InvalidMedianQuorum",
+      "msg": "Oracle quorum must be an odd number from 3 to the oracle-set maximum"
+    },
+    {
+      "code": 6032,
+      "name": "AlreadyOracle",
+      "msg": "Key is already a reader in the oracle set"
+    },
+    {
+      "code": 6033,
+      "name": "OracleSetFull",
+      "msg": "The oracle set is full"
+    },
+    {
+      "code": 6034,
+      "name": "ReadingFinalized",
+      "msg": "The season reading is already final"
+    },
+    {
+      "code": 6035,
+      "name": "ReadingNotFinalized",
+      "msg": "The season reading has not reached quorum"
     }
   ],
   "types": [
@@ -2407,7 +2696,9 @@
           {
             "name": "oracle",
             "docs": [
-              "Posts weather readings."
+              "Vestigial after Phase 2: weather readings moved to the admin-managed",
+              "oracle set's median. Kept so the account layout doesn't migrate;",
+              "`set_roles` still rotates it, but nothing gates on it."
             ],
             "type": "pubkey"
           },
@@ -2739,6 +3030,90 @@
           {
             "name": "quantity_kg",
             "type": "u64"
+          }
+        ]
+      }
+    },
+    {
+      "name": "OracleJoined",
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "member",
+            "type": "pubkey"
+          }
+        ]
+      }
+    },
+    {
+      "name": "OracleReading",
+      "docs": [
+        "One reader's vote in the season tally."
+      ],
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "oracle",
+            "type": "pubkey"
+          },
+          {
+            "name": "total_rainfall_mm",
+            "type": "u32"
+          }
+        ]
+      }
+    },
+    {
+      "name": "OracleRemoved",
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "member",
+            "type": "pubkey"
+          }
+        ]
+      }
+    },
+    {
+      "name": "OracleSet",
+      "docs": [
+        "Phase 2 — the admin-managed reader set: odd quorum k + members, no bonds",
+        "(the median is the defence, not collateral)."
+      ],
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "k",
+            "docs": [
+              "Odd, 3..=MAX_ORACLES: readings needed to freeze the median."
+            ],
+            "type": "u8"
+          },
+          {
+            "name": "members",
+            "type": {
+              "vec": "pubkey"
+            }
+          },
+          {
+            "name": "bump",
+            "type": "u8"
+          }
+        ]
+      }
+    },
+    {
+      "name": "OracleSetInitialized",
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "k",
+            "type": "u8"
           }
         ]
       }
@@ -3267,9 +3642,34 @@
       }
     },
     {
+      "name": "WeatherMedianFinalized",
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "oracle",
+            "type": "pubkey"
+          },
+          {
+            "name": "farm",
+            "type": "pubkey"
+          },
+          {
+            "name": "total_rainfall_mm",
+            "type": "u32"
+          },
+          {
+            "name": "readings",
+            "type": "u8"
+          }
+        ]
+      }
+    },
+    {
       "name": "WeatherOracle",
       "docs": [
-        "Layer 3 — Weather oracle reading (posted by authorised oracle keypair)"
+        "Layer 3 — Season weather reading: a per-season tally whose frozen median",
+        "settles policies (Phase 2 replaces the single oracle key)."
       ],
       "type": {
         "kind": "struct",
@@ -3279,20 +3679,43 @@
             "type": "pubkey"
           },
           {
-            "name": "authority",
-            "type": "pubkey"
-          },
-          {
             "name": "season_start",
             "type": "i64"
           },
           {
             "name": "total_rainfall_mm",
+            "docs": [
+              "Official median (mm × 10) — written when the quorum lands; 0 until."
+            ],
             "type": "u32"
           },
           {
             "name": "reading_timestamp",
+            "docs": [
+              "When the quorum froze the median."
+            ],
             "type": "i64"
+          },
+          {
+            "name": "finalized",
+            "docs": [
+              "True once k readings landed — the only state `settle_policy` trusts."
+            ],
+            "type": "bool"
+          },
+          {
+            "name": "readings",
+            "docs": [
+              "One reading per oracle-set member (own replacement allowed",
+              "pre-quorum), bounded by MAX_ORACLES."
+            ],
+            "type": {
+              "vec": {
+                "defined": {
+                  "name": "OracleReading"
+                }
+              }
+            }
           },
           {
             "name": "bump",
@@ -3321,8 +3744,9 @@
           {
             "name": "created",
             "docs": [
-              "True when this instruction created the oracle account (the first",
-              "reading for the farm/season); false when it overwrote an existing one."
+              "True when this instruction created the tally (the season's first",
+              "reading); false when it added to — or replaced a value within — an",
+              "existing one."
             ],
             "type": "bool"
           }
