@@ -1,5 +1,6 @@
 /**
- * lib/program/instruction.ts — Build kit `Instruction`s from the IDL.
+ * lib/program/instruction.ts — Build kit `Instruction`s from the IDL, plus the
+ * one Associated Token Account instruction every USDC flow needs.
  *
  * Account roles come straight from the IDL entry (`writable`/`signer`), fixed
  * addresses (system/token programs) are filled automatically, and everything
@@ -73,4 +74,44 @@ export function isAddressLike(value: string): boolean {
 export function toAddress(value: string): Address {
   if (!isAddressLike(value)) throw new Error(`"${value}" is not a base58 address`)
   return address(value)
+}
+
+/* ── Associated Token Account program (outside the Indorse IDL) ────────────── */
+
+const ASSOCIATED_TOKEN_PROGRAM_ID = address('ATokenGPvbdGVxr1b2hvZbsiqW5xWH25efTNsLJA8knL')
+const SYSTEM_PROGRAM_ID = address('11111111111111111111111111111111')
+const TOKEN_PROGRAM_ID = address('TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA')
+
+/**
+ * `CreateIdempotent` for `ata` (payload byte `1`), accounts in the Associated
+ * Token Account program's order:
+ * `[payer, associated_token, owner, mint, system_program, token_program]`.
+ *
+ * A wallet that has never held `mint` has no account at `ata`, and every
+ * program instruction that debits or fills one rejects a missing account with
+ * Anchor's `AccountNotInitialized` — which Solflare can only report as
+ * "simulation failed / unknown transaction" because it has no IDL for this
+ * program. Prepending this instruction to the same transaction creates the
+ * account when absent and no-ops when present, so first-use wallets work;
+ * the connected wallet is payer and owner in every app flow.
+ */
+export function buildCreateAtaInstruction(options: {
+  payer: string
+  ata: string
+  owner: string
+  mint: string
+}): Instruction {
+  const { payer, ata, owner, mint } = options
+  return {
+    programAddress: ASSOCIATED_TOKEN_PROGRAM_ID,
+    accounts: [
+      { address: address(payer), role: AccountRole.WRITABLE_SIGNER },
+      { address: address(ata), role: AccountRole.WRITABLE },
+      { address: address(owner), role: AccountRole.READONLY },
+      { address: address(mint), role: AccountRole.READONLY },
+      { address: SYSTEM_PROGRAM_ID, role: AccountRole.READONLY },
+      { address: TOKEN_PROGRAM_ID, role: AccountRole.READONLY },
+    ],
+    data: Uint8Array.of(1),
+  } as Instruction
 }

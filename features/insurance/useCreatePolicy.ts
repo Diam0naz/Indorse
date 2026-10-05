@@ -11,9 +11,11 @@
  *   3. Send via the wallet and invalidate `['indorse']` so the weather
  *      screen refetches the new policy
  *
- * Returns the new policy PDA on success. The premium transfer needs an
- * existing USDC ATA with a balance — the chain's rejection surfaces as the
- * mutation error.
+ * Returns the new policy PDA on success. The transaction prepends an
+ * idempotent create of the farmer's USDC ATA — a wallet that has never held
+ * USDC has no account, and the chain rejects a missing one before ever
+ * reaching the premium transfer; a balance below the premium still surfaces
+ * as the mutation error.
  */
 
 import { useQueryClient } from '@tanstack/react-query'
@@ -23,7 +25,7 @@ import { useWalletMutation } from '@/features/wallet/useWalletMutation'
 import { toWalletInstruction, walletSigner } from '@/features/wallet/mwaTransaction'
 import { USDC_DEVNET, USDC_MAINNET } from '@/constants/tokens'
 import { getCreatePolicyInstruction } from '@/lib/generated/indorse'
-import { ataPda, insuranceVaultPda, policyPda, toAddress } from '@/lib/program'
+import { ataPda, buildCreateAtaInstruction, insuranceVaultPda, policyPda, toAddress } from '@/lib/program'
 import { usdcToLamports } from '@/lib/format'
 import { validateCreatePolicy } from './types'
 import type { CreatePolicyInput } from './types'
@@ -58,7 +60,8 @@ export function useCreatePolicy() {
         seasonStart: input.seasonStart,
         seasonEnd: input.seasonEnd,
       })
-      await wallet.sendTransactions([toWalletInstruction(ix)])
+      const ataIx = buildCreateAtaInstruction({ payer: address, ata: farmerUsdc, owner: address, mint })
+      await wallet.sendTransactions([toWalletInstruction(ataIx), toWalletInstruction(ix)])
       await queryClient.invalidateQueries({ queryKey: ['indorse'] })
       return policy
     },

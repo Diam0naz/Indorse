@@ -148,10 +148,12 @@ const ASSOCIATED_TOKEN_PROGRAM_ID = address('ATokenGPvbdGVxr1b2hvZbsiqW5xWH25efT
  * The associated token account (ATA) holding `owner`'s `mint` balance.
  *
  * Seeds mirror the Associated Token Account program:
- * `[owner, token_program, mint]` — client-side derivation, no RPC. The
- * account must already exist with a balance when a program instruction
- * debits it (create_policy's premium, create_escrow's funding); the chain
- * rejects the transaction otherwise, and that error surfaces in the UI.
+ * `[owner, token_program, mint]` — client-side derivation, no RPC. A wallet
+ * which has never held `mint` has no account here yet, so every flow that
+ * debits it (create_policy's premium, create_escrow's funding) prepends
+ * `buildCreateAtaInstruction` — idempotent, one extra instruction in the same
+ * transaction. A balance still has to cover the transfer; the chain rejects
+ * it otherwise, and that error surfaces in the UI.
  */
 export function ataPda(owner: string, mint: string): Promise<Address> {
   return deriveFrom(ASSOCIATED_TOKEN_PROGRAM_ID, [

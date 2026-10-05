@@ -9,7 +9,7 @@
 
 import { describe, expect, it } from 'vitest'
 import { AccountRole } from '@solana/kit'
-import { buildInstruction, instructionAccountNames } from '@/lib/program/instruction'
+import { buildCreateAtaInstruction, buildInstruction, instructionAccountNames } from '@/lib/program/instruction'
 import { decodeInstructionArgs } from '@/lib/program/codec'
 import { instructionDiscriminator } from '@/lib/program/idl'
 import { PROGRAM_ID } from '@/constants/app-config'
@@ -54,5 +54,24 @@ describe('buildInstruction', () => {
     expect(() => buildInstruction('register_farm', { owner: OWNER }, { name: 'X', latE6: 1, lngE6: 2 })).toThrow(
       /Missing account "farm"/,
     )
+  })
+})
+
+describe('buildCreateAtaInstruction', () => {
+  it('builds CreateIdempotent against the associated token account program', () => {
+    const ix = buildCreateAtaInstruction({ payer: OWNER, ata: FARM, owner: REPORT, mint: SYSTEM_PROGRAM })
+
+    expect(ix.programAddress).toBe('ATokenGPvbdGVxr1b2hvZbsiqW5xWH25efTNsLJA8knL')
+    expect(ix.accounts).toHaveLength(6)
+    expect(ix.accounts?.[0]).toEqual({ address: OWNER, role: AccountRole.WRITABLE_SIGNER })
+    expect(ix.accounts?.[1]).toEqual({ address: FARM, role: AccountRole.WRITABLE })
+    expect(ix.accounts?.[2]).toEqual({ address: REPORT, role: AccountRole.READONLY })
+    expect(ix.accounts?.[3]).toEqual({ address: SYSTEM_PROGRAM, role: AccountRole.READONLY })
+    expect(ix.accounts?.[4]).toEqual({ address: SYSTEM_PROGRAM, role: AccountRole.READONLY })
+    expect(ix.accounts?.[5]).toEqual({
+      address: 'TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA',
+      role: AccountRole.READONLY,
+    })
+    expect(Array.from(ix.data!)).toEqual([1])
   })
 })

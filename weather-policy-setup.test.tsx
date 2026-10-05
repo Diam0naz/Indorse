@@ -105,11 +105,24 @@ function renderWeather() {
   )
 }
 
-function sentInstruction() {
+/**
+ * The program instruction handed to the wallet — the create_policy send
+ * prepends an idempotent ATA create (fresh wallets have no USDC account yet).
+ */
+function sentInstruction(options: { withAta?: boolean } = {}) {
   expect(wallet.sendTransactions).toHaveBeenCalledTimes(1)
   const [instructions] = wallet.sendTransactions.mock.calls[0]
-  expect(instructions).toHaveLength(1)
-  const ix = instructions[0] as {
+  let index = 0
+  if (options.withAta) {
+    expect(instructions).toHaveLength(2)
+    const ataIx = instructions[0] as { programAddress: string; data: Uint8Array }
+    expect(ataIx.programAddress).toBe('ATokenGPvbdGVxr1b2hvZbsiqW5xWH25efTNsLJA8knL')
+    expect(Array.from(ataIx.data)).toEqual([1])
+    index = 1
+  } else {
+    expect(instructions).toHaveLength(1)
+  }
+  const ix = instructions[index] as {
     programAddress: string
     accounts: { address: string }[]
     data: Uint8Array
@@ -204,7 +217,7 @@ describe('weather policy setup', () => {
     await fireEvent.press(screen.getByTestId('underwrite-submit'))
 
     await waitFor(() => expect(wallet.sendTransactions).toHaveBeenCalledTimes(1))
-    const ix = sentInstruction()
+    const ix = sentInstruction({ withAta: true })
 
     expect(Array.from(ix.data)).toEqual(
       Array.from(

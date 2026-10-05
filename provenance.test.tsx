@@ -204,12 +204,25 @@ function renderScreen() {
   )
 }
 
-/** The single instruction handed to the wallet, with its address list. */
-function sentInstruction() {
+/**
+ * The program instruction handed to the wallet, with its address list —
+ * the escrow sends prepend an idempotent ATA create, because fresh wallets
+ * have no USDC account yet.
+ */
+function sentInstruction(options: { withAta?: boolean } = {}) {
   expect(wallet.sendTransactions).toHaveBeenCalledTimes(1)
   const [instructions] = wallet.sendTransactions.mock.calls[0]
-  expect(instructions).toHaveLength(1)
-  const ix = instructions[0] as {
+  let index = 0
+  if (options.withAta) {
+    expect(instructions).toHaveLength(2)
+    const ataIx = instructions[0] as { programAddress: string; data: Uint8Array }
+    expect(ataIx.programAddress).toBe('ATokenGPvbdGVxr1b2hvZbsiqW5xWH25efTNsLJA8knL')
+    expect(Array.from(ataIx.data)).toEqual([1])
+    index = 1
+  } else {
+    expect(instructions).toHaveLength(1)
+  }
+  const ix = instructions[index] as {
     programAddress: string
     accounts: { address: string }[]
     data: Uint8Array
@@ -301,7 +314,7 @@ describe('escrow setup', () => {
     await fireEvent.press(screen.getByLabelText('Fund escrow'))
 
     await waitFor(() => expect(wallet.sendTransactions).toHaveBeenCalledTimes(1))
-    const ix = sentInstruction()
+    const ix = sentInstruction({ withAta: true })
     const lockUntil = Math.floor(when.getTime() / 1000) + 7 * 86_400
 
     expect(Array.from(ix.data)).toEqual(
@@ -346,7 +359,7 @@ describe('escrow setup', () => {
     await fireEvent.press(await screen.findByText('Cancel & refund', {}, LOAD))
 
     await waitFor(() => expect(wallet.sendTransactions).toHaveBeenCalledTimes(1))
-    const ix = sentInstruction()
+    const ix = sentInstruction({ withAta: true })
     expect(Array.from(ix.data)).toEqual(Array.from(encodeInstruction('cancel_escrow', {})))
     expect(ix.accounts.map((m) => m.address)).toEqual([
       BUYER,
@@ -382,7 +395,7 @@ describe('escrow setup', () => {
     await fireEvent.press(await screen.findByText('Release funds', {}, LOAD))
 
     await waitFor(() => expect(wallet.sendTransactions).toHaveBeenCalledTimes(1))
-    const ix = sentInstruction()
+    const ix = sentInstruction({ withAta: true })
     expect(Array.from(ix.data)).toEqual(Array.from(encodeInstruction('release_escrow', {})))
     expect(ix.accounts.map((m) => m.address)).toEqual([
       FARMER,

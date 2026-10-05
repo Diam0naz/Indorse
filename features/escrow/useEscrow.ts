@@ -7,7 +7,10 @@
  *
  * All three derive their accounts client-side (escrow + vault PDAs from the
  * batch, the signer's USDC associated token account) and go through the
- * Mobile Wallet Adapter; a successful send invalidates `['indorse']` so the
+ * Mobile Wallet Adapter; each transaction prepends an idempotent create of
+ * that token account, so a wallet which has never held USDC isn't rejected
+ * with Anchor's `AccountNotInitialized` — a missing account Solflare can only
+ * show as "simulation failed". A successful send invalidates `['indorse']` so the
  * provenance screen refetches. `useReleaseEscrow`/`useCancelEscrow` take the
  * **batch address** — the escrow and vault PDAs are derived from it, and the
  * program enforces who may sign (farmer releases, buyer cancels while the
@@ -25,7 +28,7 @@ import {
   getCreateEscrowInstruction,
   getReleaseEscrowInstruction,
 } from '@/lib/generated/indorse'
-import { ataPda, escrowPda, escrowVaultPda, toAddress } from '@/lib/program'
+import { ataPda, buildCreateAtaInstruction, escrowPda, escrowVaultPda, toAddress } from '@/lib/program'
 import { usdcToLamports } from '@/lib/format'
 import { validateCreateEscrow } from './types'
 import type { CreateEscrowInput } from './types'
@@ -61,7 +64,8 @@ export function useCreateEscrow() {
         amountUsdc: usdcToLamports(input.amountUsdc),
         lockUntil: Math.floor(Date.now() / 1000) + input.lockDurationSeconds,
       })
-      await wallet.sendTransactions([toWalletInstruction(ix)])
+      const ataIx = buildCreateAtaInstruction({ payer: address, ata: buyerUsdc, owner: address, mint })
+      await wallet.sendTransactions([toWalletInstruction(ataIx), toWalletInstruction(ix)])
       await queryClient.invalidateQueries({ queryKey: ['indorse'] })
       return escrow
     },
@@ -88,7 +92,8 @@ export function useReleaseEscrow() {
         escrowVault,
         farmerUsdc,
       })
-      await wallet.sendTransactions([toWalletInstruction(ix)])
+      const ataIx = buildCreateAtaInstruction({ payer: address, ata: farmerUsdc, owner: address, mint })
+      await wallet.sendTransactions([toWalletInstruction(ataIx), toWalletInstruction(ix)])
       await queryClient.invalidateQueries({ queryKey: ['indorse'] })
       return escrow
     },
@@ -115,7 +120,8 @@ export function useCancelEscrow() {
         escrowVault,
         buyerUsdc,
       })
-      await wallet.sendTransactions([toWalletInstruction(ix)])
+      const ataIx = buildCreateAtaInstruction({ payer: address, ata: buyerUsdc, owner: address, mint })
+      await wallet.sendTransactions([toWalletInstruction(ataIx), toWalletInstruction(ix)])
       await queryClient.invalidateQueries({ queryKey: ['indorse'] })
       return escrow
     },
