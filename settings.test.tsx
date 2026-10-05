@@ -73,6 +73,12 @@ vi.mock('@/features/wallet/useWalletBalances', () => ({
   useWalletBalances: () => ({ balances: { sol: 4.218, usdc: 1842.5 }, loading: false }),
 }))
 
+// The profile's admin-gated Settings entry reads the config PDA; no config
+// here, so the entry stays hidden and the suite never touches the network.
+vi.mock('@/features/admin/useConfigQuery', () => ({
+  useConfigQuery: () => ({ config: null, state: 'ready' as const, retry: vi.fn() }),
+}))
+
 vi.mock('expo-file-system/legacy', () => ({
   cacheDirectory: '/cache/',
   EncodingType: { UTF8: 'utf8' },

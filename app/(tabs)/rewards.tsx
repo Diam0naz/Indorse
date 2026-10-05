@@ -21,6 +21,7 @@ import * as Haptics from 'expo-haptics'
 import { router, type Href } from 'expo-router'
 import { useMobileWalletSetup } from '@/features/wallet'
 import { useWalletBalances } from '@/features/wallet/useWalletBalances'
+import { useConfigQuery } from '@/features/admin/useConfigQuery'
 import { useFarmQuery } from '@/features/farm/useFarmQuery'
 import { useReportsQuery } from '@/features/reports/useReportsQuery'
 import { useEscrowQuery } from '@/features/escrow/useEscrowQuery'
@@ -50,6 +51,17 @@ const SETTINGS: { icon: string; key: MessageKey; route: Href }[] = [
   { icon: 'globe-americas', key: 'settings.language', route: '/settings/language' },
   { icon: 'palette', key: 'settings.theme', route: '/settings/theme' },
 ]
+
+/**
+ * The admin console's entry — rendered only when the connected wallet equals
+ * `config.admin` read from chain (see ProfileScreen below). The program
+ * re-verifies the role on every gated instruction, so this gate is UX.
+ */
+const ADMIN_ENTRY: { icon: string; key: MessageKey; route: Href } = {
+  icon: 'user-shield',
+  key: 'settings.admin',
+  route: '/settings/admin',
+}
 
 /** Dot colour by report status / severity label. */
 function activityColor(aiLabel: string, status: string): string {
@@ -82,6 +94,11 @@ export default function ProfileScreen() {
   const escrowQuery = useEscrowQuery(farm && farmAddress ? { farmAddress, batchCount: farm.batchCount } : null)
   const { balances, loading: balancesLoading } = useWalletBalances(address)
   const skrName = useSkrName(address)
+
+  // Admin console entry: visible only when this wallet IS config.admin.
+  const configQuery = useConfigQuery()
+  const isAdmin = !!address && configQuery.config?.admin === address
+  const settingsItems = isAdmin ? [...SETTINGS, ADMIN_ENTRY] : SETTINGS
 
   // Setup wizard: saved profile (identity) + live banner progress.
   const { profile } = useProfile()
@@ -328,7 +345,7 @@ export default function ProfileScreen() {
         {/* ── Settings ──────────────────────────────────────────── */}
         <Card>
           <SectionLabel style={styles.settingsLabel}>{t('profile.settings')}</SectionLabel>
-          {SETTINGS.map((item, i) => {
+          {settingsItems.map((item, i) => {
             const label =
               item.key === 'settings.network'
                 ? t('settings.network', { cluster: t(CLUSTER_LABEL_KEYS[network.cluster]) })
@@ -336,7 +353,7 @@ export default function ProfileScreen() {
             return (
               <Pressable
                 key={item.key}
-                style={[styles.settingRow, i < SETTINGS.length - 1 && styles.settingRowBordered]}
+                style={[styles.settingRow, i < settingsItems.length - 1 && styles.settingRowBordered]}
                 onPress={() => {
                   Haptics.selectionAsync()
                   router.push(item.route)

@@ -15,6 +15,8 @@
  *   POST /api/siws/verify       → verify it, gate on the dev allowlist
  *   POST /api/email/start       → email a verification code
  *   POST /api/email/verify      → check the code
+ *   POST /api/admin/status      → SIWS + config.admin: roles, allowlist, flags
+ *   POST /api/admin/allowlist   → SIWS + config.admin: dev allowlist ops
  *
  * Methods are NOT filtered here on purpose — the handlers themselves answer
  * 405 to non-POST, and the app's reachability probe treats *any* HTTP
@@ -33,6 +35,8 @@ import siwsNonceHandler from '../api/siws/nonce'
 import siwsVerifyHandler from '../api/siws/verify'
 import emailStartHandler from '../api/email/start'
 import emailVerifyHandler from '../api/email/verify'
+import adminStatusHandler from '../api/admin/status'
+import adminAllowlistHandler from '../api/admin/allowlist'
 
 type HandlerReq = Parameters<typeof classifyHandler>[0]
 type HandlerRes = Parameters<typeof classifyHandler>[1]
@@ -45,6 +49,8 @@ const routes: Record<string, (req: HandlerReq, res: HandlerRes) => Promise<void>
   '/api/siws/verify': siwsVerifyHandler,
   '/api/email/start': emailStartHandler,
   '/api/email/verify': emailVerifyHandler,
+  '/api/admin/status': adminStatusHandler,
+  '/api/admin/allowlist': adminAllowlistHandler,
 }
 
 /** Minimal `KEY=value` loader — no dependency, no override of real env. */

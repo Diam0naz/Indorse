@@ -91,6 +91,12 @@ vi.mock('@/features/wallet/useMobileWalletSetup', () => ({
   }),
 }))
 
+// The profile's admin-gated Settings entry reads the config PDA; no config
+// here, so the entry stays hidden and the suite never touches the network.
+vi.mock('@/features/admin/useConfigQuery', () => ({
+  useConfigQuery: () => ({ config: null, state: 'ready' as const, retry: vi.fn() }),
+}))
+
 vi.mock('@/features/farm/useFarmQuery', () => ({
   useFarmQuery: () => ({
     farm: scoutSetup.farm,
