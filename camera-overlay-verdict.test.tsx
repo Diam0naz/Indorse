@@ -36,6 +36,9 @@ const VERDICT = {
   confidence: 0.87,
   severity: 'medium',
   notes: 'Rectangular lesions on the lower canopy.',
+  commonName: 'Maize',
+  botanicalName: 'Zea mays',
+  pathogenName: 'Cercospora zeae-maydis',
 }
 
 /** Tests flip `online` to simulate the proxy dropping out and coming back. */
@@ -148,8 +151,12 @@ describe('camera overlay — analyzing modal → diagnosis → submit', () => {
     await screen.findByText('Analyzing your shots', {}, LOAD)
     await screen.findByText('Reviewing 2 photos with the AI model…', {}, LOAD)
 
-    // …and resolves into a diagnosis card, not a generic badge.
+    // …and resolves into a diagnosis card, not a generic badge — with the
+    // complete scientific diagnosis: causal agent, then plant identity.
     await screen.findByText('Gray Leaf Spot', {}, LOAD)
+    expect(screen.getByText('Cercospora zeae-maydis')).toBeTruthy()
+    expect(screen.getByText(/Maize/)).toBeTruthy()
+    expect(screen.getByText(/Zea mays/)).toBeTruthy()
     expect(screen.getByText('87% confidence')).toBeTruthy()
     expect(screen.getByText('Rectangular lesions on the lower canopy.')).toBeTruthy()
     expect(screen.queryByText('AI unavailable')).toBeNull()
@@ -169,6 +176,9 @@ describe('camera overlay — analyzing modal → diagnosis → submit', () => {
     expect(event.confidence).toBeCloseTo(0.87, 5)
     expect(event.anchor?.aiLabel).toBe('Gray Leaf Spot')
     expect(event.anchor?.photoUris).toEqual(['file://shot0.jpg', 'file://shot1.jpg'])
+    // The row keeps the same uris on top of the payload, so anchored rows
+    // (whose anchor is released) still point at their evidence.
+    expect(event.photoUris).toEqual(['file://shot0.jpg', 'file://shot1.jpg'])
   })
 
   it('keeps submit locked while a configured proxy owes a diagnosis', async () => {

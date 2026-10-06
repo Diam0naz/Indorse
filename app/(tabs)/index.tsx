@@ -26,12 +26,14 @@
  */
 
 import { useEffect, useRef, useState } from 'react'
-import { Animated, Easing, Pressable, ScrollView, Text, View } from 'react-native'
+import { Animated, Easing, Pressable, RefreshControl, ScrollView, Text, View } from 'react-native'
 import Svg, { Circle, Path } from 'react-native-svg'
 import * as Haptics from 'expo-haptics'
 import { CameraOverlay } from '@/components/camera-overlay'
+import { ConfirmModal } from '@/components/confirm-modal'
 import { RegisterFarmModal } from '@/components/register-farm-modal'
 import { ScoutOnboarding } from '@/components/scout-onboarding'
+import { ScoutPhotoStrip } from '@/components/scout-photo-strip'
 import { useFarmRegistry } from '@/components/farm-registry-provider'
 import { useScoutLog } from '@/components/scout-log-provider'
 import {
@@ -50,6 +52,7 @@ import type { ScoutEvent, Field } from '@/constants/data'
 import { useMobileWalletSetup } from '@/features/wallet/useMobileWalletSetup'
 import { useFarmQuery } from '@/features/farm/useFarmQuery'
 import { useReportsQuery } from '@/features/reports/useReportsQuery'
+import { useRewardReport } from '@/features/reports/useRewardReport'
 import { useSubmitReport } from '@/features/reports/useSubmitReport'
 import { mergeLogEvents, reportToScoutEvent } from '@/features/reports/chain-events'
 import { buildFieldsFromReports } from '@/features/scout/fields'
@@ -66,6 +69,14 @@ const STATUS_KEYS = {
 export default function ScoutingScreen() {
   const log = useScoutLog()
   const [expanded, setExpanded] = useState<string | null>(null)
+  // One pending row-level delete at a time, gated behind ConfirmModal — a
+  // mis-tap should not wipe a capture (and its photos) off the device.
+  const [pendingDelete, setPendingDelete] = useState<string | null>(null)
+  // Scroll-to-log: a fresh capture should be SEEN, not only counted. The
+  // log block reports its content-offset via onLayout; a new event scrolls
+  // the view there one frame later (after React commits the new row).
+  const scrollRef = useRef<ScrollView>(null)
+  const logSectionY = useRef(0)
   const [cameraOpen, setCameraOpen] = useState(false)
   const [registerOpen, setRegisterOpen] = useState(false)
   // The docked stack folds behind one circular button. `actionsOpen` is the
@@ -85,6 +96,9 @@ export default function ScoutingScreen() {
   const reportsQuery = useReportsQuery(
     farm && farmQuery.farmAddress ? { address: farmQuery.farmAddress, reportCount: farm.reportCount } : null,
   )
+  // Claiming is permissionless — the program pins the payout to the report's
+  // own reporter — so the row offers it to whoever is looking at it.
+  const claimReward = useRewardReport()
 
   const connected = !!address
   const onChain = connected && farmQuery.state === 'ready' && !!farm
@@ -154,6 +168,9 @@ export default function ScoutingScreen() {
     // what the capture actually carries and persists it immediately.
     log.add(event)
     setExpanded(event.id)
+    requestAnimationFrame(() => {
+      scrollRef.current?.scrollTo({ y: Math.max(logSectionY.current - 72, 0), animated: true })
+    })
   }
 
   /* ── Outbox flush ────────────────────────────────────────────────────
@@ -240,7 +257,25 @@ export default function ScoutingScreen() {
 
   return (
     <View style={styles.screen}>
-      <ScrollView contentContainerStyle={styles.content} showsVerticalScrollIndicator={false}>
+      <ScrollView
+        ref={scrollRef}
+        contentContainerStyle={styles.content}
+        showsVerticalScrollIndicator={false}
+        /* Pull-to-refresh re-reads both chain queries; the spinner is driven
+           by react-query's real fetch state, so it shows only while a fetch
+           is actually in flight (and never when the query is disabled). */
+        refreshControl={
+          <RefreshControl
+            refreshing={farmQuery.isFetching || reportsQuery.isFetching}
+            onRefresh={() => {
+              farmQuery.retry()
+              reportsQuery.retry()
+            }}
+            colors={[colors.amber]}
+            tintColor={colors.amber}
+          />
+        }
+      >
         {/* ── Summary tiles ─────────────────────────────────────── */}
         <View style={styles.tiles}>
           {[
@@ -314,7 +349,12 @@ export default function ScoutingScreen() {
         </View>
 
         {/* ── Scouting log ──────────────────────────────────────── */}
-        <View style={styles.block}>
+        <View
+          style={styles.block}
+          onLayout={(e) => {
+            logSectionY.current = e.nativeEvent.layout.y
+          }}
+        >
           <SectionLabel>{t('scout.log', { n: events.length })}</SectionLabel>
 
           {registerPrompt ? (
@@ -439,6 +479,11 @@ export default function ScoutingScreen() {
                             )}
                           </View>
 
+                          {/* The evidence itself — thumbnails from the
+                              capture's persisted pixels (kept across
+                              anchoring); tap for the full-screen viewer. */}
+                          <ScoutPhotoStrip uris={ev.photoUris ?? []} />
+
                           <Text style={styles.detailLabel}>
                             {anchoredRow ? t('scout.pda') : ev.anchor ? t('scout.photoDigest') : t('scout.tx')}
                           </Text>
@@ -455,6 +500,55 @@ export default function ScoutingScreen() {
                               accessibilityLabel={t('scout.anchor.retry')}
                             >
                               <Text style={styles.anchorRetryText}>{t('scout.anchor.retry')}</Text>
+                            </Pressable>
+                          ) : null}
+
+                          {/* `Verified` is exactly the program's precondition
+                              for `reward_report`, and `ev.id` is the report
+                              address — the identity every chain row carries. */}
+                          {ev.chainStatus === 'verified' ? (
+                            <Pressable
+                              style={[styles.anchorRetry, claimReward.isPending ? { opacity: 0.6 } : null]}
+                              disabled={claimReward.isPending}
+                              onPress={() => {
+                                Haptics.selectionAsync()
+                                claimReward.mutate(ev.id)
+                              }}
+                              accessibilityRole="button"
+                              accessibilityLabel={t('scout.reward.claim')}
+                            >
+                              <Text style={styles.anchorRetryText}>
+                                {claimReward.isPending ? t('scout.reward.claiming') : t('scout.reward.claim')}
+                              </Text>
+                            </Pressable>
+                          ) : null}
+                          {/* Scoped by the input the mutation ran with, so a
+                              failure on one claim can't bleed into another. */}
+                          {claimReward.isError && claimReward.variables === ev.id ? (
+                            <Text style={styles.claimError}>
+                              {claimReward.error instanceof Error
+                                ? claimReward.error.message
+                                : String(claimReward.error)}
+                            </Text>
+                          ) : null}
+
+                          {/* Only rows the local store actually holds: a
+                              chain-read row has nothing here to erase, and
+                              offering the tap would be a lie. Deleting a
+                              device-anchored row strips the local copy —
+                              the chain's own record re-surfaces from the
+                              fetch, exactly as the confirm promises. */}
+                          {log.events.some((row) => row.id === ev.id) ? (
+                            <Pressable
+                              style={styles.deleteBtn}
+                              onPress={() => {
+                                Haptics.selectionAsync()
+                                setPendingDelete(ev.id)
+                              }}
+                              accessibilityRole="button"
+                              accessibilityLabel={t('scout.deleteRow')}
+                            >
+                              <Text style={styles.deleteBtnText}>{t('scout.deleteRow')}</Text>
                             </Pressable>
                           ) : null}
                         </View>
@@ -547,6 +641,23 @@ export default function ScoutingScreen() {
       )}
 
       {registerOpen && <RegisterFarmModal onClose={() => setRegisterOpen(false)} />}
+
+      {/* Destructive and device-local: ConfirmModal gates the tap, and its
+          lead is honest about what deletion can and cannot reach. */}
+      {pendingDelete && (
+        <ConfirmModal
+          title={t('scout.deleteTitle')}
+          lead={t('scout.deleteBody')}
+          confirmLabel={t('scout.deleteConfirm')}
+          danger
+          requireWallet={false}
+          onConfirm={() => {
+            log.remove(pendingDelete)
+          }}
+          onClose={() => setPendingDelete(null)}
+          testID="scout-delete-confirm"
+        />
+      )}
     </View>
   )
 }
@@ -821,6 +932,29 @@ const makeStyles = (colors: Colors) =>
     },
     anchorRetryText: {
       color: colors.amber,
+      fontSize: fontSizes.sm,
+      fontWeight: fontWeights.semibold,
+    },
+    claimError: {
+      marginTop: spacing.xs,
+      color: colors.dangerText,
+      fontSize: fontSizes.sm,
+      lineHeight: fontSizes.sm * 1.45,
+    },
+    // Row-level delete — danger outlined, visually apart from the amber
+    // retry/claim actions stacked above it.
+    deleteBtn: {
+      marginTop: spacing.md,
+      alignSelf: 'flex-start',
+      borderRadius: radii.md,
+      borderWidth: 1,
+      borderColor: `${colors.danger}66`,
+      backgroundColor: colors.surfaceAlt,
+      paddingVertical: spacing.sm,
+      paddingHorizontal: spacing.md,
+    },
+    deleteBtnText: {
+      color: colors.danger,
       fontSize: fontSizes.sm,
       fontWeight: fontWeights.semibold,
     },

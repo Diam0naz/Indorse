@@ -59,6 +59,15 @@ export interface ScoutEvent {
    * restart can finish what the capture started without inventing anything.
    */
   anchor?: ScoutAnchorPayload
+  /**
+   * Where this capture's pixels live. Real shots are copied into app
+   * document storage at submit time (`evidence/<digest>.jpg`, content-
+   * addressed so a file re-hashes to the digest the row recorded); when a
+   * copy fails the original cache URI is kept — best-effort, never blocked.
+   * Unlike `anchor`, this survives anchoring: the digest on-chain proves
+   * nothing if the pixels it describes are gone.
+   */
+  photoUris?: string[]
 }
 
 /** What an anchor flush submits for a queued capture (all strings serialisable). */

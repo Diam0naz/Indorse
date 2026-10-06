@@ -18,6 +18,7 @@ import { useNotifications } from '@/components/notifications'
 import { useProfile } from '@/components/profile-provider'
 import { useScoutLog } from '@/components/scout-log-provider'
 import { useSettings } from '@/components/settings-provider'
+import { clearEvidence } from '@/features/scout/evidence'
 import { useMobileWalletSetup } from '@/features/wallet/useMobileWalletSetup'
 import { useT } from '@/lib/i18n'
 
@@ -41,6 +42,9 @@ export default function AccountSettingsScreen() {
     resetScoutLog()
     clearProfile()
     clearNotifications()
+    // The scouting log's evidence photos live in app storage too; rows are
+    // gone, so the pixels they point at go with them.
+    await clearEvidence()
     await resetAuth()
     // The session ends too; the wallet itself stays with the wallet app.
     if (walletState === 'connected') await toggleConnection()

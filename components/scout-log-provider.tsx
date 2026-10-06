@@ -25,9 +25,19 @@
  * events: []` with no-op mutations.
  */
 
-import { createContext, useCallback, useContext, useEffect, useMemo, useState, type PropsWithChildren } from 'react'
+import {
+  createContext,
+  useCallback,
+  useContext,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type PropsWithChildren,
+} from 'react'
 import AsyncStorage from '@react-native-async-storage/async-storage'
 import type { ScoutEvent } from '@/constants/data'
+import { releaseEvidence } from '@/features/scout/evidence'
 
 const STORE_KEY = 'indorse.scout.v1'
 
@@ -57,6 +67,8 @@ interface ScoutLogValue {
   markFailed: (id: string) => void
   /** Re-queue a failed row; the next flush attempt picks it up. */
   requeue: (id: string) => void
+  /** Erase one row; its evidence files follow via the stale-set pass. */
+  remove: (id: string) => void
   /** Erase the whole log — part of "delete local account data". */
   reset: () => void
 }
@@ -68,6 +80,7 @@ const DEFAULT_VALUE: ScoutLogValue = {
   markAnchored: () => {},
   markFailed: () => {},
   requeue: () => {},
+  remove: () => {},
   reset: () => {},
 }
 
@@ -116,6 +129,22 @@ export function ScoutLogProvider({ children }: PropsWithChildren) {
     AsyncStorage.setItem(STORE_KEY, JSON.stringify({ events })).catch(() => {})
   }, [ready, events])
 
+  // Evidence files follow the rows that reference them. When a capture is
+  // evicted by the FIFO cap or the log is reset, its pixels are released —
+  // never a file a surviving row still points at, and never anything
+  // outside the evidence directory (enforced inside releaseEvidence).
+  // The first pass after a restart only adopts what is stored: files a
+  // previous session orphaned are left alone, since this session cannot
+  // prove nobody needs them.
+  const seenEvidence = useRef<Set<string>>(new Set())
+  useEffect(() => {
+    if (!ready) return
+    const active = events.flatMap((event) => event.photoUris ?? [])
+    const stale = [...seenEvidence.current].filter((uri) => !active.includes(uri))
+    if (stale.length > 0) void releaseEvidence(stale, active)
+    seenEvidence.current = new Set(active)
+  }, [ready, events])
+
   const add = useCallback((event: ScoutEvent) => {
     setEvents((prev) => {
       const entry: ScoutEvent = { ...event, anchorStatus: lifecycleOf(event) }
@@ -154,11 +183,18 @@ export function ScoutLogProvider({ children }: PropsWithChildren) {
     setEvents((prev) => prev.map((event) => (event.id === id ? { ...event, anchorStatus: 'queued' as const } : event)))
   }, [])
 
+  // One row out of the store. The stale-set pass above owns the fallout:
+  // files this row was the last to reference are released on the next
+  // effect run, and anything a surviving row still points at is untouched.
+  const remove = useCallback((id: string) => {
+    setEvents((prev) => prev.filter((event) => event.id !== id))
+  }, [])
+
   const reset = useCallback(() => setEvents([]), [])
 
   const value = useMemo(
-    () => ({ ready, events, add, markAnchored, markFailed, requeue, reset }),
-    [ready, events, add, markAnchored, markFailed, requeue, reset],
+    () => ({ ready, events, add, markAnchored, markFailed, requeue, remove, reset }),
+    [ready, events, add, markAnchored, markFailed, requeue, remove, reset],
   )
 
   return <ScoutLogContext.Provider value={value}>{children}</ScoutLogContext.Provider>

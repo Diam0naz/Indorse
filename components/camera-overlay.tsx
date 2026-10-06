@@ -57,6 +57,7 @@ import { SeedVaultBadge } from '@/components/seed-vault-badge'
 import { useSubmitReport } from '@/features/reports/useSubmitReport'
 import { demoPhotoHash } from '@/features/reports/types'
 import { getCurrentCoords, type ScoutCoords } from '@/features/scout/location'
+import { persistEvidence } from '@/features/scout/evidence'
 import { photoHash } from '@/features/scout/photo'
 import type { ScoutEvent } from '@/constants/data'
 import { formatShortDate } from '@/lib/format'
@@ -313,6 +314,10 @@ export function CameraOverlay({ onClose, onSubmit, farmAddress, farmName }: Came
     // Real captures hash their bytes together; the simulated path keeps a
     // deterministic digest derived from the capture time.
     const hash = realBytes.length ? await photoHash(realBytes.join('|')) : demoPhotoHash(String(stamp))
+    // Durable pixels: copy every real shot into app storage, content-addressed
+    // by its own digest. Falls back to the cache URIs on any failure, so this
+    // can never block a submission.
+    const photoUris = await persistEvidence(shots)
 
     // Shared by both paths: real date, real farm name (or honest fallback),
     // no invented crop, the actual number of captured shots.
@@ -337,12 +342,13 @@ export function CameraOverlay({ onClose, onSubmit, farmAddress, farmName }: Came
         id: `sc${stamp}`,
         // Local rows carry the photo digest until a chain row replaces it.
         txSig: bytesToHex(hash),
+        photoUris,
         anchor: {
           photoHashHex: bytesToHex(hash),
           uri,
           aiLabel,
           // Real shot files only — best-effort evidence to re-derive the hash.
-          photoUris: shots.map((shot) => shot.uri).filter((shotUri) => shotUri.length > 0),
+          photoUris,
         },
       })
       setStage('success')
@@ -364,13 +370,15 @@ export function CameraOverlay({ onClose, onSubmit, farmAddress, farmName }: Came
       {
         onSuccess: (reportAddress) => {
           Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success)
-          // The row mirrors what actually went on-chain.
+          // The row mirrors what actually went on-chain — and keeps the
+          // pixels the digest describes, so evidence outlives the anchor.
           onSubmit?.({
             ...base,
             ...buildVerdict(uri),
             id: reportAddress,
             txSig: reportAddress,
             chainStatus: 'pending',
+            photoUris,
           })
           setStage('success')
         },
@@ -461,6 +469,18 @@ export function CameraOverlay({ onClose, onSubmit, farmAddress, farmName }: Came
               {classification ? (
                 <>
                   <Text style={styles.diagnosisLabel}>{classification.label}</Text>
+                  {classification.pathogenName ? (
+                    <Text style={styles.diagnosisPathogen}>{classification.pathogenName}</Text>
+                  ) : null}
+                  {classification.commonName || classification.botanicalName ? (
+                    <Text style={styles.diagnosisPlant}>
+                      {classification.commonName ?? ''}
+                      {classification.commonName && classification.botanicalName ? ' · ' : ''}
+                      {classification.botanicalName ? (
+                        <Text style={styles.diagnosisBotanical}>{classification.botanicalName}</Text>
+                      ) : null}
+                    </Text>
+                  ) : null}
                   <Text style={styles.diagnosisConfidence}>
                     {t('scout.cam.confidence', { pct: Math.round(classification.confidence * 100) })}
                   </Text>
@@ -801,6 +821,23 @@ const makeStyles = (colors: Colors) =>
       color: colors.textPrimary,
       textAlign: 'center',
       marginBottom: 2,
+    },
+    diagnosisPlant: {
+      fontSize: fontSizes.sm,
+      color: colors.textSecondary,
+      textAlign: 'center',
+      marginBottom: 2,
+    },
+    diagnosisPathogen: {
+      fontStyle: 'italic',
+      fontSize: fontSizes.sm,
+      color: colors.textSecondary,
+      textAlign: 'center',
+      marginBottom: 2,
+    },
+    diagnosisBotanical: {
+      fontStyle: 'italic',
+      color: colors.textMuted,
     },
     diagnosisConfidence: {
       fontFamily: 'monospace',
