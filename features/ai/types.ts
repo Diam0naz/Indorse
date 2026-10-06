@@ -21,6 +21,14 @@ export const AI_LABEL_MAX = 32
 export const AI_NOTES_MAX = 200
 
 /**
+ * Display-only caps for the plant identity names. They never reach the
+ * chain (`ai_label` carries the diagnosis), so they bound the UI, not a
+ * transaction: a name over the cap is dropped, never allowed to fail the
+ * whole verdict at the edge.
+ */
+export const PLANT_NAME_MAX = 64
+
+/**
  * Severity of a diagnosis. Identical to the event union in `constants/data.ts`
  * and to `sevFor()` in `constants/theme.ts`, so a model verdict drops straight
  * into `SeverityPill`, the CSV export and the log without any mapping.
@@ -41,6 +49,12 @@ export interface ClassificationResult {
   severity: Severity
   /** 1–2 plain sentences the farmer can act on. */
   notes: string
+  /** Plain-English name of the plant shown, e.g. `"Maize"`. Absent when the model could not identify one. */
+  commonName?: string
+  /** Latin binomial of the plant shown, e.g. `"Zea mays"`. Absent when not identifiable. */
+  botanicalName?: string
+  /** Scientific name of the causal agent, e.g. `"Ustilago maydis"`. Absent for abiotic findings or when unknown. */
+  pathogenName?: string
 }
 
 /** One photo in a (possibly multi-shot) classification call. */
@@ -109,7 +123,7 @@ export function parseClassification(raw: unknown): ClassificationResult {
     throw new ClassificationError('malformed', 'Classifier returned a non-object payload')
   }
 
-  const { label, confidence, severity, notes } = raw as Record<string, unknown>
+  const { label, confidence, severity, notes, commonName, botanicalName, pathogenName } = raw as Record<string, unknown>
 
   if (typeof label !== 'string' || label.trim().length === 0) {
     throw new ClassificationError('malformed', 'Classifier returned an empty label')
@@ -144,7 +158,29 @@ export function parseClassification(raw: unknown): ClassificationResult {
     throw new ClassificationError('malformed', `Classifier notes exceed ${AI_NOTES_MAX} characters`)
   }
 
-  return { label: trimmed, confidence, severity, notes: trimmedNotes }
+  // Identity fields are display-only: a missing, non-text or over-long name
+  // is dropped so it can never fail a verdict the farmer is waiting on.
+  const common = displayName(commonName)
+  const botanical = displayName(botanicalName)
+  const pathogen = displayName(pathogenName)
+
+  return {
+    label: trimmed,
+    confidence,
+    severity,
+    notes: trimmedNotes,
+    ...(common ? { commonName: common } : {}),
+    ...(botanical ? { botanicalName: botanical } : {}),
+    ...(pathogen ? { pathogenName: pathogen } : {}),
+  }
+}
+
+/** Lenient optional-name reader for the identity fields — undefined when unusable. */
+function displayName(value: unknown): string | undefined {
+  if (typeof value !== 'string') return undefined
+  const trimmed = value.trim()
+  if (trimmed.length === 0 || trimmed.length > PLANT_NAME_MAX) return undefined
+  return trimmed
 }
 
 function isSeverity(value: unknown): value is Severity {

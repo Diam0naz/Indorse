@@ -3,6 +3,7 @@ import {
   AI_LABEL_MAX,
   AI_NOTES_MAX,
   ClassificationError,
+  PLANT_NAME_MAX,
   normalizeImage,
   parseClassification,
   toDataUrl,
@@ -24,6 +25,35 @@ describe('features/ai/types', () => {
   describe('parseClassification', () => {
     it('accepts a full diagnosis', () => {
       expect(parseClassification(DIAGNOSIS)).toEqual(DIAGNOSIS)
+    })
+
+    it('keeps plant identity names when the model returns them', () => {
+      const parsed = parseClassification(diagnosis({ commonName: '  Maize  ', botanicalName: ' Zea mays ' }))
+      expect(parsed.commonName).toBe('Maize')
+      expect(parsed.botanicalName).toBe('Zea mays')
+    })
+
+    it('keeps the causal agent name and drops it when the finding is abiotic', () => {
+      const infected = parseClassification(diagnosis({ pathogenName: ' Ustilago maydis ' }))
+      expect(infected.pathogenName).toBe('Ustilago maydis')
+
+      // Drought Stress names no agent — the model answers "" and the field
+      // stays absent instead of rendering an empty italic line.
+      const abiotic = parseClassification(diagnosis({ label: 'Drought Stress', pathogenName: '' }))
+      expect(abiotic.pathogenName).toBeUndefined()
+      expect(abiotic.label).toBe('Drought Stress')
+    })
+
+    it('omits unusable plant names instead of failing the verdict', () => {
+      // Empty / whitespace / non-text / over-cap names are display-only —
+      // the diagnosis the farmer waits on must still land.
+      const parsed = parseClassification(diagnosis({ commonName: '   ', botanicalName: 42 }))
+      expect(parsed.commonName).toBeUndefined()
+      expect(parsed.botanicalName).toBeUndefined()
+      expect(parsed.label).toBe(DIAGNOSIS.label)
+
+      const tooLong = parseClassification(diagnosis({ commonName: 'x'.repeat(PLANT_NAME_MAX + 1) }))
+      expect(tooLong.commonName).toBeUndefined()
     })
 
     it('trims surrounding whitespace from the label and notes', () => {
