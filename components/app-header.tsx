@@ -13,7 +13,7 @@
  * with farms it opens the switcher.
  *
  * A raw pubkey never appears in the header — the greeting addresses the
- * operator on a first-name basis (real onboarding name first, then .skr,
+ * operator by full name (real onboarding name first, then .skr,
  * then the wallet's generated label) and falls back to a "connect your
  * wallet" prompt until onboarding is done. The avatar follows the same
  * ladder: photo → name initials → person icon (never demo initials).
@@ -37,7 +37,7 @@ import { useSettings } from '@/components/settings-provider'
 import { useTheme } from '@/components/theme-provider'
 import { useMobileWalletSetup } from '@/features/wallet'
 import { createStyles, fontSizes, fontWeights, fonts, radii, spacing, type Colors } from '@/constants/theme'
-import { firstNameOf, initialsOf } from '@/lib/display-name'
+import { initialsOf } from '@/lib/display-name'
 import { greetingKey } from '@/lib/greeting'
 import { walletName } from '@/lib/wallet-name'
 import { useSkrName } from '@/lib/skr'
@@ -65,11 +65,11 @@ export function AppHeader() {
   const isConnected = walletState === 'connected'
   const greeting = t(greetingKey())
   // Real onboarding name first, then .skr, then the wallet's generated
-  // label — addressed on a first-name basis. Guests keep the prompt.
+  // label — shown in full. Guests keep the prompt.
   const skrName = useSkrName(address)
   const realName = profile?.name?.trim() || null
   const identityName = realName ?? (isConnected ? (skrName ?? walletName(address)) : null)
-  const identity = identityName ? firstNameOf(identityName) : t('header.connectWallet')
+  const identity = identityName ? identityName : t('header.connectWallet')
   const identityPrompt = identityName === null
   // Avatar ladder: photo → initials of the real/wallet name → person icon.
   const avatarInitials = realName ? initialsOf(realName) : isConnected ? initialsOf(walletName(address)) : ''
@@ -221,22 +221,28 @@ const makeStyles = (colors: Colors) =>
       flexShrink: 1,
       minWidth: 0,
     },
-    // The greeting is the header's one piece of calligraphy. Allura is a fine
-    // formal script — small x-height, hairline strokes and swashy capitals — so
-    // it runs well above the app's display sizes and carries no `fontWeight`
-    // (400 is the only cut Google ships for it).
+    // The greeting is the header's one piece of calligraphy. Great Vibes is a
+    // formal script — flourished capitals, long looping ascenders and
+    // descenders — so it runs well above the app's display sizes and carries
+    // no `fontWeight` (400 is the only cut Google ships for it). The opening
+    // swash overshoots the glyph origin to the left, so `paddingLeft` keeps it
+    // inside the text box instead of clipping at the layout edge.
     greeting: {
       fontFamily: fonts.script.regular,
       fontSize: 27,
       lineHeight: 32,
+      paddingLeft: spacing.sm,
       color: colors.textPrimary,
     },
+    // The name under the greeting — same left inset as the script above so
+    // both lines start on one margin.
     identity: {
       fontFamily: fonts.display.medium,
       fontSize: fontSizes.base,
       lineHeight: 13,
       letterSpacing: 0.1,
       color: colors.amberLight,
+      paddingLeft: spacing.sm,
       marginTop: -1,
     },
     // Not connected yet — an action prompt rather than a name.

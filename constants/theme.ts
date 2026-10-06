@@ -35,7 +35,7 @@
  * titles and large numbers (≥ 16px, or a headline-style style key); `fonts.body`
  * (Inter) carries everything smaller — labels, metadata, dense copy — where its
  * taller x-height and even rhythm read better than a geometric face. Monospace
- * and the Allura script stay opt-in via an explicit `fontFamily`.
+ * and the Great Vibes script stay opt-in via an explicit `fontFamily`.
  */
 
 import { StyleSheet } from 'react-native'
@@ -322,11 +322,11 @@ export const fonts = {
     bold: 'Inter_700Bold',
   },
   /**
-   * Calligraphic script — reserved for the header greeting. Allura ships a
-   * single weight (400), so there is no bold cut to fall back on.
+   * Calligraphic script — reserved for the header greeting. Great Vibes ships
+   * a single weight (400), so there is no bold cut to fall back on.
    */
   script: {
-    regular: 'Allura_400Regular',
+    regular: 'GreatVibes_400Regular',
   },
 } as const
 

@@ -14,7 +14,7 @@ import { SpaceGrotesk_500Medium } from '@expo-google-fonts/space-grotesk/500Medi
 import { SpaceGrotesk_600SemiBold } from '@expo-google-fonts/space-grotesk/600SemiBold'
 import { SpaceGrotesk_700Bold } from '@expo-google-fonts/space-grotesk/700Bold'
 // Calligraphic face for the header greeting ("Good morning").
-import { Allura_400Regular } from '@expo-google-fonts/allura/400Regular'
+import { GreatVibes_400Regular } from '@expo-google-fonts/great-vibes/400Regular'
 import 'react-native-reanimated'
 import { AppProviders } from '@/components/app-providers'
 import { AppSplash } from '@/components/app-splash'
@@ -30,7 +30,7 @@ import '../global.css'
 
 /**
  * Design system fonts — Space Grotesk (the single text face) + Inter (dense
- * passages) + Allura (calligraphic header greeting), loaded from Google Fonts
+ * passages) + Great Vibes (calligraphic header greeting), loaded from Google Fonts
  * before the first frame. Splash stays up until they resolve; `createStyles` in
  * constants/theme.ts then assigns the face per text style.
  */
@@ -43,7 +43,7 @@ const FONT_ASSETS = {
   Inter_500Medium,
   Inter_600SemiBold,
   Inter_700Bold,
-  Allura_400Regular,
+  GreatVibes_400Regular,
 }
 
 void SplashScreen.preventAutoHideAsync().catch(() => undefined)
