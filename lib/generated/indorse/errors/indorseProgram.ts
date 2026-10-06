@@ -98,16 +98,36 @@ export const INDORSE_PROGRAM_ERROR__STALE_SWITCHBOARD_RECEIPT = 0x1797 // 6039
 export const INDORSE_PROGRAM_ERROR__UNAUTHORISED_SWITCHBOARD_SIGNER = 0x1798 // 6040
 /** InvalidSwitchboardValue: The signed value is not a non-negative whole 0.1 mm of rainfall */
 export const INDORSE_PROGRAM_ERROR__INVALID_SWITCHBOARD_VALUE = 0x1799 // 6041
+/** TooManyFeedSigners: The feed registration exceeds the maximum signer count */
+export const INDORSE_PROGRAM_ERROR__TOO_MANY_FEED_SIGNERS = 0x179a // 6042
+/** FarmMismatch: The farm passed does not match the report's farm */
+export const INDORSE_PROGRAM_ERROR__FARM_MISMATCH = 0x179b // 6043
+/** CoverageUnfunded: The policy vault does not hold the coverage amount */
+export const INDORSE_PROGRAM_ERROR__COVERAGE_UNFUNDED = 0x179c // 6044
+/** TallyFull: The tally has no room for another vote */
+export const INDORSE_PROGRAM_ERROR__TALLY_FULL = 0x179d // 6045
+/** PolicyNotSettled: Only a settled policy (paid out or expired) can be closed */
+export const INDORSE_PROGRAM_ERROR__POLICY_NOT_SETTLED = 0x179e // 6046
+/** RentDestinationMismatch: Rent destination does not match the policy's farmer */
+export const INDORSE_PROGRAM_ERROR__RENT_DESTINATION_MISMATCH = 0x179f // 6047
+/** InvalidGrade: Grade must be 0–4 (A–D) with confidence 0–100 */
+export const INDORSE_PROGRAM_ERROR__INVALID_GRADE = 0x17a0 // 6048
+/** GradeNotesTooLong: Grade notes too long (max 64 chars) */
+export const INDORSE_PROGRAM_ERROR__GRADE_NOTES_TOO_LONG = 0x17a1 // 6049
 
 export type IndorseProgramError =
   | typeof INDORSE_PROGRAM_ERROR__ALREADY_ORACLE
   | typeof INDORSE_PROGRAM_ERROR__ALREADY_VERIFIED
   | typeof INDORSE_PROGRAM_ERROR__ALREADY_VERIFIER
   | typeof INDORSE_PROGRAM_ERROR__ALREADY_VOTED
+  | typeof INDORSE_PROGRAM_ERROR__COVERAGE_UNFUNDED
   | typeof INDORSE_PROGRAM_ERROR__DROP_BELOW_QUORUM
   | typeof INDORSE_PROGRAM_ERROR__ESCROW_LOCKED
   | typeof INDORSE_PROGRAM_ERROR__ESCROW_NOT_FUNDED
+  | typeof INDORSE_PROGRAM_ERROR__FARM_MISMATCH
+  | typeof INDORSE_PROGRAM_ERROR__GRADE_NOTES_TOO_LONG
   | typeof INDORSE_PROGRAM_ERROR__INVALID_FEED_REGISTRATION
+  | typeof INDORSE_PROGRAM_ERROR__INVALID_GRADE
   | typeof INDORSE_PROGRAM_ERROR__INVALID_MEDIAN_QUORUM
   | typeof INDORSE_PROGRAM_ERROR__INVALID_QUORUM
   | typeof INDORSE_PROGRAM_ERROR__INVALID_SEASON
@@ -124,14 +144,18 @@ export type IndorseProgramError =
   | typeof INDORSE_PROGRAM_ERROR__ORACLE_SET_FULL
   | typeof INDORSE_PROGRAM_ERROR__OVERFLOW
   | typeof INDORSE_PROGRAM_ERROR__POLICY_NOT_ACTIVE
+  | typeof INDORSE_PROGRAM_ERROR__POLICY_NOT_SETTLED
   | typeof INDORSE_PROGRAM_ERROR__READING_FINALIZED
   | typeof INDORSE_PROGRAM_ERROR__READING_NOT_FINALIZED
+  | typeof INDORSE_PROGRAM_ERROR__RENT_DESTINATION_MISMATCH
   | typeof INDORSE_PROGRAM_ERROR__REPORTER_TOKEN_INVALID
   | typeof INDORSE_PROGRAM_ERROR__REVOCATION_WINDOW_CLOSED
   | typeof INDORSE_PROGRAM_ERROR__REWARD_VAULT_INVALID
   | typeof INDORSE_PROGRAM_ERROR__SEASON_NOT_ENDED
   | typeof INDORSE_PROGRAM_ERROR__STALE_SWITCHBOARD_RECEIPT
+  | typeof INDORSE_PROGRAM_ERROR__TALLY_FULL
   | typeof INDORSE_PROGRAM_ERROR__TOKEN_ACCOUNT_INVALID
+  | typeof INDORSE_PROGRAM_ERROR__TOO_MANY_FEED_SIGNERS
   | typeof INDORSE_PROGRAM_ERROR__UNAUTHORISED_ADMIN
   | typeof INDORSE_PROGRAM_ERROR__UNAUTHORISED_ESCROW
   | typeof INDORSE_PROGRAM_ERROR__UNAUTHORISED_ORACLE
@@ -150,10 +174,14 @@ if (process.env['NODE_ENV'] !== 'production') {
     [INDORSE_PROGRAM_ERROR__ALREADY_VERIFIED]: `Report already verified or rejected`,
     [INDORSE_PROGRAM_ERROR__ALREADY_VERIFIER]: `Key is already a bonded verifier`,
     [INDORSE_PROGRAM_ERROR__ALREADY_VOTED]: `Verifier has already voted on this report`,
+    [INDORSE_PROGRAM_ERROR__COVERAGE_UNFUNDED]: `The policy vault does not hold the coverage amount`,
     [INDORSE_PROGRAM_ERROR__DROP_BELOW_QUORUM]: `Removal would take the verifier set below its quorum`,
     [INDORSE_PROGRAM_ERROR__ESCROW_LOCKED]: `Escrow is locked — cancellation window has passed`,
     [INDORSE_PROGRAM_ERROR__ESCROW_NOT_FUNDED]: `Escrow is not in funded state`,
+    [INDORSE_PROGRAM_ERROR__FARM_MISMATCH]: `The farm passed does not match the report's farm`,
+    [INDORSE_PROGRAM_ERROR__GRADE_NOTES_TOO_LONG]: `Grade notes too long (max 64 chars)`,
     [INDORSE_PROGRAM_ERROR__INVALID_FEED_REGISTRATION]: `The feed registration needs at least three distinct signers`,
+    [INDORSE_PROGRAM_ERROR__INVALID_GRADE]: `Grade must be 0–4 (A–D) with confidence 0–100`,
     [INDORSE_PROGRAM_ERROR__INVALID_MEDIAN_QUORUM]: `Oracle quorum must be an odd number from 3 to the oracle-set maximum`,
     [INDORSE_PROGRAM_ERROR__INVALID_QUORUM]: `Quorum must be between 2 and the verifier-set maximum`,
     [INDORSE_PROGRAM_ERROR__INVALID_SEASON]: `Season end must be after season start`,
@@ -170,14 +198,18 @@ if (process.env['NODE_ENV'] !== 'production') {
     [INDORSE_PROGRAM_ERROR__ORACLE_SET_FULL]: `The oracle set is full`,
     [INDORSE_PROGRAM_ERROR__OVERFLOW]: `Counter overflow`,
     [INDORSE_PROGRAM_ERROR__POLICY_NOT_ACTIVE]: `Policy is not active`,
+    [INDORSE_PROGRAM_ERROR__POLICY_NOT_SETTLED]: `Only a settled policy (paid out or expired) can be closed`,
     [INDORSE_PROGRAM_ERROR__READING_FINALIZED]: `The season reading is already final`,
     [INDORSE_PROGRAM_ERROR__READING_NOT_FINALIZED]: `The season reading has not reached quorum`,
+    [INDORSE_PROGRAM_ERROR__RENT_DESTINATION_MISMATCH]: `Rent destination does not match the policy's farmer`,
     [INDORSE_PROGRAM_ERROR__REPORTER_TOKEN_INVALID]: `Reporter token account does not match the report recipient or mint`,
     [INDORSE_PROGRAM_ERROR__REVOCATION_WINDOW_CLOSED]: `Season has ended — the policy can no longer be revoked`,
     [INDORSE_PROGRAM_ERROR__REWARD_VAULT_INVALID]: `Reward vault does not belong to the program reward authority`,
     [INDORSE_PROGRAM_ERROR__SEASON_NOT_ENDED]: `Season has not ended yet`,
     [INDORSE_PROGRAM_ERROR__STALE_SWITCHBOARD_RECEIPT]: `The Switchboard receipt is stale: its slothash left the recent window`,
+    [INDORSE_PROGRAM_ERROR__TALLY_FULL]: `The tally has no room for another vote`,
     [INDORSE_PROGRAM_ERROR__TOKEN_ACCOUNT_INVALID]: `Token account owner or mint does not match the expected values`,
+    [INDORSE_PROGRAM_ERROR__TOO_MANY_FEED_SIGNERS]: `The feed registration exceeds the maximum signer count`,
     [INDORSE_PROGRAM_ERROR__UNAUTHORISED_ADMIN]: `Caller is not the authorised program admin`,
     [INDORSE_PROGRAM_ERROR__UNAUTHORISED_ESCROW]: `Caller is not authorised for this escrow`,
     [INDORSE_PROGRAM_ERROR__UNAUTHORISED_ORACLE]: `Caller is not the authorised weather oracle`,

@@ -28,6 +28,13 @@ pub const MAX_ORACLES: usize = 7;
 /// program upgrade, not a parameter.
 pub const REPORT_REWARD: u64 = 1_000_000;
 
+/// Highest rainfall trigger a policy may carry, in mm × 10 (1 500 mm).
+/// Above any season's real total, so the payout would fire on any reading.
+pub const MAX_TRIGGER_THRESHOLD_MM10: u32 = 15_000;
+/// Highest season rainfall any reader may post, in mm × 10 (10 000 mm) —
+/// past the wettest season on Earth; above it is a fat-finger or a lie.
+pub const MAX_SEASON_RAINFALL_MM10: u32 = 100_000;
+
 /// Switchboard On-Demand job values are fixed-point with 18 decimals: the
 /// probe's 22.2 mm rainfall arrived as 22_200_000_000_000_000_000. Our
 /// tally unit is mm × 10, so one tally unit is 1e17 on the job scale — a
@@ -131,7 +138,12 @@ pub mod indorse_program {
     //  LAYER 1 — SCOUTING
     // =========================================================================
 
-    /// Create a farm PDA for the signing owner.
+    /// Create the next farm PDA in the signing owner's roster.
+    ///
+    /// The roster grows by one: `farm_counter.count` names the slot
+    /// (init-once, read-many) and is advanced after the farm is written, so
+    /// every registration lands on a fresh PDA while older farms stay
+    /// untouched at their own seeds.
     pub fn register_farm(
         ctx: Context<RegisterFarm>,
         name: String,
@@ -140,15 +152,24 @@ pub mod indorse_program {
     ) -> Result<()> {
         require!(name.len() <= 64, FarmError::NameTooLong);
 
+        let counter = &mut ctx.accounts.farm_counter;
+        counter.owner = ctx.accounts.owner.key();
+        counter.bump = ctx.bumps.farm_counter;
+
         let farm = &mut ctx.accounts.farm;
         farm.owner = ctx.accounts.owner.key();
+        // The seed the farm was derived from — written before the counter moves.
+        farm.index = counter.count;
         farm.name = name;
         farm.lat_e6 = lat_e6;
         farm.lng_e6 = lng_e6;
         farm.report_count = 0;
         farm.batch_count = 0;
         farm.verified_report_count = 0;
+        farm.policy_count = 0;
         farm.bump = ctx.bumps.farm;
+
+        counter.count = counter.count.checked_add(1).ok_or(FarmError::Overflow)?;
 
         emit!(FarmRegistered {
             farm: farm.key(),
@@ -165,6 +186,9 @@ pub mod indorse_program {
     /// touched: their evidence stays on chain as an independent trail, and
     /// every PDA derived from the farm address stays re-derivable after the
     /// account itself is gone.
+    /// One thing does not survive: `cast_vote` needs the farm account, so a
+    /// report still Pending when the farm closes can never be finalised —
+    /// let tallies finish before deleting.
     pub fn delete_farm(ctx: Context<DeleteFarm>) -> Result<()> {
         emit!(FarmDeleted {
             farm: ctx.accounts.farm.key(),
@@ -214,7 +238,6 @@ pub mod indorse_program {
         Ok(())
     }
 
-    /// Approve or reject a pending scout report.
     // =========================================================================
     //  LAYER 1 — VERIFIER SET (K-of-N quorum replaces the single verifier)
     // =========================================================================
@@ -247,6 +270,10 @@ pub mod indorse_program {
     /// freezes a tally whose side already reaches the new `k` on next
     /// contact, but a split tally where every member has already voted can
     /// no longer progress — each further vote fails `AlreadyVoted`.
+    /// The same rule covers membership: `release_verifier`/`slash_verifier`
+    /// mid-tally can strand an open report (everyone eligible has voted
+    /// without either side reaching `k`) or push fresh voters past the
+    /// tally's fixed vote capacity — rotate the set between tallies.
     pub fn reconfigure_verifier_set(
         ctx: Context<ReconfigureVerifierSet>,
         k: u8,
@@ -434,6 +461,9 @@ pub mod indorse_program {
             !tally.votes.iter().any(|vote| vote.voter == voter),
             FarmError::AlreadyVoted
         );
+        // Fixed-size tally: a rotated-in member voting past MAX_VERIFIERS
+        // would overflow the account on serialize — say so clearly instead.
+        require!(tally.votes.len() < MAX_VERIFIERS, FarmError::TallyFull);
 
         tally.votes.push(TallyVote { voter, approve });
         if approve {
@@ -512,11 +542,20 @@ pub mod indorse_program {
         crop: String,     // e.g. "maize" (max 32)
         quantity_kg: u64, // Net weight in kg
         notes: String,    // Buyer-facing notes (max 256)
+        // Vision-model grade — gathered by the client from /api/grade before
+        // this call and attested by the farmer's signature; a later auditor
+        // can recompute it from the evidence behind `photo_hash`.
+        grade: u8,            // 0 = ungraded, 1–4 = A–D
+        grade_confidence: u8, // model confidence, 0–100
+        grade_notes: String,  // model's quality notes (max 64)
+        grade_flags: u8,      // bit 0: models disagreed → human verifier
     ) -> Result<()> {
         require!(uri.len() <= 128, FarmError::UriTooLong);
         require!(crop.len() <= 32, FarmError::LabelTooLong);
         require!(notes.len() <= 256, FarmError::NotesTooLong);
         require!(quantity_kg > 0, FarmError::ZeroQuantity);
+        require!(grade <= 4 && grade_confidence <= 100, FarmError::InvalidGrade);
+        require!(grade_notes.len() <= 64, FarmError::GradeNotesTooLong);
 
         let farm = &mut ctx.accounts.farm;
         let batch = &mut ctx.accounts.batch;
@@ -531,6 +570,10 @@ pub mod indorse_program {
         batch.crop = crop;
         batch.quantity_kg = quantity_kg;
         batch.notes = notes;
+        batch.grade = grade;
+        batch.grade_confidence = grade_confidence;
+        batch.grade_notes = grade_notes;
+        batch.grade_flags = grade_flags;
         // Snapshot the farm's scouting history at time of harvest
         batch.scout_reports_at_harvest = farm.report_count;
         batch.verified_reports_at_harvest = farm.verified_report_count;
@@ -702,6 +745,20 @@ pub mod indorse_program {
         require!(coverage_usdc > 0, FarmError::ZeroAmount);
         require!(premium_usdc > 0, FarmError::ZeroAmount);
         require!(season_end > season_start, FarmError::InvalidSeason);
+        // The fee must sit inside [1%, 100%] of the cover it buys: below
+        // that is mispriced cover, above it a money-losing trap — either
+        // way the instruction itself refuses instead of trusting the app.
+        require!(
+            premium_usdc >= coverage_usdc / 100 && premium_usdc <= coverage_usdc,
+            FarmError::PremiumMispriced
+        );
+        // Bounds, not suggestions: zero never pays out, and above the
+        // ceiling the payout fires on any reading. The client checks this
+        // too — the app is not the gate.
+        require!(
+            trigger_threshold_mm > 0 && trigger_threshold_mm <= MAX_TRIGGER_THRESHOLD_MM10,
+            FarmError::InvalidTrigger
+        );
 
         let farm = &ctx.accounts.farm;
         let policy = &mut ctx.accounts.policy;
@@ -753,9 +810,6 @@ pub mod indorse_program {
         Ok(())
     }
 
-    /// An authorised weather oracle posts a rainfall reading for a farm/season.
-    ///
-    /// PDA seeds: [b"weather", farm, season_start (i64 LE)]
     // =========================================================================
     //  LAYER 3 — ORACLE SET (median of k readers replaces the single key)
     // =========================================================================
@@ -816,7 +870,14 @@ pub mod indorse_program {
         total_rainfall_mm: u32, // Accumulated rainfall for the season (mm × 10)
     ) -> Result<()> {
         // One tally writer with the receipt path below, so a reader and a
-        // relayed Switchboard receipt can never behave differently.
+        // relayed Switchboard receipt can never behave differently. That
+        // sameness includes the plausibility ceiling: median-of-k protects
+        // the number, this refuses the physically impossible before it
+        // enters the tally at all.
+        require!(
+            total_rainfall_mm <= MAX_SEASON_RAINFALL_MM10,
+            FarmError::ImplausibleRainfall
+        );
         let member = ctx.accounts.member.key();
         let farm = ctx.accounts.farm.key();
         let k = ctx.accounts.oracle_set.k;
@@ -866,6 +927,12 @@ pub mod indorse_program {
         require!(
             signers.len() >= SWITCHBOARD_MIN_SIGNERS,
             FarmError::InvalidFeedRegistration
+        );
+        // The binding's fixed size holds MAX_ORACLES keys — refuse past that
+        // with a clear error instead of a failed account serialize.
+        require!(
+            signers.len() <= MAX_ORACLES,
+            FarmError::TooManyFeedSigners
         );
         let mut distinct: Vec<Pubkey> = Vec::with_capacity(signers.len());
         for signer in &signers {
@@ -975,6 +1042,15 @@ pub mod indorse_program {
             policy.coverage_usdc,
             policy.trigger_threshold_mm,
             oracle.total_rainfall_mm,
+        );
+
+        // Honest failure before the CPI: an underfunded vault (the treasury's
+        // post-creation top-up never landed) can settle neither branch — say
+        // why instead of retrying an opaque token error forever. The escape
+        // hatch is revoke_policy, open until season_end.
+        require!(
+            ctx.accounts.insurance_vault.amount >= coverage_usdc,
+            FarmError::CoverageUnfunded
         );
 
         let seeds = &[
@@ -1122,6 +1198,82 @@ pub mod indorse_program {
             policy: policy_key,
             farmer,
             premium_refunded_usdc: premium,
+        });
+        Ok(())
+    }
+
+    /// Close a terminal-state policy and release everything it still holds.
+    /// Permissionless by the same reasoning as `settle_policy`: once the
+    /// state machine says PaidOut or Expired, every destination is already
+    /// pinned — the vault's remainder (the premium) sweeps to program
+    /// custody, and the policy + vault rents return to the farmer who paid
+    /// for them at creation. Nothing here is a caller's choice, so no key
+    /// is given a say over it either.
+    ///
+    /// One instruction covers both terminal states: their cleanup is
+    /// identical, so splitting it would only duplicate the code below.
+    pub fn close_settled_policy(ctx: Context<CloseSettledPolicy>) -> Result<()> {
+        // Explicit terminal states — not "anything but Active" — so a future
+        // non-terminal state cannot become closeable by omission.
+        require!(
+            ctx.accounts.policy.state == PolicyState::PaidOut
+                || ctx.accounts.policy.state == PolicyState::Expired,
+            FarmError::PolicyNotSettled
+        );
+
+        // Copy everything we need off the borrows before the CPIs — the
+        // revoke_policy shape: sweep the vault empty, close it through the
+        // token program (its owner), then Anchor's `close` on the policy
+        // runs after this handler and refunds that rent too.
+        let (farm_key, policy_key, index, bump, farmer, vault_amount) = (
+            ctx.accounts.policy.farm,
+            ctx.accounts.policy.key(),
+            ctx.accounts.policy.index,
+            ctx.accounts.policy.bump,
+            ctx.accounts.policy.farmer,
+            ctx.accounts.insurance_vault.amount,
+        );
+
+        let seeds = &[
+            b"policy".as_ref(),
+            farm_key.as_ref(),
+            &index.to_le_bytes(),
+            &[bump],
+        ];
+        let signer = &[&seeds[..]];
+
+        // Whatever the terminal vault still holds — read, never assumed to
+        // be exactly the premium, so an accounting surprise sweeps instead
+        // of being silently left behind.
+        if vault_amount > 0 {
+            token::transfer(
+                CpiContext::new_with_signer(
+                    ctx.accounts.token_program.to_account_info(),
+                    Transfer {
+                        from: ctx.accounts.insurance_vault.to_account_info(),
+                        to: ctx.accounts.insurer_usdc.to_account_info(),
+                        authority: ctx.accounts.policy.to_account_info(),
+                    },
+                    signer,
+                ),
+                vault_amount,
+            )?;
+        }
+
+        token::close_account(CpiContext::new_with_signer(
+            ctx.accounts.token_program.to_account_info(),
+            token::CloseAccount {
+                account: ctx.accounts.insurance_vault.to_account_info(),
+                destination: ctx.accounts.farmer.to_account_info(),
+                authority: ctx.accounts.policy.to_account_info(),
+            },
+            signer,
+        ))?;
+
+        emit!(PolicyClosed {
+            policy: policy_key,
+            farmer,
+            swept_usdc: vault_amount,
         });
         Ok(())
     }
@@ -1297,6 +1449,12 @@ fn verify_switchboard_receipt<'info>(
     );
     let mm10 = raw / SWITCHBOARD_UNIT_SCALE;
     require!(mm10 <= u32::MAX as u128, FarmError::InvalidSwitchboardValue);
+    // The same plausibility ceiling the direct reader path enforces — one
+    // writer, one rule, regardless of which route delivered the number.
+    require!(
+        mm10 <= MAX_SEASON_RAINFALL_MM10 as u128,
+        FarmError::ImplausibleRainfall
+    );
     Ok(mm10 as u32)
 }
 
@@ -1404,10 +1562,29 @@ pub struct Farm {
     pub batch_count: u32,
     pub verified_report_count: u32, // Tally of verified scout reports
     pub policy_count: u32,
+    /// This farm's position in its owner's roster — the third PDA seed.
+    /// Allocated by `FarmCounter`; immutable once written.
+    pub index: u32,
     pub bump: u8,
 }
 impl Farm {
-    pub const MAX_SIZE: usize = 32 + (4 + 64) + 8 + 8 + 4 + 4 + 4 + 4 + 1;
+    pub const MAX_SIZE: usize = 32 + (4 + 64) + 8 + 8 + 4 + 4 + 4 + 4 + 4 + 1;
+}
+
+/// Layer 1 — per-owner farm allocator
+///
+/// The monotonically increasing count that forms the third seed of the
+/// owner's next farm PDA: `["farm", owner, u32(count) LE]`. It never
+/// decrements — `delete_farm` frees a slot from re-use by moving the
+/// allocator forward only, so two live farms can never collide on a PDA.
+#[account]
+pub struct FarmCounter {
+    pub owner: Pubkey,
+    pub count: u32,
+    pub bump: u8,
+}
+impl FarmCounter {
+    pub const MAX_SIZE: usize = 32 + 4 + 1;
 }
 
 /// Layer 1 — Scout report
@@ -1530,12 +1707,21 @@ pub struct HarvestBatch {
     pub scout_reports_at_harvest: u32,
     /// Verified scout reports on the farm when batch was submitted
     pub verified_reports_at_harvest: u32,
+    /// AI grade at harvest — 0 = ungraded, 1–4 = A–D. Farmer-attested
+    /// (signed with the batch), auditable later against `photo_hash`.
+    pub grade: u8,
+    /// The vision model's confidence, 0–100.
+    pub grade_confidence: u8,
+    /// Why this grade, in the model's words (max 64).
+    pub grade_notes: String,
+    /// bit 0: the two models disagreed — flagged for a human verifier.
+    pub grade_flags: u8,
     pub timestamp: i64,
     pub bump: u8,
 }
 impl HarvestBatch {
     pub const MAX_SIZE: usize =
-        32 + 32 + 4 + 32 + (4 + 128) + 8 + 8 + (4 + 32) + 8 + (4 + 256) + 4 + 4 + 8 + 1;
+        32 + 32 + 4 + 32 + (4 + 128) + 8 + 8 + (4 + 32) + 8 + (4 + 256) + 4 + 4 + 1 + 1 + (4 + 64) + 1 + 8 + 1;
 }
 
 /// Layer 2 — Escrow for buyer/farmer USDC settlement
@@ -1707,11 +1893,23 @@ pub struct RegisterFarm<'info> {
     #[account(mut)]
     pub owner: Signer<'info>,
 
+    /// Per-owner roster allocator — created on the first registration and
+    /// re-used (hence `init_if_needed`) by every one after it. Declared
+    /// before `farm` because the farm's seeds read its `count`.
+    #[account(
+        init_if_needed,
+        payer = owner,
+        space = 8 + FarmCounter::MAX_SIZE,
+        seeds = [b"farm_counter", owner.key().as_ref()],
+        bump
+    )]
+    pub farm_counter: Account<'info, FarmCounter>,
+
     #[account(
         init,
         payer = owner,
         space = 8 + Farm::MAX_SIZE,
-        seeds = [b"farm", owner.key().as_ref()],
+        seeds = [b"farm", owner.key().as_ref(), &farm_counter.count.to_le_bytes()],
         bump
     )]
     pub farm: Account<'info, Farm>,
@@ -1782,9 +1980,15 @@ pub struct PostBond<'info> {
     #[account(mut)]
     pub member: Signer<'info>,
 
-    /// The set PDA. Sets created before Phase 3A were allocated for bare-
-    /// pubkey members; the realloc normalizes every account to the current
-    /// layout size on the first join, with the joining member paying any
+    /// The set PDA. The realloc normalizes an account created before Phase
+    /// 3A (bare-pubkey members) to the current layout — but ONLY while the
+    /// set is empty, which is the one state that serializes identically in
+    /// both layouts. Invariant: never bond into a non-empty legacy set.
+    /// Anchor deserializes this account BEFORE the realloc runs, so old
+    /// bytes with members are parsed against the new struct — silently
+    /// misreading pubkeys/stakes at ≤5 members (corrupting collateral
+    /// records) and failing to load at ≥6. A non-empty legacy set must be
+    /// closed and re-inited, never realloc'd. The joining member pays any
     /// rent delta (a no-op on already-current sets).
     #[account(
         mut,
@@ -1956,7 +2160,7 @@ pub struct CastVote<'info> {
 
     /// Farm must match the report so a finalizing approval bumps
     /// verified_report_count (the old single-verifier behaviour, preserved).
-    #[account(mut, constraint = farm.key() == report.farm)]
+    #[account(mut, constraint = farm.key() == report.farm @ FarmError::FarmMismatch)]
     pub farm: Account<'info, Farm>,
 
     #[account(
@@ -2051,7 +2255,6 @@ pub struct CreateEscrow<'info> {
     pub escrow_vault: Account<'info, TokenAccount>,
 
     #[account(
-        
         mut,
         constraint = buyer_usdc.owner == buyer.key() @ FarmError::TokenAccountInvalid,
         constraint = buyer_usdc.mint == usdc_mint.key() @ FarmError::TokenAccountInvalid
@@ -2385,7 +2588,7 @@ pub struct DeleteFarm<'info> {
     #[account(
         mut,
         close = owner,
-        seeds = [b"farm", owner.key().as_ref()],
+        seeds = [b"farm", owner.key().as_ref(), &farm.index.to_le_bytes()],
         bump = farm.bump,
         has_one = owner @ FarmError::NotFarmOwner
     )]
@@ -2434,6 +2637,62 @@ pub struct RevokePolicy<'info> {
     pub treasury: UncheckedAccount<'info>,
 
     /// The treasury's canonical USDC ATA.
+    #[account(
+        mut,
+        constraint = insurer_usdc.key()
+            == anchor_spl::associated_token::get_associated_token_address(
+                &treasury.key(),
+                &insurance_vault.mint,
+            ) @ FarmError::TokenAccountInvalid,
+        constraint = insurer_usdc.mint == insurance_vault.mint @ FarmError::TokenAccountInvalid
+    )]
+    pub insurer_usdc: Account<'info, TokenAccount>,
+
+    pub token_program: Program<'info, Token>,
+}
+
+/// Layer 3 — closing a terminal-state policy (PaidOut or Expired).
+#[derive(Accounts)]
+pub struct CloseSettledPolicy<'info> {
+    /// Permissionless: the state gate and the pinned destinations below are
+    /// the whole authority — this signer only carries the signature and
+    /// pays the transaction fee, exactly like `settle_policy`'s settler.
+    pub closer: Signer<'info>,
+
+    #[account(
+        mut,
+        close = farmer,
+        seeds = [b"policy", policy.farm.as_ref(), &policy.index.to_le_bytes()],
+        bump = policy.bump
+    )]
+    pub policy: Account<'info, Policy>,
+
+    #[account(
+        mut,
+        seeds = [b"insurance_vault", policy.farm.as_ref(), &policy.index.to_le_bytes()],
+        bump
+    )]
+    pub insurance_vault: Account<'info, TokenAccount>,
+
+    /// The rent destination: the farmer who paid for both accounts at
+    /// creation. Pinned to the stored field, never caller-chosen.
+    /// CHECK: only receives lamports; the constraint binds it to the policy.
+    #[account(
+        mut,
+        constraint = farmer.key() == policy.farmer @ FarmError::RentDestinationMismatch
+    )]
+    pub farmer: UncheckedAccount<'info>,
+
+    /// Program-owned treasury: the premium sweep lands in its canonical
+    /// USDC ATA, whoever `config.admin` happens to be.
+    /// CHECK: the `seeds` constraint re-derives the address from
+    /// `[b"treasury"]` under this program, so only the program's own PDA
+    /// passes — no state is read from it beyond the address.
+    #[account(seeds = [b"treasury"], bump)]
+    pub treasury: UncheckedAccount<'info>,
+
+    /// The treasury's canonical USDC ATA — validated by address, so the
+    /// sweep can only land in program custody.
     #[account(
         mut,
         constraint = insurer_usdc.key()
@@ -2587,6 +2846,14 @@ pub struct PolicyRevoked {
     pub policy: Pubkey,
     pub farmer: Pubkey,
     pub premium_refunded_usdc: u64,
+}
+
+#[event]
+pub struct PolicyClosed {
+    pub policy: Pubkey,
+    pub farmer: Pubkey,
+    /// Whatever the terminal vault held — read at close, not assumed.
+    pub swept_usdc: u64,
 }
 
 // Layer 0 (appended — event names hash to discriminators, order is free)
@@ -2799,4 +3066,36 @@ pub enum FarmError {
     UnauthorisedSwitchboardSigner,
     #[msg("The signed value is not a non-negative whole 0.1 mm of rainfall")]
     InvalidSwitchboardValue,
+
+    // Appended with the contract-review hardening — errors append-only, so
+    // every code declared above keeps its index.
+    #[msg("The feed registration exceeds the maximum signer count")]
+    TooManyFeedSigners,
+    #[msg("The farm passed does not match the report's farm")]
+    FarmMismatch,
+    #[msg("The policy vault does not hold the coverage amount")]
+    CoverageUnfunded,
+    #[msg("The tally has no room for another vote")]
+    TallyFull,
+
+    // Appended with close_settled_policy — still append-only.
+    #[msg("Only a settled policy (paid out or expired) can be closed")]
+    PolicyNotSettled,
+    #[msg("Rent destination does not match the policy's farmer")]
+    RentDestinationMismatch,
+
+    // Appended with the harvest-grade flow — still append-only.
+    #[msg("Grade must be 0–4 (A–D) with confidence 0–100")]
+    InvalidGrade,
+    #[msg("Grade notes too long (max 64 chars)")]
+    GradeNotesTooLong,
+
+    // Appended with the policy-creation & reading guardrails — still
+    // append-only.
+    #[msg("Premium must be between 1% and 100% of the coverage")]
+    PremiumMispriced,
+    #[msg("Trigger threshold is out of range (mm x 10)")]
+    InvalidTrigger,
+    #[msg("Seasonal rainfall exceeds the plausible maximum (mm x 10)")]
+    ImplausibleRainfall,
 }

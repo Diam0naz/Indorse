@@ -37,6 +37,7 @@ import {
   getConfigCodec,
   getEscrowCodec,
   getFarmCodec,
+  getFarmCounterCodec,
   getHarvestBatchCodec,
   getOracleSetCodec,
   getPolicyCodec,
@@ -51,6 +52,8 @@ import {
   type EscrowArgs,
   type Farm,
   type FarmArgs,
+  type FarmCounter,
+  type FarmCounterArgs,
   type HarvestBatch,
   type HarvestBatchArgs,
   type OracleSet,
@@ -72,9 +75,10 @@ import {
   getAddOracleInstructionAsync,
   getCancelEscrowInstruction,
   getCastVoteInstructionAsync,
+  getCloseSettledPolicyInstructionAsync,
   getCreateEscrowInstructionAsync,
   getCreatePolicyInstruction,
-  getDeleteFarmInstructionAsync,
+  getDeleteFarmInstruction,
   getInitConfigInstructionAsync,
   getInitOracleSetInstructionAsync,
   getInitVerifierSetInstructionAsync,
@@ -99,6 +103,7 @@ import {
   parseAddOracleInstruction,
   parseCancelEscrowInstruction,
   parseCastVoteInstruction,
+  parseCloseSettledPolicyInstruction,
   parseCreateEscrowInstruction,
   parseCreatePolicyInstruction,
   parseDeleteFarmInstruction,
@@ -126,15 +131,17 @@ import {
   type AddOracleAsyncInput,
   type CancelEscrowInput,
   type CastVoteAsyncInput,
+  type CloseSettledPolicyAsyncInput,
   type CreateEscrowAsyncInput,
   type CreatePolicyInput,
-  type DeleteFarmAsyncInput,
+  type DeleteFarmInput,
   type InitConfigAsyncInput,
   type InitOracleSetAsyncInput,
   type InitVerifierSetAsyncInput,
   type ParsedAddOracleInstruction,
   type ParsedCancelEscrowInstruction,
   type ParsedCastVoteInstruction,
+  type ParsedCloseSettledPolicyInstruction,
   type ParsedCreateEscrowInstruction,
   type ParsedCreatePolicyInstruction,
   type ParsedDeleteFarmInstruction,
@@ -183,7 +190,7 @@ import {
   findConfigPda,
   findEscrowPda,
   findEscrowVaultPda,
-  findFarmPda,
+  findFarmCounterPda,
   findOraclePda,
   findOracleSetPda,
   findRewardAuthorityPda,
@@ -199,6 +206,7 @@ export enum IndorseProgramAccount {
   Config,
   Escrow,
   Farm,
+  FarmCounter,
   HarvestBatch,
   OracleSet,
   Policy,
@@ -239,6 +247,15 @@ export function identifyIndorseProgramAccount(
     )
   ) {
     return IndorseProgramAccount.Farm
+  }
+  if (
+    containsBytes(
+      data,
+      fixEncoderSize(getBytesEncoder(), 8).encode(new Uint8Array([66, 229, 92, 152, 10, 184, 35, 50])),
+      0,
+    )
+  ) {
+    return IndorseProgramAccount.FarmCounter
   }
   if (
     containsBytes(
@@ -329,6 +346,7 @@ export enum IndorseProgramEvent {
   OracleJoined,
   OracleRemoved,
   OracleSetInitialized,
+  PolicyClosed,
   PolicyCreated,
   PolicyRevoked,
   PolicySettled,
@@ -442,6 +460,15 @@ export function identifyIndorseProgramEvent(
     )
   ) {
     return IndorseProgramEvent.OracleSetInitialized
+  }
+  if (
+    containsBytes(
+      data,
+      fixEncoderSize(getBytesEncoder(), 8).encode(new Uint8Array([19, 126, 82, 173, 79, 86, 50, 51])),
+      0,
+    )
+  ) {
+    return IndorseProgramEvent.PolicyClosed
   }
   if (
     containsBytes(
@@ -612,6 +639,7 @@ export enum IndorseProgramInstruction {
   AddOracle,
   CancelEscrow,
   CastVote,
+  CloseSettledPolicy,
   CreateEscrow,
   CreatePolicy,
   DeleteFarm,
@@ -668,6 +696,15 @@ export function identifyIndorseProgramInstruction(
     )
   ) {
     return IndorseProgramInstruction.CastVote
+  }
+  if (
+    containsBytes(
+      data,
+      fixEncoderSize(getBytesEncoder(), 8).encode(new Uint8Array([98, 69, 97, 203, 38, 13, 126, 243])),
+      0,
+    )
+  ) {
+    return IndorseProgramInstruction.CloseSettledPolicy
   }
   if (
     containsBytes(
@@ -895,6 +932,7 @@ export type ParsedIndorseProgramInstruction<TProgram extends string = 'GVenujqgM
   | ({ instructionType: IndorseProgramInstruction.AddOracle } & ParsedAddOracleInstruction<TProgram>)
   | ({ instructionType: IndorseProgramInstruction.CancelEscrow } & ParsedCancelEscrowInstruction<TProgram>)
   | ({ instructionType: IndorseProgramInstruction.CastVote } & ParsedCastVoteInstruction<TProgram>)
+  | ({ instructionType: IndorseProgramInstruction.CloseSettledPolicy } & ParsedCloseSettledPolicyInstruction<TProgram>)
   | ({ instructionType: IndorseProgramInstruction.CreateEscrow } & ParsedCreateEscrowInstruction<TProgram>)
   | ({ instructionType: IndorseProgramInstruction.CreatePolicy } & ParsedCreatePolicyInstruction<TProgram>)
   | ({ instructionType: IndorseProgramInstruction.DeleteFarm } & ParsedDeleteFarmInstruction<TProgram>)
@@ -944,6 +982,13 @@ export function parseIndorseProgramInstruction<TProgram extends string>(
     case IndorseProgramInstruction.CastVote: {
       assertIsInstructionWithAccounts(instruction)
       return { instructionType: IndorseProgramInstruction.CastVote, ...parseCastVoteInstruction(instruction) }
+    }
+    case IndorseProgramInstruction.CloseSettledPolicy: {
+      assertIsInstructionWithAccounts(instruction)
+      return {
+        instructionType: IndorseProgramInstruction.CloseSettledPolicy,
+        ...parseCloseSettledPolicyInstruction(instruction),
+      }
     }
     case IndorseProgramInstruction.CreateEscrow: {
       assertIsInstructionWithAccounts(instruction)
@@ -1092,6 +1137,7 @@ export type IndorseProgramPluginAccounts = {
   config: ReturnType<typeof getConfigCodec> & SelfFetchFunctions<ConfigArgs, Config>
   escrow: ReturnType<typeof getEscrowCodec> & SelfFetchFunctions<EscrowArgs, Escrow>
   farm: ReturnType<typeof getFarmCodec> & SelfFetchFunctions<FarmArgs, Farm>
+  farmCounter: ReturnType<typeof getFarmCounterCodec> & SelfFetchFunctions<FarmCounterArgs, FarmCounter>
   harvestBatch: ReturnType<typeof getHarvestBatchCodec> & SelfFetchFunctions<HarvestBatchArgs, HarvestBatch>
   oracleSet: ReturnType<typeof getOracleSetCodec> & SelfFetchFunctions<OracleSetArgs, OracleSet>
   policy: ReturnType<typeof getPolicyCodec> & SelfFetchFunctions<PolicyArgs, Policy>
@@ -1107,13 +1153,14 @@ export type IndorseProgramPluginInstructions = {
   addOracle: (input: AddOracleAsyncInput) => ReturnType<typeof getAddOracleInstructionAsync> & SelfPlanAndSendFunctions
   cancelEscrow: (input: CancelEscrowInput) => ReturnType<typeof getCancelEscrowInstruction> & SelfPlanAndSendFunctions
   castVote: (input: CastVoteAsyncInput) => ReturnType<typeof getCastVoteInstructionAsync> & SelfPlanAndSendFunctions
+  closeSettledPolicy: (
+    input: CloseSettledPolicyAsyncInput,
+  ) => ReturnType<typeof getCloseSettledPolicyInstructionAsync> & SelfPlanAndSendFunctions
   createEscrow: (
     input: CreateEscrowAsyncInput,
   ) => ReturnType<typeof getCreateEscrowInstructionAsync> & SelfPlanAndSendFunctions
   createPolicy: (input: CreatePolicyInput) => ReturnType<typeof getCreatePolicyInstruction> & SelfPlanAndSendFunctions
-  deleteFarm: (
-    input: DeleteFarmAsyncInput,
-  ) => ReturnType<typeof getDeleteFarmInstructionAsync> & SelfPlanAndSendFunctions
+  deleteFarm: (input: DeleteFarmInput) => ReturnType<typeof getDeleteFarmInstruction> & SelfPlanAndSendFunctions
   initConfig: (
     input: InitConfigAsyncInput,
   ) => ReturnType<typeof getInitConfigInstructionAsync> & SelfPlanAndSendFunctions
@@ -1179,12 +1226,12 @@ export type IndorseProgramPluginPdas = {
   oracleSet: typeof findOracleSetPda
   verifierSet: typeof findVerifierSetPda
   tally: typeof findTallyPda
+  treasury: typeof findTreasuryPda
   escrow: typeof findEscrowPda
   escrowVault: typeof findEscrowVaultPda
-  farm: typeof findFarmPda
   config: typeof findConfigPda
+  farmCounter: typeof findFarmCounterPda
   binding: typeof findBindingPda
-  treasury: typeof findTreasuryPda
   rewardAuthority: typeof findRewardAuthorityPda
   oracle: typeof findOraclePda
 }
@@ -1203,6 +1250,7 @@ export function indorseProgramProgram() {
           config: addSelfFetchFunctions(client, getConfigCodec()),
           escrow: addSelfFetchFunctions(client, getEscrowCodec()),
           farm: addSelfFetchFunctions(client, getFarmCodec()),
+          farmCounter: addSelfFetchFunctions(client, getFarmCounterCodec()),
           harvestBatch: addSelfFetchFunctions(client, getHarvestBatchCodec()),
           oracleSet: addSelfFetchFunctions(client, getOracleSetCodec()),
           policy: addSelfFetchFunctions(client, getPolicyCodec()),
@@ -1216,9 +1264,11 @@ export function indorseProgramProgram() {
           addOracle: (input) => addSelfPlanAndSendFunctions(client, getAddOracleInstructionAsync(input)),
           cancelEscrow: (input) => addSelfPlanAndSendFunctions(client, getCancelEscrowInstruction(input)),
           castVote: (input) => addSelfPlanAndSendFunctions(client, getCastVoteInstructionAsync(input)),
+          closeSettledPolicy: (input) =>
+            addSelfPlanAndSendFunctions(client, getCloseSettledPolicyInstructionAsync(input)),
           createEscrow: (input) => addSelfPlanAndSendFunctions(client, getCreateEscrowInstructionAsync(input)),
           createPolicy: (input) => addSelfPlanAndSendFunctions(client, getCreatePolicyInstruction(input)),
-          deleteFarm: (input) => addSelfPlanAndSendFunctions(client, getDeleteFarmInstructionAsync(input)),
+          deleteFarm: (input) => addSelfPlanAndSendFunctions(client, getDeleteFarmInstruction(input)),
           initConfig: (input) => addSelfPlanAndSendFunctions(client, getInitConfigInstructionAsync(input)),
           initOracleSet: (input) => addSelfPlanAndSendFunctions(client, getInitOracleSetInstructionAsync(input)),
           initVerifierSet: (input) => addSelfPlanAndSendFunctions(client, getInitVerifierSetInstructionAsync(input)),
@@ -1249,12 +1299,12 @@ export function indorseProgramProgram() {
           oracleSet: findOracleSetPda,
           verifierSet: findVerifierSetPda,
           tally: findTallyPda,
+          treasury: findTreasuryPda,
           escrow: findEscrowPda,
           escrowVault: findEscrowVaultPda,
-          farm: findFarmPda,
           config: findConfigPda,
+          farmCounter: findFarmCounterPda,
           binding: findBindingPda,
-          treasury: findTreasuryPda,
           rewardAuthority: findRewardAuthorityPda,
           oracle: findOraclePda,
         },

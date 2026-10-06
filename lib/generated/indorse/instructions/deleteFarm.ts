@@ -31,12 +31,7 @@ import {
   type WritableAccount,
   type WritableSignerAccount,
 } from '@solana/kit'
-import {
-  getAccountMetaFactory,
-  getAddressFromResolvedInstructionAccount,
-  type ResolvedInstructionAccount,
-} from '@solana/program-client-core'
-import { findFarmPda } from '../pdas'
+import { getAccountMetaFactory, type ResolvedInstructionAccount } from '@solana/program-client-core'
 import { INDORSE_PROGRAM_PROGRAM_ADDRESS } from '../programs'
 
 export const DELETE_FARM_DISCRIMINATOR: ReadonlyUint8Array = new Uint8Array([233, 185, 114, 56, 250, 185, 117, 50])
@@ -82,46 +77,6 @@ export function getDeleteFarmInstructionDataCodec(): FixedSizeCodec<
   DeleteFarmInstructionData
 > {
   return combineCodec(getDeleteFarmInstructionDataEncoder(), getDeleteFarmInstructionDataDecoder())
-}
-
-export type DeleteFarmAsyncInput<TAccountFarm extends string = string, TAccountOwner extends string = string> = {
-  farm?: Address<TAccountFarm>
-  /** The owner receives the rent; the PDA seeds bind this signer to the farm. */
-  owner: TransactionSigner<TAccountOwner>
-}
-
-export async function getDeleteFarmInstructionAsync<
-  TAccountFarm extends string,
-  TAccountOwner extends string,
-  TProgramAddress extends Address = typeof INDORSE_PROGRAM_PROGRAM_ADDRESS,
->(
-  input: DeleteFarmAsyncInput<TAccountFarm, TAccountOwner>,
-  config?: { programAddress?: TProgramAddress },
-): Promise<DeleteFarmInstruction<TProgramAddress, TAccountFarm, TAccountOwner>> {
-  // Program address.
-  const programAddress = config?.programAddress ?? INDORSE_PROGRAM_PROGRAM_ADDRESS
-
-  // Original accounts.
-  const originalAccounts = {
-    farm: { value: input.farm ?? null, isWritable: true },
-    owner: { value: input.owner ?? null, isWritable: true },
-  }
-  const accounts = originalAccounts as Record<keyof typeof originalAccounts, ResolvedInstructionAccount>
-
-  // Resolve default values.
-  if (!accounts.farm.value) {
-    accounts.farm.value = await findFarmPda(
-      { owner: getAddressFromResolvedInstructionAccount('owner', accounts.owner.value) },
-      { programAddress },
-    )
-  }
-
-  const getAccountMeta = getAccountMetaFactory(programAddress, 'programId')
-  return Object.freeze({
-    accounts: [getAccountMeta('farm', accounts.farm), getAccountMeta('owner', accounts.owner)],
-    data: getDeleteFarmInstructionDataEncoder().encode({}),
-    programAddress,
-  } as DeleteFarmInstruction<TProgramAddress, TAccountFarm, TAccountOwner>)
 }
 
 export type DeleteFarmInput<TAccountFarm extends string = string, TAccountOwner extends string = string> = {

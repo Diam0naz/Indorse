@@ -16,21 +16,27 @@ import { PROGRAM_ID } from '@/constants/app-config'
 
 const OWNER = 'GVenujqgMJZCvYPKqMmPiAXQp7o3mwQbXw1nSBu3U5Ht'
 const FARM = 'TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA'
+const COUNTER = 'Sysvar1nstructions1111111111111111111111111'
 const REPORT = '11111111111111111111111111111111'
 const SYSTEM_PROGRAM = '11111111111111111111111111111111'
 
 describe('buildInstruction', () => {
   it('builds register_farm with IDL roles and fixed addresses', () => {
-    const ix = buildInstruction('register_farm', { owner: OWNER, farm: FARM }, { name: 'X', latE6: 1, lngE6: 2 })
+    const ix = buildInstruction(
+      'register_farm',
+      { owner: OWNER, farmCounter: COUNTER, farm: FARM },
+      { name: 'X', latE6: 1, lngE6: 2 },
+    )
 
     expect(ix.programAddress).toBe(PROGRAM_ID)
-    expect(instructionAccountNames('register_farm')).toEqual(['owner', 'farm', 'systemProgram'])
+    expect(instructionAccountNames('register_farm')).toEqual(['owner', 'farmCounter', 'farm', 'systemProgram'])
 
-    expect(ix.accounts).toHaveLength(3)
+    expect(ix.accounts).toHaveLength(4)
     expect(ix.accounts?.[0]).toEqual({ address: OWNER, role: AccountRole.WRITABLE_SIGNER })
-    expect(ix.accounts?.[1]).toEqual({ address: FARM, role: AccountRole.WRITABLE })
+    expect(ix.accounts?.[1]).toEqual({ address: COUNTER, role: AccountRole.WRITABLE })
+    expect(ix.accounts?.[2]).toEqual({ address: FARM, role: AccountRole.WRITABLE })
     // system program comes from the IDL, not the caller
-    expect(ix.accounts?.[2]).toEqual({ address: SYSTEM_PROGRAM, role: AccountRole.READONLY })
+    expect(ix.accounts?.[3]).toEqual({ address: SYSTEM_PROGRAM, role: AccountRole.READONLY })
 
     expect(Array.from(ix.data!.slice(0, 8))).toEqual(Array.from(instructionDiscriminator('register_farm')))
     expect(decodeInstructionArgs(ix.data!, 'register_farm')).toEqual({ name: 'X', latE6: 1, lngE6: 2 })
@@ -52,7 +58,7 @@ describe('buildInstruction', () => {
 
   it('rejects a missing non-fixed account', () => {
     expect(() => buildInstruction('register_farm', { owner: OWNER }, { name: 'X', latE6: 1, lngE6: 2 })).toThrow(
-      /Missing account "farm"/,
+      /Missing account "farmCounter"/,
     )
   })
 })

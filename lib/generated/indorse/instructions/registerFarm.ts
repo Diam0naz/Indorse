@@ -45,7 +45,7 @@ import {
   getAddressFromResolvedInstructionAccount,
   type ResolvedInstructionAccount,
 } from '@solana/program-client-core'
-import { findFarmPda } from '../pdas'
+import { findFarmCounterPda } from '../pdas'
 import { INDORSE_PROGRAM_PROGRAM_ADDRESS } from '../programs'
 
 export const REGISTER_FARM_DISCRIMINATOR: ReadonlyUint8Array = new Uint8Array([183, 52, 200, 186, 245, 91, 216, 246])
@@ -57,6 +57,7 @@ export function getRegisterFarmDiscriminatorBytes(): ReadonlyUint8Array {
 export type RegisterFarmInstruction<
   TProgram extends string = typeof INDORSE_PROGRAM_PROGRAM_ADDRESS,
   TAccountOwner extends string | AccountMeta<string> = string,
+  TAccountFarmCounter extends string | AccountMeta<string> = string,
   TAccountFarm extends string | AccountMeta<string> = string,
   TAccountSystemProgram extends string | AccountMeta<string> = '11111111111111111111111111111111',
   TRemainingAccounts extends readonly AccountMeta<string>[] = [],
@@ -67,6 +68,7 @@ export type RegisterFarmInstruction<
       TAccountOwner extends string
         ? WritableSignerAccount<TAccountOwner> & AccountSignerMeta<TAccountOwner>
         : TAccountOwner,
+      TAccountFarmCounter extends string ? WritableAccount<TAccountFarmCounter> : TAccountFarmCounter,
       TAccountFarm extends string ? WritableAccount<TAccountFarm> : TAccountFarm,
       TAccountSystemProgram extends string ? ReadonlyAccount<TAccountSystemProgram> : TAccountSystemProgram,
       ...TRemainingAccounts,
@@ -112,11 +114,18 @@ export function getRegisterFarmInstructionDataCodec(): Codec<
 
 export type RegisterFarmAsyncInput<
   TAccountOwner extends string = string,
+  TAccountFarmCounter extends string = string,
   TAccountFarm extends string = string,
   TAccountSystemProgram extends string = string,
 > = {
   owner: TransactionSigner<TAccountOwner>
-  farm?: Address<TAccountFarm>
+  /**
+   * Per-owner roster allocator — created on the first registration and
+   * re-used (hence `init_if_needed`) by every one after it. Declared
+   * before `farm` because the farm's seeds read its `count`.
+   */
+  farmCounter?: Address<TAccountFarmCounter>
+  farm: Address<TAccountFarm>
   systemProgram?: Address<TAccountSystemProgram>
   name: RegisterFarmInstructionDataArgs['name']
   latE6: RegisterFarmInstructionDataArgs['latE6']
@@ -125,19 +134,23 @@ export type RegisterFarmAsyncInput<
 
 export async function getRegisterFarmInstructionAsync<
   TAccountOwner extends string,
+  TAccountFarmCounter extends string,
   TAccountFarm extends string,
   TAccountSystemProgram extends string,
   TProgramAddress extends Address = typeof INDORSE_PROGRAM_PROGRAM_ADDRESS,
 >(
-  input: RegisterFarmAsyncInput<TAccountOwner, TAccountFarm, TAccountSystemProgram>,
+  input: RegisterFarmAsyncInput<TAccountOwner, TAccountFarmCounter, TAccountFarm, TAccountSystemProgram>,
   config?: { programAddress?: TProgramAddress },
-): Promise<RegisterFarmInstruction<TProgramAddress, TAccountOwner, TAccountFarm, TAccountSystemProgram>> {
+): Promise<
+  RegisterFarmInstruction<TProgramAddress, TAccountOwner, TAccountFarmCounter, TAccountFarm, TAccountSystemProgram>
+> {
   // Program address.
   const programAddress = config?.programAddress ?? INDORSE_PROGRAM_PROGRAM_ADDRESS
 
   // Original accounts.
   const originalAccounts = {
     owner: { value: input.owner ?? null, isWritable: true },
+    farmCounter: { value: input.farmCounter ?? null, isWritable: true },
     farm: { value: input.farm ?? null, isWritable: true },
     systemProgram: { value: input.systemProgram ?? null, isWritable: false },
   }
@@ -147,8 +160,8 @@ export async function getRegisterFarmInstructionAsync<
   const args = { ...input }
 
   // Resolve default values.
-  if (!accounts.farm.value) {
-    accounts.farm.value = await findFarmPda(
+  if (!accounts.farmCounter.value) {
+    accounts.farmCounter.value = await findFarmCounterPda(
       { owner: getAddressFromResolvedInstructionAccount('owner', accounts.owner.value) },
       { programAddress },
     )
@@ -161,20 +174,34 @@ export async function getRegisterFarmInstructionAsync<
   return Object.freeze({
     accounts: [
       getAccountMeta('owner', accounts.owner),
+      getAccountMeta('farmCounter', accounts.farmCounter),
       getAccountMeta('farm', accounts.farm),
       getAccountMeta('systemProgram', accounts.systemProgram),
     ],
     data: getRegisterFarmInstructionDataEncoder().encode(args as RegisterFarmInstructionDataArgs),
     programAddress,
-  } as RegisterFarmInstruction<TProgramAddress, TAccountOwner, TAccountFarm, TAccountSystemProgram>)
+  } as RegisterFarmInstruction<
+    TProgramAddress,
+    TAccountOwner,
+    TAccountFarmCounter,
+    TAccountFarm,
+    TAccountSystemProgram
+  >)
 }
 
 export type RegisterFarmInput<
   TAccountOwner extends string = string,
+  TAccountFarmCounter extends string = string,
   TAccountFarm extends string = string,
   TAccountSystemProgram extends string = string,
 > = {
   owner: TransactionSigner<TAccountOwner>
+  /**
+   * Per-owner roster allocator — created on the first registration and
+   * re-used (hence `init_if_needed`) by every one after it. Declared
+   * before `farm` because the farm's seeds read its `count`.
+   */
+  farmCounter: Address<TAccountFarmCounter>
   farm: Address<TAccountFarm>
   systemProgram?: Address<TAccountSystemProgram>
   name: RegisterFarmInstructionDataArgs['name']
@@ -184,19 +211,21 @@ export type RegisterFarmInput<
 
 export function getRegisterFarmInstruction<
   TAccountOwner extends string,
+  TAccountFarmCounter extends string,
   TAccountFarm extends string,
   TAccountSystemProgram extends string,
   TProgramAddress extends Address = typeof INDORSE_PROGRAM_PROGRAM_ADDRESS,
 >(
-  input: RegisterFarmInput<TAccountOwner, TAccountFarm, TAccountSystemProgram>,
+  input: RegisterFarmInput<TAccountOwner, TAccountFarmCounter, TAccountFarm, TAccountSystemProgram>,
   config?: { programAddress?: TProgramAddress },
-): RegisterFarmInstruction<TProgramAddress, TAccountOwner, TAccountFarm, TAccountSystemProgram> {
+): RegisterFarmInstruction<TProgramAddress, TAccountOwner, TAccountFarmCounter, TAccountFarm, TAccountSystemProgram> {
   // Program address.
   const programAddress = config?.programAddress ?? INDORSE_PROGRAM_PROGRAM_ADDRESS
 
   // Original accounts.
   const originalAccounts = {
     owner: { value: input.owner ?? null, isWritable: true },
+    farmCounter: { value: input.farmCounter ?? null, isWritable: true },
     farm: { value: input.farm ?? null, isWritable: true },
     systemProgram: { value: input.systemProgram ?? null, isWritable: false },
   }
@@ -214,12 +243,19 @@ export function getRegisterFarmInstruction<
   return Object.freeze({
     accounts: [
       getAccountMeta('owner', accounts.owner),
+      getAccountMeta('farmCounter', accounts.farmCounter),
       getAccountMeta('farm', accounts.farm),
       getAccountMeta('systemProgram', accounts.systemProgram),
     ],
     data: getRegisterFarmInstructionDataEncoder().encode(args as RegisterFarmInstructionDataArgs),
     programAddress,
-  } as RegisterFarmInstruction<TProgramAddress, TAccountOwner, TAccountFarm, TAccountSystemProgram>)
+  } as RegisterFarmInstruction<
+    TProgramAddress,
+    TAccountOwner,
+    TAccountFarmCounter,
+    TAccountFarm,
+    TAccountSystemProgram
+  >)
 }
 
 export type ParsedRegisterFarmInstruction<
@@ -229,8 +265,14 @@ export type ParsedRegisterFarmInstruction<
   programAddress: Address<TProgram>
   accounts: {
     owner: TAccountMetas[0]
-    farm: TAccountMetas[1]
-    systemProgram: TAccountMetas[2]
+    /**
+     * Per-owner roster allocator — created on the first registration and
+     * re-used (hence `init_if_needed`) by every one after it. Declared
+     * before `farm` because the farm's seeds read its `count`.
+     */
+    farmCounter: TAccountMetas[1]
+    farm: TAccountMetas[2]
+    systemProgram: TAccountMetas[3]
   }
   data: RegisterFarmInstructionData
 }
@@ -238,10 +280,10 @@ export type ParsedRegisterFarmInstruction<
 export function parseRegisterFarmInstruction<TProgram extends string, TAccountMetas extends readonly AccountMeta[]>(
   instruction: Instruction<TProgram> & InstructionWithAccounts<TAccountMetas> & InstructionWithData<ReadonlyUint8Array>,
 ): ParsedRegisterFarmInstruction<TProgram, TAccountMetas> {
-  if (instruction.accounts.length < 3) {
+  if (instruction.accounts.length < 4) {
     throw new SolanaError(SOLANA_ERROR__PROGRAM_CLIENTS__INSUFFICIENT_ACCOUNT_METAS, {
       actualAccountMetas: instruction.accounts.length,
-      expectedAccountMetas: 3,
+      expectedAccountMetas: 4,
     })
   }
   let accountIndex = 0
@@ -252,7 +294,12 @@ export function parseRegisterFarmInstruction<TProgram extends string, TAccountMe
   }
   return {
     programAddress: instruction.programAddress,
-    accounts: { owner: getNextAccount(), farm: getNextAccount(), systemProgram: getNextAccount() },
+    accounts: {
+      owner: getNextAccount(),
+      farmCounter: getNextAccount(),
+      farm: getNextAccount(),
+      systemProgram: getNextAccount(),
+    },
     data: getRegisterFarmInstructionDataDecoder().decode(instruction.data),
   }
 }

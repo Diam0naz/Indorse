@@ -9,6 +9,7 @@
 export * from './addOracle'
 export * from './cancelEscrow'
 export * from './castVote'
+export * from './closeSettledPolicy'
 export * from './createEscrow'
 export * from './createPolicy'
 export * from './deleteFarm'

@@ -14,12 +14,12 @@ import {
   type ProgramDerivedAddress,
 } from '@solana/kit'
 
-export type FarmSeeds = {
+export type FarmCounterSeeds = {
   owner: Address
 }
 
-export async function findFarmPda(
-  seeds: FarmSeeds,
+export async function findFarmCounterPda(
+  seeds: FarmCounterSeeds,
   config: { programAddress?: Address | undefined } = {},
 ): Promise<ProgramDerivedAddress> {
   const {
@@ -27,6 +27,9 @@ export async function findFarmPda(
   } = config
   return await getProgramDerivedAddress({
     programAddress,
-    seeds: [getBytesEncoder().encode(new Uint8Array([102, 97, 114, 109])), getAddressEncoder().encode(seeds.owner)],
+    seeds: [
+      getBytesEncoder().encode(new Uint8Array([102, 97, 114, 109, 95, 99, 111, 117, 110, 116, 101, 114])),
+      getAddressEncoder().encode(seeds.owner),
+    ],
   })
 }

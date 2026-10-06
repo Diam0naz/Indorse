@@ -18,7 +18,7 @@ import {
   findConfigPda,
   findEscrowPda,
   findEscrowVaultPda,
-  findFarmPda,
+  findFarmCounterPda,
   findOraclePda,
   findOracleSetPda,
   findRewardAuthorityPda,
@@ -36,6 +36,7 @@ import {
   configPda,
   escrowPda,
   escrowVaultPda,
+  farmCounterPda,
   farmPda,
   oracleSetPda,
   rewardAuthorityPda,
@@ -56,6 +57,7 @@ const INSTRUCTION_KINDS: Record<string, IndorseProgramInstruction> = {
   add_oracle: IndorseProgramInstruction.AddOracle,
   cancel_escrow: IndorseProgramInstruction.CancelEscrow,
   cast_vote: IndorseProgramInstruction.CastVote,
+  close_settled_policy: IndorseProgramInstruction.CloseSettledPolicy,
   create_escrow: IndorseProgramInstruction.CreateEscrow,
   create_policy: IndorseProgramInstruction.CreatePolicy,
   delete_farm: IndorseProgramInstruction.DeleteFarm,
@@ -98,18 +100,21 @@ describe('generated Codama client', () => {
     }
   })
 
-  it('encodes register_farm byte-for-byte like the IDL client', () => {
+  it('encodes register_farm byte-for-byte like the IDL client', async () => {
     const args = { name: 'Farm Co', latE6: -1_234_567, lngE6: 7_654_321 }
 
     const generated = getRegisterFarmInstructionDataEncoder().encode(args)
-    const handRolled = buildInstruction('register_farm', { owner: OWNER, farm: FARM }, args).data
+    // Addresses do not touch the data bytes — the real counter PDA only
+    // keeps the account list well-formed for the builder.
+    const farmCounter = await farmCounterPda(OWNER)
+    const handRolled = buildInstruction('register_farm', { owner: OWNER, farmCounter, farm: FARM }, args).data
 
     expect(handRolled).toBeDefined()
     expect(Array.from(generated)).toEqual(Array.from(handRolled!))
   })
 
   it('derives the same PDAs as lib/program/pdas', async () => {
-    expect((await findFarmPda({ owner: address(OWNER) }))[0]).toBe(await farmPda(OWNER))
+    expect((await findFarmCounterPda({ owner: address(OWNER) }))[0]).toBe(await farmCounterPda(OWNER))
     expect((await findEscrowPda({ batch: address(BATCH) }))[0]).toBe(await escrowPda(BATCH))
     expect((await findEscrowVaultPda({ batch: address(BATCH) }))[0]).toBe(await escrowVaultPda(BATCH))
     expect((await findOraclePda({ farm: address(FARM), seasonStart: SEASON_START }))[0]).toBe(

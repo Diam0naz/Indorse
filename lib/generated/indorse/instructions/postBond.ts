@@ -102,9 +102,15 @@ export type PostBondAsyncInput<
 > = {
   member: TransactionSigner<TAccountMember>
   /**
-   * The set PDA. Sets created before Phase 3A were allocated for bare-
-   * pubkey members; the realloc normalizes every account to the current
-   * layout size on the first join, with the joining member paying any
+   * The set PDA. The realloc normalizes an account created before Phase
+   * 3A (bare-pubkey members) to the current layout — but ONLY while the
+   * set is empty, which is the one state that serializes identically in
+   * both layouts. Invariant: never bond into a non-empty legacy set.
+   * Anchor deserializes this account BEFORE the realloc runs, so old
+   * bytes with members are parsed against the new struct — silently
+   * misreading pubkeys/stakes at ≤5 members (corrupting collateral
+   * records) and failing to load at ≥6. A non-empty legacy set must be
+   * closed and re-inited, never realloc'd. The joining member pays any
    * rent delta (a no-op on already-current sets).
    */
   verifierSet?: Address<TAccountVerifierSet>
@@ -219,9 +225,15 @@ export type PostBondInput<
 > = {
   member: TransactionSigner<TAccountMember>
   /**
-   * The set PDA. Sets created before Phase 3A were allocated for bare-
-   * pubkey members; the realloc normalizes every account to the current
-   * layout size on the first join, with the joining member paying any
+   * The set PDA. The realloc normalizes an account created before Phase
+   * 3A (bare-pubkey members) to the current layout — but ONLY while the
+   * set is empty, which is the one state that serializes identically in
+   * both layouts. Invariant: never bond into a non-empty legacy set.
+   * Anchor deserializes this account BEFORE the realloc runs, so old
+   * bytes with members are parsed against the new struct — silently
+   * misreading pubkeys/stakes at ≤5 members (corrupting collateral
+   * records) and failing to load at ≥6. A non-empty legacy set must be
+   * closed and re-inited, never realloc'd. The joining member pays any
    * rent delta (a no-op on already-current sets).
    */
   verifierSet: Address<TAccountVerifierSet>
@@ -328,9 +340,15 @@ export type ParsedPostBondInstruction<
   accounts: {
     member: TAccountMetas[0]
     /**
-     * The set PDA. Sets created before Phase 3A were allocated for bare-
-     * pubkey members; the realloc normalizes every account to the current
-     * layout size on the first join, with the joining member paying any
+     * The set PDA. The realloc normalizes an account created before Phase
+     * 3A (bare-pubkey members) to the current layout — but ONLY while the
+     * set is empty, which is the one state that serializes identically in
+     * both layouts. Invariant: never bond into a non-empty legacy set.
+     * Anchor deserializes this account BEFORE the realloc runs, so old
+     * bytes with members are parsed against the new struct — silently
+     * misreading pubkeys/stakes at ≤5 members (corrupting collateral
+     * records) and failing to load at ≥6. A non-empty legacy set must be
+     * closed and re-inited, never realloc'd. The joining member pays any
      * rent delta (a no-op on already-current sets).
      */
     verifierSet: TAccountMetas[1]

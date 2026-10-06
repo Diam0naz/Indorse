@@ -3,7 +3,8 @@
  *
  * Seeds mirror `programs/indorse_program/src/lib.rs` exactly:
  *
- *   farm               = ["farm", owner]
+ *   farm               = ["farm", owner, u32(farm_index) LE]
+ *   farm_counter       = ["farm_counter", owner]
  *   report             = ["report", farm, u32(report_count) LE]
  *   batch              = ["batch", farm, u32(batch_count) LE]
  *   escrow             = ["escrow", batch]
@@ -69,9 +70,19 @@ export function clearPdaCache(): void {
   cache.clear()
 }
 
-/** `["farm", owner]` */
-export function farmPda(owner: string): Promise<Address> {
-  return derive([encoder.encode('farm'), base58Encoder.encode(owner)])
+/**
+ * `["farm", owner, u32(index) LE]` — the owner's `index`-th farm.
+ *
+ * The third seed makes a wallet's farms a roster: index 0, 1, 2 … each on
+ * its own PDA, allocated by `farmCounterPda(owner).count` on chain.
+ */
+export function farmPda(owner: string, index: number): Promise<Address> {
+  return derive([encoder.encode('farm'), base58Encoder.encode(owner), u32Seed(index)])
+}
+
+/** `["farm_counter", owner]` — the owner's farm allocator (next index = count). */
+export function farmCounterPda(owner: string): Promise<Address> {
+  return derive([encoder.encode('farm_counter'), base58Encoder.encode(owner)])
 }
 
 /** `["report", farm, u32(reportCount) LE]` */

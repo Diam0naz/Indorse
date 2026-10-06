@@ -62,6 +62,21 @@ vi.mock('@/features/reports/useSubmitReport', () => ({
   }),
 }))
 
+// The same holds for the SKR claim button in the expanded detail row: it
+// mounts through useRewardReport → useMobileWallet, and no test here opens
+// a row, let alone claims one.
+vi.mock('@/features/reports/useRewardReport', () => ({
+  useRewardReport: () => ({
+    isPending: false,
+    isError: false,
+    error: null,
+    variables: undefined,
+    mutate: vi.fn(),
+    mutateAsync: vi.fn(),
+    reset: vi.fn(),
+  }),
+}))
+
 const base64 = getBase64Decoder()
 
 /** JSON-RPC account wrapper — the shape `encoding: 'base64'` returns. */
@@ -85,6 +100,7 @@ const FARM = {
   batchCount: 0,
   verifiedReportCount: 1,
   policyCount: 0,
+  index: 0,
   bump: 254,
 }
 

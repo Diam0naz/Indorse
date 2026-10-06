@@ -9,6 +9,7 @@
 export * from './config'
 export * from './escrow'
 export * from './farm'
+export * from './farmCounter'
 export * from './harvestBatch'
 export * from './oracleSet'
 export * from './policy'

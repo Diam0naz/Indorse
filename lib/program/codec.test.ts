@@ -78,13 +78,14 @@ describe('account encoding', () => {
     batchCount: 0,
     verifiedReportCount: 1,
     policyCount: 0,
+    index: 4,
     bump: 254,
   }
 
   it('round-trips a Farm account', () => {
     const data = encodeAccount('Farm', farm)
-    // 8 disc + 32 owner + (4 + 12) name + 8 + 8 + 4×4 counters + 1 bump
-    expect(data).toHaveLength(89)
+    // 8 disc + 32 owner + (4 + 12) name + 8 + 8 + 5×4 counters/index + 1 bump
+    expect(data).toHaveLength(93)
     expect(Array.from(data.slice(0, 8))).toEqual(Array.from(accountDiscriminator('Farm')))
     expect(decodeAccount(data, 'Farm')).toEqual(farm)
   })

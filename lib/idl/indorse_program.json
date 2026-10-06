@@ -258,6 +258,156 @@
       ]
     },
     {
+      "name": "close_settled_policy",
+      "docs": [
+        "Close a terminal-state policy and release everything it still holds.",
+        "Permissionless by the same reasoning as `settle_policy`: once the",
+        "state machine says PaidOut or Expired, every destination is already",
+        "pinned — the vault's remainder (the premium) sweeps to program",
+        "custody, and the policy + vault rents return to the farmer who paid",
+        "for them at creation. Nothing here is a caller's choice, so no key",
+        "is given a say over it either.",
+        "",
+        "One instruction covers both terminal states: their cleanup is",
+        "identical, so splitting it would only duplicate the code below."
+      ],
+      "discriminator": [
+        98,
+        69,
+        97,
+        203,
+        38,
+        13,
+        126,
+        243
+      ],
+      "accounts": [
+        {
+          "name": "closer",
+          "docs": [
+            "Permissionless: the state gate and the pinned destinations below are",
+            "the whole authority — this signer only carries the signature and",
+            "pays the transaction fee, exactly like `settle_policy`'s settler."
+          ],
+          "signer": true
+        },
+        {
+          "name": "policy",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  112,
+                  111,
+                  108,
+                  105,
+                  99,
+                  121
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "policy.farm",
+                "account": "Policy"
+              },
+              {
+                "kind": "account",
+                "path": "policy.index",
+                "account": "Policy"
+              }
+            ]
+          }
+        },
+        {
+          "name": "insurance_vault",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  105,
+                  110,
+                  115,
+                  117,
+                  114,
+                  97,
+                  110,
+                  99,
+                  101,
+                  95,
+                  118,
+                  97,
+                  117,
+                  108,
+                  116
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "policy.farm",
+                "account": "Policy"
+              },
+              {
+                "kind": "account",
+                "path": "policy.index",
+                "account": "Policy"
+              }
+            ]
+          }
+        },
+        {
+          "name": "farmer",
+          "docs": [
+            "The rent destination: the farmer who paid for both accounts at",
+            "creation. Pinned to the stored field, never caller-chosen."
+          ],
+          "writable": true
+        },
+        {
+          "name": "treasury",
+          "docs": [
+            "Program-owned treasury: the premium sweep lands in its canonical",
+            "USDC ATA, whoever `config.admin` happens to be.",
+            "`[b\"treasury\"]` under this program, so only the program's own PDA",
+            "passes — no state is read from it beyond the address."
+          ],
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  116,
+                  114,
+                  101,
+                  97,
+                  115,
+                  117,
+                  114,
+                  121
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "name": "insurer_usdc",
+          "docs": [
+            "The treasury's canonical USDC ATA — validated by address, so the",
+            "sweep can only land in program custody."
+          ],
+          "writable": true
+        },
+        {
+          "name": "token_program",
+          "address": "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA"
+        }
+      ],
+      "args": []
+    },
+    {
       "name": "create_escrow",
       "docs": [
         "Buyer deposits USDC into an escrow PDA tied to a specific harvest batch.",
@@ -522,7 +672,10 @@
         "Child accounts — scout reports, harvest batches, policies — are not",
         "touched: their evidence stays on chain as an independent trail, and",
         "every PDA derived from the farm address stays re-derivable after the",
-        "account itself is gone."
+        "account itself is gone.",
+        "One thing does not survive: `cast_vote` needs the farm account, so a",
+        "report still Pending when the farm closes can never be finalised —",
+        "let tallies finish before deleting."
       ],
       "discriminator": [
         233,
@@ -552,6 +705,11 @@
               {
                 "kind": "account",
                 "path": "owner"
+              },
+              {
+                "kind": "account",
+                "path": "farm.index",
+                "account": "Farm"
               }
             ]
           }
@@ -638,9 +796,6 @@
     {
       "name": "init_oracle_set",
       "docs": [
-        "An authorised weather oracle posts a rainfall reading for a farm/season.",
-        "",
-        "PDA seeds: [b\"weather\", farm, season_start (i64 LE)]",
         "Bootstrap the reader set once: how many readers make a season reading",
         "official. k must be odd and at least 3, so the median is a single",
         "unambiguous middle value — and so no single key can be \"the oracle\"."
@@ -706,7 +861,6 @@
     {
       "name": "init_verifier_set",
       "docs": [
-        "Approve or reject a pending scout report.",
         "Bootstrap the verifier set once: quorum `k` and the USDC bond each",
         "member must post. Membership is earned separately via `post_bond`, so",
         "this only fixes the rules — governance (`config.admin`) owns them.",
@@ -805,9 +959,15 @@
         {
           "name": "verifier_set",
           "docs": [
-            "The set PDA. Sets created before Phase 3A were allocated for bare-",
-            "pubkey members; the realloc normalizes every account to the current",
-            "layout size on the first join, with the joining member paying any",
+            "The set PDA. The realloc normalizes an account created before Phase",
+            "3A (bare-pubkey members) to the current layout — but ONLY while the",
+            "set is empty, which is the one state that serializes identically in",
+            "both layouts. Invariant: never bond into a non-empty legacy set.",
+            "Anchor deserializes this account BEFORE the realloc runs, so old",
+            "bytes with members are parsed against the new struct — silently",
+            "misreading pubkeys/stakes at ≤5 members (corrupting collateral",
+            "records) and failing to load at ≥6. A non-empty legacy set must be",
+            "closed and re-inited, never realloc'd. The joining member pays any",
             "rent delta (a no-op on already-current sets)."
           ],
           "writable": true,
@@ -878,7 +1038,11 @@
         "Ops rule: finish open tallies before lowering `k`. `cast_vote`",
         "freezes a tally whose side already reaches the new `k` on next",
         "contact, but a split tally where every member has already voted can",
-        "no longer progress — each further vote fails `AlreadyVoted`."
+        "no longer progress — each further vote fails `AlreadyVoted`.",
+        "The same rule covers membership: `release_verifier`/`slash_verifier`",
+        "mid-tally can strand an open report (everyone eligible has voted",
+        "without either side reaching `k`) or push fresh voters past the",
+        "tally's fixed vote capacity — rotate the set between tallies."
       ],
       "discriminator": [
         236,
@@ -941,7 +1105,12 @@
     {
       "name": "register_farm",
       "docs": [
-        "Create a farm PDA for the signing owner."
+        "Create the next farm PDA in the signing owner's roster.",
+        "",
+        "The roster grows by one: `farm_counter.count` names the slot",
+        "(init-once, read-many) and is advanced after the farm is written, so",
+        "every registration lands on a fresh PDA while older farms stay",
+        "untouched at their own seeds."
       ],
       "discriminator": [
         183,
@@ -960,6 +1129,40 @@
           "signer": true
         },
         {
+          "name": "farm_counter",
+          "docs": [
+            "Per-owner roster allocator — created on the first registration and",
+            "re-used (hence `init_if_needed`) by every one after it. Declared",
+            "before `farm` because the farm's seeds read its `count`."
+          ],
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  102,
+                  97,
+                  114,
+                  109,
+                  95,
+                  99,
+                  111,
+                  117,
+                  110,
+                  116,
+                  101,
+                  114
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "owner"
+              }
+            ]
+          }
+        },
+        {
           "name": "farm",
           "writable": true,
           "pda": {
@@ -976,6 +1179,11 @@
               {
                 "kind": "account",
                 "path": "owner"
+              },
+              {
+                "kind": "account",
+                "path": "farm_counter.count",
+                "account": "FarmCounter"
               }
             ]
           }
@@ -2049,6 +2257,22 @@
         {
           "name": "notes",
           "type": "string"
+        },
+        {
+          "name": "grade",
+          "type": "u8"
+        },
+        {
+          "name": "grade_confidence",
+          "type": "u8"
+        },
+        {
+          "name": "grade_notes",
+          "type": "string"
+        },
+        {
+          "name": "grade_flags",
+          "type": "u8"
         }
       ]
     },
@@ -2521,6 +2745,19 @@
       ]
     },
     {
+      "name": "FarmCounter",
+      "discriminator": [
+        66,
+        229,
+        92,
+        152,
+        10,
+        184,
+        35,
+        50
+      ]
+    },
+    {
       "name": "HarvestBatch",
       "discriminator": [
         77,
@@ -2754,6 +2991,19 @@
         123,
         60,
         253
+      ]
+    },
+    {
+      "name": "PolicyClosed",
+      "discriminator": [
+        19,
+        126,
+        82,
+        173,
+        79,
+        86,
+        50,
+        51
       ]
     },
     {
@@ -3201,6 +3451,46 @@
       "code": 6041,
       "name": "InvalidSwitchboardValue",
       "msg": "The signed value is not a non-negative whole 0.1 mm of rainfall"
+    },
+    {
+      "code": 6042,
+      "name": "TooManyFeedSigners",
+      "msg": "The feed registration exceeds the maximum signer count"
+    },
+    {
+      "code": 6043,
+      "name": "FarmMismatch",
+      "msg": "The farm passed does not match the report's farm"
+    },
+    {
+      "code": 6044,
+      "name": "CoverageUnfunded",
+      "msg": "The policy vault does not hold the coverage amount"
+    },
+    {
+      "code": 6045,
+      "name": "TallyFull",
+      "msg": "The tally has no room for another vote"
+    },
+    {
+      "code": 6046,
+      "name": "PolicyNotSettled",
+      "msg": "Only a settled policy (paid out or expired) can be closed"
+    },
+    {
+      "code": 6047,
+      "name": "RentDestinationMismatch",
+      "msg": "Rent destination does not match the policy's farmer"
+    },
+    {
+      "code": 6048,
+      "name": "InvalidGrade",
+      "msg": "Grade must be 0–4 (A–D) with confidence 0–100"
+    },
+    {
+      "code": 6049,
+      "name": "GradeNotesTooLong",
+      "msg": "Grade notes too long (max 64 chars)"
     }
   ],
   "types": [
@@ -3437,6 +3727,42 @@
             "type": "u32"
           },
           {
+            "name": "index",
+            "docs": [
+              "This farm's position in its owner's roster — the third PDA seed.",
+              "Allocated by `FarmCounter`; immutable once written."
+            ],
+            "type": "u32"
+          },
+          {
+            "name": "bump",
+            "type": "u8"
+          }
+        ]
+      }
+    },
+    {
+      "name": "FarmCounter",
+      "docs": [
+        "Layer 1 — per-owner farm allocator",
+        "",
+        "The monotonically increasing count that forms the third seed of the",
+        "owner's next farm PDA: `[\"farm\", owner, u32(count) LE]`. It never",
+        "decrements — `delete_farm` frees a slot from re-use by moving the",
+        "allocator forward only, so two live farms can never collide on a PDA."
+      ],
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "owner",
+            "type": "pubkey"
+          },
+          {
+            "name": "count",
+            "type": "u32"
+          },
+          {
             "name": "bump",
             "type": "u8"
           }
@@ -3541,6 +3867,35 @@
               "Verified scout reports on the farm when batch was submitted"
             ],
             "type": "u32"
+          },
+          {
+            "name": "grade",
+            "docs": [
+              "AI grade at harvest — 0 = ungraded, 1–4 = A–D. Farmer-attested",
+              "(signed with the batch), auditable later against `photo_hash`."
+            ],
+            "type": "u8"
+          },
+          {
+            "name": "grade_confidence",
+            "docs": [
+              "The vision model's confidence, 0–100."
+            ],
+            "type": "u8"
+          },
+          {
+            "name": "grade_notes",
+            "docs": [
+              "Why this grade, in the model's words (max 64)."
+            ],
+            "type": "string"
+          },
+          {
+            "name": "grade_flags",
+            "docs": [
+              "bit 0: the two models disagreed — flagged for a human verifier."
+            ],
+            "type": "u8"
           },
           {
             "name": "timestamp",
@@ -3720,6 +4075,29 @@
           {
             "name": "bump",
             "type": "u8"
+          }
+        ]
+      }
+    },
+    {
+      "name": "PolicyClosed",
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "policy",
+            "type": "pubkey"
+          },
+          {
+            "name": "farmer",
+            "type": "pubkey"
+          },
+          {
+            "name": "swept_usdc",
+            "docs": [
+              "Whatever the terminal vault held — read at close, not assumed."
+            ],
+            "type": "u64"
           }
         ]
       }

@@ -22,6 +22,8 @@ import {
   getU32Encoder,
   getU64Decoder,
   getU64Encoder,
+  getU8Decoder,
+  getU8Encoder,
   getUtf8Decoder,
   getUtf8Encoder,
   SOLANA_ERROR__PROGRAM_CLIENTS__INSUFFICIENT_ACCOUNT_METAS,
@@ -83,6 +85,10 @@ export type SubmitHarvestBatchInstructionData = {
   crop: string
   quantityKg: bigint
   notes: string
+  grade: number
+  gradeConfidence: number
+  gradeNotes: string
+  gradeFlags: number
 }
 
 export type SubmitHarvestBatchInstructionDataArgs = {
@@ -93,6 +99,10 @@ export type SubmitHarvestBatchInstructionDataArgs = {
   crop: string
   quantityKg: number | bigint
   notes: string
+  grade: number
+  gradeConfidence: number
+  gradeNotes: string
+  gradeFlags: number
 }
 
 export function getSubmitHarvestBatchInstructionDataEncoder(): Encoder<SubmitHarvestBatchInstructionDataArgs> {
@@ -106,6 +116,10 @@ export function getSubmitHarvestBatchInstructionDataEncoder(): Encoder<SubmitHar
       ['crop', addEncoderSizePrefix(getUtf8Encoder(), getU32Encoder())],
       ['quantityKg', getU64Encoder()],
       ['notes', addEncoderSizePrefix(getUtf8Encoder(), getU32Encoder())],
+      ['grade', getU8Encoder()],
+      ['gradeConfidence', getU8Encoder()],
+      ['gradeNotes', addEncoderSizePrefix(getUtf8Encoder(), getU32Encoder())],
+      ['gradeFlags', getU8Encoder()],
     ]),
     (value) => ({ ...value, discriminator: SUBMIT_HARVEST_BATCH_DISCRIMINATOR }),
   )
@@ -121,6 +135,10 @@ export function getSubmitHarvestBatchInstructionDataDecoder(): Decoder<SubmitHar
     ['crop', addDecoderSizePrefix(getUtf8Decoder(), getU32Decoder())],
     ['quantityKg', getU64Decoder()],
     ['notes', addDecoderSizePrefix(getUtf8Decoder(), getU32Decoder())],
+    ['grade', getU8Decoder()],
+    ['gradeConfidence', getU8Decoder()],
+    ['gradeNotes', addDecoderSizePrefix(getUtf8Decoder(), getU32Decoder())],
+    ['gradeFlags', getU8Decoder()],
   ])
 }
 
@@ -148,6 +166,10 @@ export type SubmitHarvestBatchInput<
   crop: SubmitHarvestBatchInstructionDataArgs['crop']
   quantityKg: SubmitHarvestBatchInstructionDataArgs['quantityKg']
   notes: SubmitHarvestBatchInstructionDataArgs['notes']
+  grade: SubmitHarvestBatchInstructionDataArgs['grade']
+  gradeConfidence: SubmitHarvestBatchInstructionDataArgs['gradeConfidence']
+  gradeNotes: SubmitHarvestBatchInstructionDataArgs['gradeNotes']
+  gradeFlags: SubmitHarvestBatchInstructionDataArgs['gradeFlags']
 }
 
 export function getSubmitHarvestBatchInstruction<

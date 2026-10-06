@@ -69,6 +69,17 @@ export type HarvestBatch = {
   scoutReportsAtHarvest: number
   /** Verified scout reports on the farm when batch was submitted */
   verifiedReportsAtHarvest: number
+  /**
+   * AI grade at harvest — 0 = ungraded, 1–4 = A–D. Farmer-attested
+   * (signed with the batch), auditable later against `photo_hash`.
+   */
+  grade: number
+  /** The vision model's confidence, 0–100. */
+  gradeConfidence: number
+  /** Why this grade, in the model's words (max 64). */
+  gradeNotes: string
+  /** bit 0: the two models disagreed — flagged for a human verifier. */
+  gradeFlags: number
   timestamp: bigint
   bump: number
 }
@@ -88,6 +99,17 @@ export type HarvestBatchArgs = {
   scoutReportsAtHarvest: number
   /** Verified scout reports on the farm when batch was submitted */
   verifiedReportsAtHarvest: number
+  /**
+   * AI grade at harvest — 0 = ungraded, 1–4 = A–D. Farmer-attested
+   * (signed with the batch), auditable later against `photo_hash`.
+   */
+  grade: number
+  /** The vision model's confidence, 0–100. */
+  gradeConfidence: number
+  /** Why this grade, in the model's words (max 64). */
+  gradeNotes: string
+  /** bit 0: the two models disagreed — flagged for a human verifier. */
+  gradeFlags: number
   timestamp: number | bigint
   bump: number
 }
@@ -109,6 +131,10 @@ export function getHarvestBatchEncoder(): Encoder<HarvestBatchArgs> {
       ['notes', addEncoderSizePrefix(getUtf8Encoder(), getU32Encoder())],
       ['scoutReportsAtHarvest', getU32Encoder()],
       ['verifiedReportsAtHarvest', getU32Encoder()],
+      ['grade', getU8Encoder()],
+      ['gradeConfidence', getU8Encoder()],
+      ['gradeNotes', addEncoderSizePrefix(getUtf8Encoder(), getU32Encoder())],
+      ['gradeFlags', getU8Encoder()],
       ['timestamp', getI64Encoder()],
       ['bump', getU8Encoder()],
     ]),
@@ -132,6 +158,10 @@ export function getHarvestBatchDecoder(): Decoder<HarvestBatch> {
     ['notes', addDecoderSizePrefix(getUtf8Decoder(), getU32Decoder())],
     ['scoutReportsAtHarvest', getU32Decoder()],
     ['verifiedReportsAtHarvest', getU32Decoder()],
+    ['grade', getU8Decoder()],
+    ['gradeConfidence', getU8Decoder()],
+    ['gradeNotes', addDecoderSizePrefix(getUtf8Decoder(), getU32Decoder())],
+    ['gradeFlags', getU8Decoder()],
     ['timestamp', getI64Decoder()],
     ['bump', getU8Decoder()],
   ])

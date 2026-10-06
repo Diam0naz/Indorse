@@ -20,6 +20,7 @@ import {
   configPda,
   escrowPda,
   escrowVaultPda,
+  farmCounterPda,
   farmPda,
   insuranceVaultPda,
   oracleSetPda,
@@ -58,7 +59,7 @@ function i64le(value: number): Uint8Array {
 /** Serialize one IDL seed entry the way an Anchor client would. */
 function seedBytes(
   seed: IdlSeed,
-  ctx: { reportCount: number; batchCount: number; policyCount: number; seasonStart: number },
+  ctx: { reportCount: number; batchCount: number; policyCount: number; seasonStart: number; farmIndex: number },
 ): ReadonlyUint8Array {
   if (seed.kind === 'const') return Uint8Array.from(seed.value ?? [])
   const path = seed.path ?? ''
@@ -74,6 +75,8 @@ function seedBytes(
       return base58.encode(REPORT)
     case 'farm.report_count':
       return u32le(ctx.reportCount)
+    case 'farm_counter.count':
+      return u32le(ctx.farmIndex)
     case 'farm.batch_count':
       return u32le(ctx.batchCount)
     case 'farm.policy_count':
@@ -99,7 +102,7 @@ async function deriveFromIdl(
   return pda
 }
 
-const CTX = { reportCount: 7, batchCount: 3, policyCount: 2, seasonStart: 1_735_689_600 }
+const CTX = { reportCount: 7, batchCount: 3, policyCount: 2, seasonStart: 1_735_689_600, farmIndex: 0 }
 
 describe('IDL sanity', () => {
   it('keeps the app config and the IDL in sync', () => {
@@ -120,8 +123,12 @@ describe('IDL sanity', () => {
 })
 
 describe('PDA helpers vs IDL seed metadata', () => {
-  it('farm — ["farm", owner]', async () => {
-    expect(await farmPda(OWNER)).toBe(await deriveFromIdl('register_farm', 'farm', CTX))
+  it('farm — ["farm", owner, u32(index)]', async () => {
+    expect(await farmPda(OWNER, CTX.farmIndex)).toBe(await deriveFromIdl('register_farm', 'farm', CTX))
+  })
+
+  it('farm_counter — ["farm_counter", owner]', async () => {
+    expect(await farmCounterPda(OWNER)).toBe(await deriveFromIdl('register_farm', 'farm_counter', CTX))
   })
 
   it('report — ["report", farm, u32(report_count)]', async () => {
@@ -180,8 +187,13 @@ describe('PDA helpers vs IDL seed metadata', () => {
   })
 
   it('memoizes repeated derivations', async () => {
-    const [first, second] = await Promise.all([farmPda(OWNER), farmPda(OWNER)])
+    const [first, second] = await Promise.all([farmPda(OWNER, 0), farmPda(OWNER, 0)])
     expect(first).toBe(second)
+  })
+
+  it('farm slots differ per index — one wallet, many farms', async () => {
+    const [a, b] = await Promise.all([farmPda(OWNER, 0), farmPda(OWNER, 1)])
+    expect(a).not.toBe(b)
   })
 })
 

@@ -20,6 +20,13 @@ import {
 import { assert } from 'chai'
 import { createPrivateKey, sign as signEd25519 } from 'node:crypto'
 
+/** Little-endian u32 — the farm PDA's third seed is `index: u32`. */
+function u32Buffer(value: number): Buffer {
+  const bytes = Buffer.alloc(4)
+  bytes.writeUInt32LE(value)
+  return bytes
+}
+
 describe('indorse_program', () => {
   const provider = anchor.AnchorProvider.env()
   anchor.setProvider(provider)
@@ -34,6 +41,7 @@ describe('indorse_program', () => {
   // PDAs
   let farmPda: PublicKey
   let farmBump: number
+  let farmCounterPda: PublicKey
   let reportPda: PublicKey
   let reportBump: number
   let rewardAuthorityPda: PublicKey
@@ -265,9 +273,13 @@ describe('indorse_program', () => {
     // Wait for airdrops to confirm
     await new Promise((resolve) => setTimeout(resolve, 2000))
 
-    // Derive farm PDA
+    // Derive the owner's roster counter and first farm PDA (slot index 0)
+    ;[farmCounterPda] = PublicKey.findProgramAddressSync(
+      [Buffer.from('farm_counter'), owner.publicKey.toBuffer()],
+      program.programId,
+    )
     ;[farmPda, farmBump] = PublicKey.findProgramAddressSync(
-      [Buffer.from('farm'), owner.publicKey.toBuffer()],
+      [Buffer.from('farm'), owner.publicKey.toBuffer(), u32Buffer(0)],
       program.programId,
     )
 
@@ -395,6 +407,7 @@ describe('indorse_program', () => {
       .registerFarm(FARM_NAME, new anchor.BN(LAT_E6), new anchor.BN(LNG_E6))
       .accounts({
         owner: owner.publicKey,
+        farmCounter: farmCounterPda,
         farm: farmPda,
         systemProgram: SystemProgram.programId,
       })
@@ -408,8 +421,47 @@ describe('indorse_program', () => {
     assert.equal(farmAccount.lngE6, LNG_E6)
     assert.equal(farmAccount.reportCount, 0)
     assert.equal(farmAccount.batchCount, 0)
+    assert.equal(farmAccount.index, 0)
     assert.equal(farmAccount.owner.toBase58(), owner.publicKey.toBase58())
     assert.equal(farmAccount.bump, farmBump)
+
+    // The allocator now points at slot 1 — created alongside the farm.
+    const counter = await program.account.farmCounter.fetch(farmCounterPda)
+    assert.equal(counter.count, 1)
+    assert.equal(counter.owner.toBase58(), owner.publicKey.toBase58())
+  })
+
+  it('Register a second farm for the same wallet (multi-farm roster)', async () => {
+    const secondIndex = 1
+    const [secondFarm] = PublicKey.findProgramAddressSync(
+      [Buffer.from('farm'), owner.publicKey.toBuffer(), u32Buffer(secondIndex)],
+      program.programId,
+    )
+
+    await program.methods
+      .registerFarm('Second Plot', new anchor.BN(LAT_E6 + 1_000), new anchor.BN(LNG_E6 + 1_000))
+      .accounts({
+        owner: owner.publicKey,
+        farmCounter: farmCounterPda,
+        farm: secondFarm,
+        systemProgram: SystemProgram.programId,
+      })
+      .signers([owner])
+      .rpc()
+
+    const second = await program.account.farm.fetch(secondFarm)
+    assert.equal(second.index, secondIndex)
+    assert.equal(second.name, 'Second Plot')
+    assert.equal(second.reportCount, 0)
+
+    // Slot 0 is untouched — the roster grows monotonically.
+    const first = await program.account.farm.fetch(farmPda)
+    assert.equal(first.index, 0)
+    assert.equal(first.name, FARM_NAME)
+    assert.equal(first.reportCount, 0)
+
+    const counter = await program.account.farmCounter.fetch(farmCounterPda)
+    assert.equal(counter.count, 2)
   })
 
   it('Reject farm name longer than 64 characters', async () => {
@@ -420,8 +472,12 @@ describe('indorse_program', () => {
     const freshOwner = Keypair.generate()
     const dropSig = await provider.connection.requestAirdrop(freshOwner.publicKey, 2 * anchor.web3.LAMPORTS_PER_SOL)
     await provider.connection.confirmTransaction(dropSig)
+    const [freshCounter] = PublicKey.findProgramAddressSync(
+      [Buffer.from('farm_counter'), freshOwner.publicKey.toBuffer()],
+      program.programId,
+    )
     const [freshFarm] = PublicKey.findProgramAddressSync(
-      [Buffer.from('farm'), freshOwner.publicKey.toBuffer()],
+      [Buffer.from('farm'), freshOwner.publicKey.toBuffer(), u32Buffer(0)],
       program.programId,
     )
 
@@ -430,6 +486,7 @@ describe('indorse_program', () => {
         .registerFarm(longName, new anchor.BN(LAT_E6), new anchor.BN(LNG_E6))
         .accounts({
           owner: freshOwner.publicKey,
+          farmCounter: freshCounter,
           farm: freshFarm,
           systemProgram: SystemProgram.programId,
         })
@@ -1345,6 +1402,18 @@ describe('indorse_program', () => {
     await registerBinding(sbEnclaves.map((k) => k.publicKey))
     const again = await program.account.switchboardFeedBinding.fetch(sbBindingPda)
     assert.equal(again.signers.length, 3)
+
+    // The binding's fixed size holds MAX_ORACLES keys — more is refused
+    // outright with a clear error, not a failed account serialize.
+    const eight = Array.from({ length: 8 }, () => Keypair.generate().publicKey)
+    try {
+      await registerBinding(eight)
+      assert.fail('Should have thrown an error')
+    } catch (err) {
+      assert.include(err.message, 'exceeds the maximum signer count')
+    }
+    const afterRefusal = await program.account.switchboardFeedBinding.fetch(sbBindingPda)
+    assert.equal(afterRefusal.signers.length, 3) // pins untouched by the refusal
   })
 
   it('Refuses a receipt when the transaction carries no proof', async () => {
@@ -1853,6 +1922,149 @@ describe('indorse_program', () => {
     }
   })
 
+  it('Refuses to settle an underfunded policy with an honest error', async () => {
+    // Same season as the finalized reading — but the treasury's post-creation
+    // top-up never landed, so the vault holds only the premium. The settle
+    // must fail BEFORE the CPI with the real reason, leaving the policy
+    // Active so revoke_policy (open until season_end) stays the escape hatch.
+    const [unfundedPolicy] = PublicKey.findProgramAddressSync(
+      [Buffer.from('policy'), farmPda.toBuffer(), u32le(3)],
+      program.programId,
+    )
+    const [unfundedVault] = PublicKey.findProgramAddressSync(
+      [Buffer.from('insurance_vault'), farmPda.toBuffer(), u32le(3)],
+      program.programId,
+    )
+
+    await program.methods
+      .createPolicy(
+        'maize',
+        new anchor.BN(COVERAGE),
+        new anchor.BN(PREMIUM),
+        THRESHOLD_MM,
+        new anchor.BN(SEASON_START),
+        new anchor.BN(SEASON_END),
+      )
+      .accounts({
+        farmer: owner.publicKey,
+        farm: farmPda,
+        policy: unfundedPolicy,
+        insuranceVault: unfundedVault,
+        farmerUsdc: ownerUsdc,
+        usdcMint,
+        tokenProgram: anchor.utils.token.TOKEN_PROGRAM_ID,
+        systemProgram: SystemProgram.programId,
+        rent: anchor.web3.SYSVAR_RENT_PUBKEY,
+      })
+      .signers([owner])
+      .rpc()
+
+    const vault = await getAccount(provider.connection, unfundedVault)
+    assert.equal(Number(vault.amount), PREMIUM) // coverage never landed
+
+    try {
+      await program.methods
+        .settlePolicy()
+        .accounts({
+          settler: provider.wallet.publicKey,
+          policy: unfundedPolicy,
+          insuranceVault: unfundedVault,
+          oracle: oraclePda,
+          farmerUsdc: ownerUsdc,
+          treasury: treasuryPda,
+          insurerUsdc: treasuryUsdc,
+          tokenProgram: anchor.utils.token.TOKEN_PROGRAM_ID,
+        })
+        .rpc()
+      assert.fail('Should have thrown an error')
+    } catch (err) {
+      assert.include(err.message, 'does not hold the coverage')
+    }
+
+    // Nothing moved: still Active, still premium-only.
+    const still = await program.account.policy.fetch(unfundedPolicy)
+    assert.deepEqual(still.state, { active: {} })
+    const after = await getAccount(provider.connection, unfundedVault)
+    assert.equal(Number(after.amount), PREMIUM)
+  })
+
+  it('Closes settled policies: vault sweep to the treasury, rents to the farmer', async () => {
+    // Re-derive what sibling tests scoped inside their own blocks: policy 0
+    // settled Expired, policy 2 settled PaidOut, policy 3 still Active.
+    const [breachPda] = PublicKey.findProgramAddressSync(
+      [Buffer.from('policy'), farmPda.toBuffer(), u32le(2)],
+      program.programId,
+    )
+    const [breachVault] = PublicKey.findProgramAddressSync(
+      [Buffer.from('insurance_vault'), farmPda.toBuffer(), u32le(2)],
+      program.programId,
+    )
+    const [unfundedPolicy] = PublicKey.findProgramAddressSync(
+      [Buffer.from('policy'), farmPda.toBuffer(), u32le(3)],
+      program.programId,
+    )
+    const [unfundedVault] = PublicKey.findProgramAddressSync(
+      [Buffer.from('insurance_vault'), farmPda.toBuffer(), u32le(3)],
+      program.programId,
+    )
+
+    // Permissionless by the settle/revoke reasoning: a stranger presses the
+    // button and only pays the transaction fee — no admin key involved.
+    const closer = Keypair.generate()
+    await fund(closer.publicKey)
+    const close = (policy: PublicKey, vault: PublicKey) =>
+      program.methods
+        .closeSettledPolicy()
+        .accounts({
+          closer: closer.publicKey,
+          policy,
+          insuranceVault: vault,
+          farmer: owner.publicKey,
+          treasury: treasuryPda,
+          insurerUsdc: treasuryUsdc,
+          tokenProgram: anchor.utils.token.TOKEN_PROGRAM_ID,
+        })
+        .signers([closer])
+        .rpc()
+
+    // The gate names the terminal states explicitly: Active cannot close.
+    try {
+      await close(unfundedPolicy, unfundedVault)
+      assert.fail('Should have thrown an error')
+    } catch (err) {
+      assert.include(err.message, 'settled policy')
+    }
+
+    const treasuryBefore = (await getAccount(provider.connection, treasuryUsdc)).amount
+    const farmerLamportsBefore = await provider.connection.getBalance(owner.publicKey)
+
+    // Both terminal states take the same path.
+    await close(policyPda, policyVault)
+    await close(breachPda, breachVault)
+
+    assert.isNull(await program.account.policy.fetchNullable(policyPda))
+    assert.isNull(await program.account.policy.fetchNullable(breachPda))
+    for (const vault of [policyVault, breachVault]) {
+      try {
+        await getAccount(provider.connection, vault)
+        assert.fail('Should have thrown an error')
+      } catch {
+        // closed through the token program — no account left
+      }
+    }
+
+    // The premium landed in program custody; the rents went to the farmer
+    // who paid for them — the closer collected nothing but the fee.
+    const treasuryAfter = (await getAccount(provider.connection, treasuryUsdc)).amount
+    assert.equal(Number(treasuryAfter - treasuryBefore), 2 * PREMIUM)
+    const farmerLamportsAfter = await provider.connection.getBalance(owner.publicKey)
+    assert.isAbove(farmerLamportsAfter, farmerLamportsBefore)
+
+    // The Active policy is untouched by all of this.
+    const still = await program.account.policy.fetch(unfundedPolicy)
+    assert.deepEqual(still.state, { active: {} })
+  })
+
   // ── Escrow lifecycle ───────────────────────────────────────────────────────
 
   it('Cancel closes both escrow PDAs and frees the batch for retry', async () => {
@@ -1869,6 +2081,10 @@ describe('indorse_program', () => {
         'maize',
         new anchor.BN(1000),
         'Grade A, pesticide-free',
+        1, // grade A
+        94, // vision-model confidence
+        'Even color, firm cobs, no rot', // grade notes
+        0, // models agreed
       )
       .accounts({
         farmer: owner.publicKey,
@@ -1878,6 +2094,13 @@ describe('indorse_program', () => {
       })
       .signers([owner])
       .rpc()
+
+    // The buyer-facing grade round-trips with the batch.
+    const graded = await program.account.harvestBatch.fetch(batchPda)
+    assert.equal(graded.grade, 1)
+    assert.equal(graded.gradeConfidence, 94)
+    assert.equal(graded.gradeNotes, 'Even color, firm cobs, no rot')
+    assert.equal(graded.gradeFlags, 0)
 
     const buyer = Keypair.generate()
     const dropSig = await provider.connection.requestAirdrop(buyer.publicKey, 2 * anchor.web3.LAMPORTS_PER_SOL)

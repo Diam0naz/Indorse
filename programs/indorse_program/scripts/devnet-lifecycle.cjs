@@ -95,10 +95,30 @@ async function main() {
   const [configPda] = anchor.web3.PublicKey.findProgramAddressSync([Buffer.from('config')], program.programId)
   const [setPda] = anchor.web3.PublicKey.findProgramAddressSync([Buffer.from('verifier_set')], program.programId)
   const bondVault = getAssociatedTokenAddressSync(usdcMint, setPda, true)
-  const farmPda = anchor.web3.PublicKey.findProgramAddressSync(
-    [Buffer.from('farm'), OWNER.publicKey.toBuffer()],
+  const u32le = (n) => new anchor.BN(n).toArrayLike(Buffer, 'le', 4)
+  const farmAt = (index) =>
+    anchor.web3.PublicKey.findProgramAddressSync(
+      [Buffer.from('farm'), OWNER.publicKey.toBuffer(), u32le(index)],
+      program.programId,
+    )[0]
+  const [counterPda] = anchor.web3.PublicKey.findProgramAddressSync(
+    [Buffer.from('farm_counter'), OWNER.publicKey.toBuffer()],
     program.programId,
-  )[0]
+  )
+  // Multi-farm roster: reuse the first farm already seated on the counter's
+  // slots (the counter never decrements, so a live farm always sits inside
+  // 0…count-1), or prepare the next free slot for registration.
+  const counter = await program.account.farmCounter.fetchNullable(counterPda)
+  const count = counter ? counter.count : 0
+  let farmPda = null
+  for (let i = 0; i < count; i++) {
+    const candidate = farmAt(i)
+    if (await connection.getAccountInfo(candidate)) {
+      farmPda = candidate
+      break
+    }
+  }
+  if (!farmPda) farmPda = farmAt(count)
   const reportPda = (index) =>
     anchor.web3.PublicKey.findProgramAddressSync(
       [Buffer.from('report'), farmPda.toBuffer(), new anchor.BN(index).toArrayLike(Buffer, 'le', 4)],
@@ -281,7 +301,12 @@ async function main() {
     await send('register farm', () =>
       program.methods
         .registerFarm('Lifecycle Rehearsal Farm', new anchor.BN(34_052_000), new anchor.BN(-118_243_000))
-        .accounts({ owner: OWNER.publicKey, farm: farmPda, systemProgram: anchor.web3.SystemProgram.programId })
+        .accounts({
+          owner: OWNER.publicKey,
+          farmCounter: counterPda,
+          farm: farmPda,
+          systemProgram: anchor.web3.SystemProgram.programId,
+        })
         .signers([OWNER])
         .rpc(),
     )

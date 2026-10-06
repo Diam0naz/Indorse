@@ -61,6 +61,11 @@ export type Farm = {
   batchCount: number
   verifiedReportCount: number
   policyCount: number
+  /**
+   * This farm's position in its owner's roster — the third PDA seed.
+   * Allocated by `FarmCounter`; immutable once written.
+   */
+  index: number
   bump: number
 }
 
@@ -73,6 +78,11 @@ export type FarmArgs = {
   batchCount: number
   verifiedReportCount: number
   policyCount: number
+  /**
+   * This farm's position in its owner's roster — the third PDA seed.
+   * Allocated by `FarmCounter`; immutable once written.
+   */
+  index: number
   bump: number
 }
 
@@ -89,6 +99,7 @@ export function getFarmEncoder(): Encoder<FarmArgs> {
       ['batchCount', getU32Encoder()],
       ['verifiedReportCount', getU32Encoder()],
       ['policyCount', getU32Encoder()],
+      ['index', getU32Encoder()],
       ['bump', getU8Encoder()],
     ]),
     (value) => ({ ...value, discriminator: FARM_DISCRIMINATOR }),
@@ -107,6 +118,7 @@ export function getFarmDecoder(): Decoder<Farm> {
     ['batchCount', getU32Decoder()],
     ['verifiedReportCount', getU32Decoder()],
     ['policyCount', getU32Decoder()],
+    ['index', getU32Decoder()],
     ['bump', getU8Decoder()],
   ])
 }

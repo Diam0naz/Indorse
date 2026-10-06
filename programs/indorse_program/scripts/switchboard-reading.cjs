@@ -126,11 +126,23 @@ async function main() {
   const [configPda] = anchor.web3.PublicKey.findProgramAddressSync([Buffer.from('config')], program.programId)
   const [oracleSetPda] = anchor.web3.PublicKey.findProgramAddressSync([Buffer.from('oracle_set')], program.programId)
   const OWNER = seat('farm-owner')
-  const farmPda = anchor.web3.PublicKey.findProgramAddressSync(
-    [Buffer.from('farm'), OWNER.publicKey.toBuffer()],
+  const u32le = (n) => new anchor.BN(n).toArrayLike(Buffer, 'le', 4)
+  const [counterPda] = anchor.web3.PublicKey.findProgramAddressSync(
+    [Buffer.from('farm_counter'), OWNER.publicKey.toBuffer()],
     program.programId,
-  )[0]
-  assert.ok(await connection.getAccountInfo(farmPda), 'rehearsal farm missing — run devnet-lifecycle.cjs first')
+  )
+  // The rehearsal farm sits somewhere inside the counter's slots — find it
+  // rather than assuming slot 0 (multi-farm roster, monotonic counter).
+  const counter = await program.account.farmCounter.fetchNullable(counterPda)
+  let farmPda = null
+  for (let i = 0; counter && i < counter.count && farmPda === null; i++) {
+    const candidate = anchor.web3.PublicKey.findProgramAddressSync(
+      [Buffer.from('farm'), OWNER.publicKey.toBuffer(), u32le(i)],
+      program.programId,
+    )[0]
+    if (await connection.getAccountInfo(candidate)) farmPda = candidate
+  }
+  assert.ok(farmPda, 'rehearsal farm missing — run devnet-lifecycle.cjs first')
 
   // ── the job: feed hash + canonical quote account (no crossbar needed) ─────
   const sbProgram = await sb.AnchorUtils.loadProgramFromConnection(connection, undefined, sb.ON_DEMAND_DEVNET_PID)

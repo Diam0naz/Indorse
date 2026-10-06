@@ -35,8 +35,16 @@ import {
   type Lamports,
   type Signature,
 } from '@solana/kit'
-import { buildInstruction, createProgramRpc, farmPda, fetchAccount, reportPda, type ProgramRpc } from '@/lib/program'
-import type { Farm } from '@/features/farm/types'
+import {
+  buildInstruction,
+  createProgramRpc,
+  farmCounterPda,
+  farmPda,
+  fetchAccount,
+  reportPda,
+  type ProgramRpc,
+} from '@/lib/program'
+import type { Farm, FarmCounter } from '@/features/farm/types'
 import type { ScoutReport } from '@/features/reports/types'
 
 const SMOKE_RPC = process.env.SMOKE_RPC ?? ''
@@ -118,14 +126,19 @@ describe.runIf(SMOKE_RPC)('on-chain smoke', () => {
     console.log(`balance  ${Number(lamports) / 1e9} SOL`)
     expect(lamports).toBeGreaterThan(0n)
 
-    // ── register_farm (or reuse the wallet's existing farm) ──────────────
-    const farmAddress = await farmPda(signer.address)
-    let farm = await fetchAccount<Farm>(rpc, farmAddress, 'Farm')
+    // ── register_farm (or reuse the wallet's existing first farm) ──────────
+    // Reuse slot 0 when it exists (idempotent runs); otherwise register at
+    // the roster's next free slot — no counter yet means index 0.
+    const counterAddress = await farmCounterPda(signer.address)
+    const counter = await fetchAccount<FarmCounter>(rpc, counterAddress, 'FarmCounter')
+    const firstSlot = await farmPda(signer.address, 0)
+    let farm = await fetchAccount<Farm>(rpc, firstSlot, 'Farm')
+    const farmAddress = farm ? firstSlot : await farmPda(signer.address, counter?.count ?? 0)
     let registeredNow = false
     if (!farm) {
       const ix = buildInstruction(
         'register_farm',
-        { owner: signer.address, farm: farmAddress },
+        { owner: signer.address, farmCounter: counterAddress, farm: farmAddress },
         { name: 'Smoke Test Farm', latE6: LAT_E6, lngE6: LNG_E6 },
       )
       const signature = await sendIx(rpc, signer, ix)
