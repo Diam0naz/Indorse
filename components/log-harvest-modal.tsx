@@ -18,6 +18,7 @@ import { Modal, Pressable, ScrollView, Text, TextInput, View } from 'react-nativ
 import { useSafeAreaInsets } from 'react-native-safe-area-context'
 import { useTheme } from '@/components/theme-provider'
 import { createStyles, fontSizes, fontWeights, radii, spacing, type Colors } from '@/constants/theme'
+import { getGradeEndpoint, gradeHarvest, type GradeResult } from '@/features/ai/grade'
 import { useSubmitHarvest } from '@/features/harvest/useSubmitHarvest'
 import { validateHarvestBatch, type HarvestBatchValidationError } from '@/features/harvest/types'
 import { getCurrentCoords } from '@/features/scout/location'
@@ -27,14 +28,27 @@ import { useT } from '@/lib/i18n'
 
 const EMPTY_ERRORS: HarvestBatchValidationError = {}
 
+/** The ungraded payload — grade 0 on chain means "no AI grade", never a fake one. */
+const UNGRADED = { grade: 0, gradeConfidence: 0, gradeNotes: '', gradeFlags: 0 } as const
+
 interface LogHarvestModalProps {
   farmAddress: string
   /** The farm's current batch count — the new batch takes this index. */
   batchCount: number
+  /** Scout reports on the farm — grading evidence (the chain snapshots it too). */
+  scoutReports?: number
+  /** Verified scout reports — the stronger half of that evidence. */
+  verifiedReports?: number
   onClose: () => void
 }
 
-export function LogHarvestModal({ farmAddress, batchCount, onClose }: LogHarvestModalProps) {
+export function LogHarvestModal({
+  farmAddress,
+  batchCount,
+  scoutReports = 0,
+  verifiedReports = 0,
+  onClose,
+}: LogHarvestModalProps) {
   const { colors } = useTheme()
   const styles = makeStyles(colors)
   const t = useT()
@@ -52,9 +66,27 @@ export function LogHarvestModal({ farmAddress, batchCount, onClose }: LogHarvest
   const [locating, setLocating] = useState(false)
   const [locError, setLocError] = useState<string | null>(null)
   const [hashing, setHashing] = useState(false)
+  // Dual-model grading: one attempt, then an explicit "submit ungraded"
+  // escape hatch — a free-tier outage can never lock a farmer out of the
+  // harvest record, and grade 0 on chain stays honestly "ungraded".
+  const [grading, setGrading] = useState(false)
+  const [gradePreview, setGradePreview] = useState<GradeResult | null>(null)
+  const [gradeFailed, setGradeFailed] = useState(false)
 
-  const busy = submitHarvest.isPending || hashing
+  const busy = submitHarvest.isPending || hashing || grading
   const disabled = busy || !connected
+
+  /** Button copy reflects the current phase, including the ungraded escape hatch. */
+  let submitLabel = t('prov.harvest.submit')
+  if (busy) submitLabel = grading ? t('prov.harvest.grading') : t('prov.harvest.submitting')
+  else if (gradeFailed) submitLabel = t('prov.harvest.submitUngraded')
+
+  /** Agreement vocabulary for the preview box. */
+  function agreementLabel(result: GradeResult): string {
+    if (result.agreement === 'agree') return t('prov.harvest.agree')
+    if (result.agreement === 'disagree') return t('prov.harvest.disagree')
+    return t('prov.harvest.single')
+  }
 
   /** One permission+fix from the shared scout location helper. */
   async function useMyLocation() {
@@ -75,7 +107,7 @@ export function LogHarvestModal({ farmAddress, batchCount, onClose }: LogHarvest
   async function submit() {
     if (disabled) return
     const uri = `indorse://harvest/${Date.now()}`
-    const input = {
+    const base = {
       farmAddress,
       batchCount,
       photoHash: new Array<number>(32).fill(0),
@@ -85,19 +117,66 @@ export function LogHarvestModal({ farmAddress, batchCount, onClose }: LogHarvest
       crop: crop.trim(),
       quantityKg: Number.parseFloat(quantity),
       notes: notes.trim(),
+      ...UNGRADED,
     }
-    const found = validateHarvestBatch(input)
+    const found = validateHarvestBatch(base)
     setErrors(found ?? EMPTY_ERRORS)
     if (found) return
 
     // Real digest of the record URI — the batch has no photo to hash.
     setHashing(true)
+    let digest: number[]
     try {
-      const digest = await photoHash(uri)
-      submitHarvest.mutate({ ...input, photoHash: digest }, { onSuccess: onClose })
+      digest = await photoHash(uri)
     } finally {
       setHashing(false)
     }
+
+    // Grade once per modal open. A landed verdict is reused if the wallet
+    // prompt is cancelled; a failed attempt flips to the ungraded path.
+    const endpoint = getGradeEndpoint()
+    let gradePayload: { grade: number; gradeConfidence: number; gradeNotes: string; gradeFlags: number } = UNGRADED
+    if (gradePreview) {
+      gradePayload = {
+        grade: gradePreview.grade,
+        gradeConfidence: Math.round(gradePreview.confidence * 100),
+        gradeNotes: gradePreview.notes,
+        gradeFlags: gradePreview.needsReview ? 1 : 0,
+      }
+    } else if (endpoint && !gradeFailed) {
+      setGrading(true)
+      let verdict: GradeResult | null = null
+      try {
+        verdict = await gradeHarvest(
+          {
+            crop: base.crop,
+            quantityKg: base.quantityKg,
+            notes: base.notes,
+            scoutReports,
+            verifiedReports,
+          },
+          { endpoint },
+        )
+      } catch {
+        verdict = null
+      }
+      setGrading(false)
+      if (!verdict) {
+        // Stop here: the warning and the ungraded button appear; the farmer
+        // chooses to retry grading (via re-opening) or submit without one.
+        setGradeFailed(true)
+        return
+      }
+      setGradePreview(verdict)
+      gradePayload = {
+        grade: verdict.grade,
+        gradeConfidence: Math.round(verdict.confidence * 100),
+        gradeNotes: verdict.notes,
+        gradeFlags: verdict.needsReview ? 1 : 0,
+      }
+    }
+
+    submitHarvest.mutate({ ...base, photoHash: digest, ...gradePayload }, { onSuccess: onClose })
   }
 
   return (
@@ -209,15 +288,32 @@ export function LogHarvestModal({ farmAddress, batchCount, onClose }: LogHarvest
             </View>
           ) : null}
 
+          {gradeFailed && !busy ? (
+            <View style={styles.warnBox}>
+              <Text style={styles.warnText}>{t('prov.harvest.gradeUnavailable')}</Text>
+            </View>
+          ) : null}
+
+          {gradePreview ? (
+            <View style={styles.gradeBox}>
+              <Text style={styles.gradeHead}>
+                {t('prov.harvest.gradeTitle')} · {gradePreview.gradeLabel} · {Math.round(gradePreview.confidence * 100)}
+                %
+              </Text>
+              <Text style={styles.gradeSub}>{agreementLabel(gradePreview)}</Text>
+              {gradePreview.notes ? <Text style={styles.gradeNotes}>{gradePreview.notes}</Text> : null}
+            </View>
+          ) : null}
+
           <Pressable
             style={[styles.submit, disabled && styles.submitBusy]}
             onPress={submit}
             disabled={disabled}
             testID="harvest-submit"
             accessibilityRole="button"
-            accessibilityLabel={t('prov.harvest.submit')}
+            accessibilityLabel={submitLabel}
           >
-            <Text style={styles.submitText}>{busy ? t('prov.harvest.submitting') : t('prov.harvest.submit')}</Text>
+            <Text style={styles.submitText}>{submitLabel}</Text>
           </Pressable>
 
           <Pressable style={styles.cancel} onPress={onClose} disabled={busy} accessibilityRole="button">
@@ -358,6 +454,43 @@ const makeStyles = (colors: Colors) =>
       fontSize: fontSizes.sm,
       color: colors.dangerText,
       lineHeight: 18,
+    },
+    warnBox: {
+      borderWidth: 1,
+      borderStyle: 'dashed',
+      borderColor: colors.amber,
+      backgroundColor: `${colors.amber}14`,
+      borderRadius: radii.md,
+      padding: spacing.md,
+      marginTop: spacing.lg,
+    },
+    warnText: {
+      fontSize: fontSizes.sm,
+      color: colors.textSecondary,
+      lineHeight: 18,
+    },
+    gradeBox: {
+      borderWidth: 1,
+      borderColor: colors.sage,
+      backgroundColor: `${colors.sage}14`,
+      borderRadius: radii.md,
+      padding: spacing.md,
+      marginTop: spacing.lg,
+      gap: 2,
+    },
+    gradeHead: {
+      fontSize: fontSizes.sm,
+      fontWeight: fontWeights.bold,
+      color: colors.textPrimary,
+    },
+    gradeSub: {
+      fontSize: fontSizes.xs,
+      color: colors.textSecondary,
+    },
+    gradeNotes: {
+      fontSize: fontSizes.xs,
+      color: colors.textMuted,
+      fontStyle: 'italic',
     },
     submit: {
       marginTop: spacing.xl,

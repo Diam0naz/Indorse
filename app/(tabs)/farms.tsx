@@ -309,7 +309,13 @@ export default function ProvenanceScreen() {
 
         {/* ── Setup flows: harvest batch → escrow ─────────────────── */}
         {harvestOpen && farmAddress && farm ? (
-          <LogHarvestModal farmAddress={farmAddress} batchCount={batchCount} onClose={() => setHarvestOpen(false)} />
+          <LogHarvestModal
+            farmAddress={farmAddress}
+            batchCount={batchCount}
+            scoutReports={farm.reportCount}
+            verifiedReports={farm.verifiedReportCount}
+            onClose={() => setHarvestOpen(false)}
+          />
         ) : null}
         {escrowOpen && canEscrow && latestBatch?.address ? (
           <SetupEscrowModal

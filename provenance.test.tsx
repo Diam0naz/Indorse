@@ -443,6 +443,11 @@ describe('harvest batch setup', () => {
           crop: 'Sunflower',
           quantityKg: 640,
           notes: '',
+          // No grade endpoint in this test's env — the honest ungraded state.
+          grade: 0,
+          gradeConfidence: 0,
+          gradeNotes: '',
+          gradeFlags: 0,
         }),
       ),
     )
@@ -455,6 +460,78 @@ describe('harvest batch setup', () => {
 
     vi.useRealTimers()
     await waitFor(() => expect(screen.queryByLabelText('Log batch')).toBeNull())
+  })
+
+  it('grades the batch with both models when the endpoint is configured', async () => {
+    farmAwaitingEscrow([])
+    wallet.address = FARMER
+
+    // The app reads the grade URL at call time — configure it for this test
+    // only, and answer with a settled dual-model assessment.
+    process.env.EXPO_PUBLIC_AI_GRADE_URL = 'http://api.test/api/grade'
+    const gradeFetch = vi.fn().mockResolvedValue({
+      ok: true,
+      status: 200,
+      json: async () => ({
+        grade: 2,
+        gradeLabel: 'B',
+        confidence: 0.92,
+        notes: 'Even color, firm cobs, no rot',
+        agreement: 'agree',
+        needsReview: false,
+        providers: ['gemini', 'groq'],
+      }),
+    })
+    vi.stubGlobal('fetch', gradeFetch)
+
+    try {
+      const screen = await renderScreen()
+
+      await fireEvent.press(await screen.findByText('Log a harvest batch', {}, LOAD))
+      await screen.findByText(/Record what came off the field/, {}, LOAD)
+
+      const when = new Date('2026-01-02T03:04:05.000Z')
+      vi.useFakeTimers({ toFake: ['Date'] })
+      vi.setSystemTime(when)
+
+      await fireEvent.changeText(screen.getByLabelText('Crop'), 'Sunflower')
+      await fireEvent.changeText(screen.getByLabelText('Quantity (kg)'), '640')
+      await fireEvent.changeText(screen.getByLabelText('Latitude'), '46.882110')
+      await fireEvent.changeText(screen.getByLabelText('Longitude'), '-98.702310')
+      await fireEvent.press(screen.getByLabelText('Log batch'))
+
+      // First the grading call carries the batch record…
+      await waitFor(() => expect(gradeFetch).toHaveBeenCalledTimes(1))
+      const gradeBody = JSON.parse(gradeFetch.mock.calls[0][1]?.body as string) as Record<string, unknown>
+      expect(gradeBody).toMatchObject({ crop: 'Sunflower', quantityKg: 640, notes: '' })
+
+      // …then the instruction carries the verdict: B → 2, 92%, flags 0.
+      await waitFor(() => expect(wallet.sendTransactions).toHaveBeenCalledTimes(1))
+      const ix = sentInstruction()
+      const uri = `indorse://harvest/${when.getTime()}`
+      const digest = await photoHash(uri)
+      expect(Array.from(ix.data)).toEqual(
+        Array.from(
+          encodeInstruction('submit_harvest_batch', {
+            photoHash: digest,
+            uri,
+            latE6: 46_882_110,
+            lngE6: -98_702_310,
+            crop: 'Sunflower',
+            quantityKg: 640,
+            notes: '',
+            grade: 2,
+            gradeConfidence: 92,
+            gradeNotes: 'Even color, firm cobs, no rot',
+            gradeFlags: 0,
+          }),
+        ),
+      )
+    } finally {
+      vi.unstubAllGlobals()
+      vi.useRealTimers()
+      delete process.env.EXPO_PUBLIC_AI_GRADE_URL
+    }
   })
 
   it('requires coordinates before a batch can be logged', async () => {

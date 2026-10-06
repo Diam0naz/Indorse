@@ -43,6 +43,12 @@ export function useSubmitHarvest() {
         crop: input.crop.trim(),
         quantityKg: input.quantityKg,
         notes: input.notes.trim(),
+        // Dual-model verdict gathered by the caller before this mutation —
+        // 0/'' means grading was unreachable and the batch ships ungraded.
+        grade: input.grade,
+        gradeConfidence: input.gradeConfidence,
+        gradeNotes: input.gradeNotes,
+        gradeFlags: input.gradeFlags,
       })
       await wallet.sendTransactions([toWalletInstruction(ix)])
       await queryClient.invalidateQueries({ queryKey: ['indorse'] })
