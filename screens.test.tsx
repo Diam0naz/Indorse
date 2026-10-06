@@ -17,6 +17,8 @@ import ScoutingScreen from '@/app/(tabs)/index'
 import WeatherScreen from '@/app/(tabs)/reports'
 import ProfileScreen from '@/app/(tabs)/rewards'
 import { NotificationsProvider, NotificationsSheet, useNotifications } from '@/components/notifications'
+import { AuthProvider } from '@/components/auth-provider'
+import { FarmRegistryProvider } from '@/components/farm-registry-provider'
 import { ScoutLogProvider } from '@/components/scout-log-provider'
 import { shortenAddress } from '@/lib/format'
 
@@ -139,6 +141,31 @@ vi.mock('@/features/reports/useSubmitReport', () => ({
   }),
 }))
 
+/**
+ * Claiming resolves the reward vault over RPC, so the hook is stubbed and
+ * its state driven per-test — the row's claim path is what's under test,
+ * not the vault discovery.
+ */
+const claimScenario = vi.hoisted(() => ({
+  mutate: vi.fn(),
+  isPending: false,
+  isError: false,
+  error: null as Error | null,
+  variables: undefined as string | undefined,
+}))
+
+vi.mock('@/features/reports/useRewardReport', () => ({
+  useRewardReport: () => ({
+    isPending: claimScenario.isPending,
+    isError: claimScenario.isError,
+    error: claimScenario.error,
+    variables: claimScenario.variables,
+    mutate: claimScenario.mutate,
+    mutateAsync: vi.fn(),
+    reset: vi.fn(),
+  }),
+}))
+
 // The profile reads SOL/USDC through the wallet-ui client, which no provider
 // mounts here — hand back fixed balances instead.
 vi.mock('@/features/wallet/useWalletBalances', () => ({
@@ -159,7 +186,12 @@ const weatherScenario = vi.hoisted(() => ({
     premiumUsdc: number
   },
   policyAddress: null as string | null,
-  reading: null as null | { totalRainfallMm: number; readingTimestamp: number; finalized: boolean },
+  reading: null as null | {
+    totalRainfallMm: number
+    readingTimestamp: number
+    finalized: boolean
+    readings?: { oracle: string; totalRainfallMm: number }[]
+  },
   oracleError: false,
   retry: vi.fn(),
 }))
@@ -181,6 +213,16 @@ vi.mock('@/features/insurance/useWeatherOracleQuery', () => ({
   }),
 }))
 
+// The weather screen reads the oracle set for the tally's denominator —
+// stubbed like the rest of its chain reads, so no RPC is reached in tests.
+const oracleSetScenario = vi.hoisted(() => ({
+  set: null as null | { k: number; members: string[] },
+}))
+
+vi.mock('@/features/admin/useOracleSetQuery', () => ({
+  useOracleSetQuery: () => ({ set: oracleSetScenario.set, state: 'ready' as const, retry: vi.fn() }),
+}))
+
 /** Simulated fetches resolve in 450–550ms; give each assertion room. */
 const LOAD = { timeout: 3000 }
 
@@ -188,13 +230,20 @@ function renderWithProviders(ui: React.ReactElement) {
   // Queries (scout tab) need a QueryClient; retries stay off so a failed read
   // surfaces the error path instead of re-fetching for the whole test. The
   // scout log provider mounts as production does — hydration starts empty
-  // unless a test seeds `indorse.scout.v1` first.
+  // unless a test seeds `indorse.scout.v1` first. AuthProvider covers the
+  // profile's logout action, which reads the app-lock state. The farm
+  // registry mounts as production does too — the profile's acreage total
+  // reads it (empty unless a test seeds `indorse.farms.v1`).
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } })
   return render(
     <QueryClientProvider client={client}>
-      <NotificationsProvider>
-        <ScoutLogProvider>{ui}</ScoutLogProvider>
-      </NotificationsProvider>
+      <FarmRegistryProvider>
+        <AuthProvider>
+          <NotificationsProvider>
+            <ScoutLogProvider>{ui}</ScoutLogProvider>
+          </NotificationsProvider>
+        </AuthProvider>
+      </FarmRegistryProvider>
     </QueryClientProvider>,
   )
 }
@@ -205,8 +254,17 @@ beforeEach(async () => {
   scoutSetup.farm = null
   scoutSetup.toggleConnection.mockClear()
   submitScenario.mutateAsync.mockClear()
+  claimScenario.mutate.mockClear()
+  claimScenario.isPending = false
+  claimScenario.isError = false
+  claimScenario.error = null
+  claimScenario.variables = undefined
   // Stored captures are per-test: a seeded log must not hydrate the next one.
   await AsyncStorage.removeItem('indorse.scout.v1')
+  // Same for the farm registry — the profile's acreage total reads it.
+  await AsyncStorage.removeItem('indorse.farms.v1')
+  // The weather scenario's oracle set (the tally denominator) resets too.
+  oracleSetScenario.set = null
 })
 
 /** Demo policy fixture: 180 mm trigger, $96k cover, 30 days left of season. */
@@ -224,11 +282,17 @@ function seasonPolicy() {
 }
 
 function seasonReading() {
-  // 212.0 mm of season rainfall, one day old — frozen at quorum.
+  // 212.0 mm of season rainfall, one day old — frozen at quorum as the
+  // median of three signed votes (2100/2120/2140 on the mm × 10 scale).
   return {
     totalRainfallMm: 2120,
     readingTimestamp: Math.floor(Date.now() / 1000) - 86_400,
     finalized: true,
+    readings: [
+      { oracle: 'Fy2aWfeFLUBLge74F9fVfPcA83bG1vkomBHD7rj8CLU5', totalRainfallMm: 2100 },
+      { oracle: '9WzDXwBbmkg8ZTbNMqUxvQRAyrZzDsGYdLVL9zYtAWWM', totalRainfallMm: 2120 },
+      { oracle: '5NKf5oVdKz5pPZqsMbxJFEZkNQh5fXTmBfqHcTzXvNsR', totalRainfallMm: 2140 },
+    ],
   }
 }
 
@@ -320,6 +384,76 @@ describe('screen redesign', () => {
     expect(screen.getAllByText('—').length).toBeGreaterThanOrEqual(2)
   })
 
+  it('answers the contract question and names where the number came from', async () => {
+    weatherScenario.policy = seasonPolicy()
+    weatherScenario.policyAddress = POLICY_ADDRESS
+    weatherScenario.reading = seasonReading()
+    weatherScenario.oracleError = false
+
+    const screen = await renderWithProviders(<WeatherScreen />)
+
+    // 212 mm against the 180 mm trigger: the verdict says what the number
+    // MEANS (32 mm over — no payout), provenance says who put it there.
+    await screen.findByText('Live Oracle Readings', {}, LOAD)
+    expect(await screen.findByText('No payout — 32 mm above trigger', {}, LOAD)).toBeTruthy()
+    expect(screen.getByText('Median of 3 signed oracle readings')).toBeTruthy()
+  })
+
+  it('marks an open tally provisional — a partial count is not a fact', async () => {
+    weatherScenario.policy = seasonPolicy()
+    weatherScenario.policyAddress = POLICY_ADDRESS
+    // Two votes in, quorum (3) not reached: the frozen median stays 0, so
+    // the official slots keep their em-dashes while the votes still speak.
+    weatherScenario.reading = {
+      totalRainfallMm: 0,
+      readingTimestamp: 0,
+      finalized: false,
+      readings: [
+        { oracle: 'Fy2aWfeFLUBLge74F9fVfPcA83bG1vkomBHD7rj8CLU5', totalRainfallMm: 1500 },
+        { oracle: '9WzDXwBbmkg8ZTbNMqUxvQRAyrZzDsGYdLVL9zYtAWWM', totalRainfallMm: 1600 },
+      ],
+    }
+    weatherScenario.oracleError = false
+    oracleSetScenario.set = {
+      k: 3,
+      members: [
+        'Fy2aWfeFLUBLge74F9fVfPcA83bG1vkomBHD7rj8CLU5',
+        '9WzDXwBbmkg8ZTbNMqUxvQRAyrZzDsGYdLVL9zYtAWWM',
+        '5NKf5oVdKz5pPZqsMbxJFEZkNQh5fXTmBfqHcTzXvNsR',
+      ],
+    }
+
+    const screen = await renderWithProviders(<WeatherScreen />)
+
+    await screen.findByText('Live Oracle Readings', {}, LOAD)
+    // Median of 1500/1600 → 1550 (mm × 10) → 155 mm, labelled provisional.
+    expect(await screen.findByText('Provisional median 155 mm — not fact until quorum', {}, LOAD)).toBeTruthy()
+    expect(screen.getByText('2 of 3 readings in — median not frozen')).toBeTruthy()
+    expect(screen.getAllByText('—').length).toBeGreaterThanOrEqual(2)
+  })
+
+  it('counts the open tally even before the oracle set is read', async () => {
+    weatherScenario.policy = seasonPolicy()
+    weatherScenario.policyAddress = POLICY_ADDRESS
+    weatherScenario.reading = {
+      totalRainfallMm: 0,
+      readingTimestamp: 0,
+      finalized: false,
+      readings: [
+        { oracle: 'Fy2aWfeFLUBLge74F9fVfPcA83bG1vkomBHD7rj8CLU5', totalRainfallMm: 1500 },
+        { oracle: '9WzDXwBbmkg8ZTbNMqUxvQRAyrZzDsGYdLVL9zYtAWWM', totalRainfallMm: 1600 },
+      ],
+    }
+    weatherScenario.oracleError = false
+    // K unknown (the set account is unread): the caption drops the
+    // denominator rather than inventing one.
+    oracleSetScenario.set = null
+
+    const screen = await renderWithProviders(<WeatherScreen />)
+
+    expect(await screen.findByText('2 readings in — median not frozen', {}, LOAD)).toBeTruthy()
+  })
+
   it('shows the empty policy and chart states before anything is underwritten', async () => {
     weatherScenario.policy = null
     weatherScenario.policyAddress = null
@@ -352,6 +486,27 @@ describe('screen redesign', () => {
     expect(screen.getByText('Connect Wallet')).toBeTruthy()
     // Handle and pubkey both fall back to the same not-connected label.
     expect(screen.getAllByText('Not connected').length).toBeGreaterThan(0)
+  })
+
+  it('totals the registry acreage the chain account cannot store', async () => {
+    // Two device-local farms — acreage is local detail, so this registry
+    // is the only home it has (the chain account has no such field).
+    await AsyncStorage.setItem(
+      'indorse.farms.v1',
+      JSON.stringify({
+        farms: [
+          { id: 'a', name: 'Green Valley', lat: 34.052, lng: -118.243, source: 'local', acres: 120, addedAt: 1 },
+          { id: 'b', name: 'East Draw', lat: 35.052, lng: -117.243, source: 'local', acres: 45.5, addedAt: 2 },
+        ],
+        currentId: 'a',
+      }),
+    )
+
+    const screen = await renderWithProviders(<ProfileScreen />)
+
+    // 120 + 45.5 — and a farm without acreage recorded contributes nothing.
+    await screen.findByText('Total Acres', {}, LOAD)
+    expect(await screen.findByText('165.5 ac', {}, LOAD)).toBeTruthy()
   })
 
   it('exposes the camera action to screen readers', async () => {
@@ -487,6 +642,105 @@ describe('screen redesign', () => {
       expect(doc.events[0]).not.toHaveProperty('anchor')
     }, LOAD)
     expect(screen.queryByLabelText('Retry anchoring')).toBeNull()
+  })
+
+  it('offers the SKR claim only on a verified report', async () => {
+    scoutSetup.address = POLICY_ADDRESS
+    scoutSetup.farm = { name: 'Green Valley', reportCount: 0 }
+    // Two anchored rows: the chain's own review status is what separates a
+    // claimable report from one the program would still refuse.
+    const verified = {
+      id: 'ReportVerified',
+      date: 'Oct 4',
+      field: 'Green Valley',
+      crop: '—',
+      diagnosis: 'Late blight',
+      confidence: 0,
+      severity: 'none',
+      txSig: 'ReportVerified',
+      notes: 'indorse://scout/v.jpg',
+      images: 1,
+      lat: 46.8821,
+      lng: -98.7023,
+      chainStatus: 'verified',
+    }
+    const pending = {
+      ...verified,
+      id: 'ReportPending',
+      txSig: 'ReportPending',
+      diagnosis: 'Early blight',
+      chainStatus: 'pending',
+    }
+    await AsyncStorage.setItem('indorse.scout.v1', JSON.stringify({ events: [verified, pending] }))
+
+    const screen = await renderWithProviders(<ScoutingScreen />)
+    await screen.findByText('Late blight', {}, LOAD)
+
+    // Expanded, a verified report offers the claim — and the tap names the
+    // report account, which is where the hook reads its reporter back from.
+    await fireEvent.press(screen.getByText('Late blight'))
+    const claim = await screen.findByLabelText('Claim SKR reward', {}, LOAD)
+    await fireEvent.press(claim)
+    expect(claimScenario.mutate).toHaveBeenCalledWith('ReportVerified')
+
+    // The pending row next to it shows the status and nothing to claim.
+    await fireEvent.press(screen.getByText('Early blight'))
+    expect(screen.queryByLabelText('Claim SKR reward')).toBeNull()
+    expect(screen.getByText('Pending')).toBeTruthy()
+  })
+
+  it('gates deletion behind a confirm and erases the row only on confirm', async () => {
+    // A local capture from an earlier session. Deleting is device-local —
+    // the chain, if any, keeps its own copy — so the tap must be gated.
+    scoutSetup.address = POLICY_ADDRESS
+    scoutSetup.farm = { name: 'Green Valley', reportCount: 0 }
+    await AsyncStorage.clear()
+    const stored = {
+      id: 'sc1712000000002',
+      date: 'Oct 6',
+      field: 'Unregistered area',
+      crop: '—',
+      diagnosis: 'Powdery mildew',
+      confidence: 0.82,
+      severity: 'medium',
+      txSig: 'ef'.repeat(32),
+      notes: 'White film on upper leaves.',
+      images: 1,
+      lat: 46.8821,
+      lng: -98.7023,
+      anchorStatus: 'failed',
+      anchor: {
+        photoHashHex: 'cd'.repeat(32),
+        uri: 'indorse://scout/1712000000002.jpg',
+        aiLabel: 'Powdery mildew',
+        photoUris: [],
+      },
+    }
+    await AsyncStorage.setItem('indorse.scout.v1', JSON.stringify({ events: [stored] }))
+
+    const screen = await renderWithProviders(<ScoutingScreen />)
+    await screen.findByText('Powdery mildew', {}, LOAD)
+    await fireEvent.press(screen.getByText('Powdery mildew'))
+
+    // The tap opens the gate and the gate is honest about the limits;
+    // declining it leaves the row untouched.
+    await fireEvent.press(screen.getByLabelText('Delete entry'))
+    await screen.findByTestId('scout-delete-confirm', {}, LOAD)
+    expect(
+      screen.getByText('The capture and its photos are removed from this device. On-chain records stay on-chain.'),
+    ).toBeTruthy()
+    await fireEvent.press(screen.getByLabelText('Close camera'))
+    expect(screen.getByText('Powdery mildew')).toBeTruthy()
+
+    // Reopening and confirming erases it — the store too, not just the row.
+    await fireEvent.press(screen.getByLabelText('Delete entry'))
+    await screen.findByTestId('scout-delete-confirm', {}, LOAD)
+    await fireEvent.press(screen.getByTestId('scout-delete-confirm'))
+    await waitFor(() => expect(screen.queryByText('Powdery mildew')).toBeNull())
+    await waitFor(async () => {
+      const doc = JSON.parse((await AsyncStorage.getItem('indorse.scout.v1')) ?? '{}')
+      expect(doc.events).toHaveLength(0)
+    })
   })
 })
 
