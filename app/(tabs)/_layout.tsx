@@ -14,6 +14,7 @@ import { Tabs } from 'expo-router'
 import type { BottomTabBarProps } from 'expo-router/build/react-navigation/bottom-tabs/types'
 import * as Haptics from 'expo-haptics'
 import { AppHeader } from '@/components/app-header'
+import { HelpChip } from '@/components/help-chip'
 import { FarmChainSync } from '@/features/farm/FarmChainSync'
 import { NotificationsProvider, useNotifications } from '@/components/notifications'
 import { useSettings } from '@/components/settings-provider'
@@ -175,6 +176,9 @@ export default function TabsLayout() {
           <Tabs.Screen name="reports" options={{ title: 'Weather' }} />
           <Tabs.Screen name="rewards" options={{ title: 'Profile' }} />
         </Tabs>
+        {/* "Ask indorse" — one floating help chip over every tab, bottom-left
+            so it stays clear of the Scout dock at bottom-right. */}
+        <HelpChip />
       </View>
     </NotificationsProvider>
   )
