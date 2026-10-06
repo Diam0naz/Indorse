@@ -8,20 +8,7 @@
  * security.
  */
 
-import { address as toAddress } from '@solana/kit'
-import { errorOrNull, firstError, positiveNumber } from '@/lib/validation'
-
-/** Field-level check for any 32-byte base58 address. */
-export function addressValidationError(value: string): string | undefined {
-  const trimmed = (value ?? '').trim()
-  if (!trimmed) return 'Address is required'
-  try {
-    toAddress(trimmed)
-    return undefined
-  } catch {
-    return 'Not a valid Solana address'
-  }
-}
+import { addressValidationError, errorOrNull, firstError, positiveNumber } from '@/lib/validation'
 
 /* ── set_roles ─────────────────────────────────────────────────────────────── */
 
@@ -169,6 +156,74 @@ export function validateSettlePolicy(input: SettlePolicyValues): SettlePolicyErr
     policyCount:
       !Number.isInteger(input.policyCount) || input.policyCount < 1 ? 'The farm has no policy to settle' : undefined,
     seasonStart: !input.seasonStart ? 'Season start is missing' : undefined,
+  }
+  return errorOrNull(errors)
+}
+
+/* ── close_settled_policy ───────────────────────────────────────────────────── */
+
+export interface CloseSettledPolicyValues {
+  farmAddress: string
+  /** The policy's farmer — both rents refund here, pinned by the program. */
+  farmerAddress: string
+  /** The farm's policy count — the current policy lives at `policyCount - 1`. */
+  policyCount: number
+}
+
+export interface CloseSettledPolicyErrors {
+  farmAddress?: string
+  farmerAddress?: string
+  policyCount?: string
+}
+
+export function validateCloseSettledPolicy(input: CloseSettledPolicyValues): CloseSettledPolicyErrors | null {
+  const errors: CloseSettledPolicyErrors = {
+    farmAddress: addressValidationError(input.farmAddress),
+    farmerAddress: addressValidationError(input.farmerAddress),
+    policyCount:
+      !Number.isInteger(input.policyCount) || input.policyCount < 1 ? 'The farm has no policy to close' : undefined,
+  }
+  return errorOrNull(errors)
+}
+
+/* ── submit_oracle_reading ─────────────────────────────────────────────────── */
+
+export interface SubmitOracleReadingValues {
+  farmAddress: string
+  /** The season's start — seeds the weather-oracle PDA. */
+  seasonStart: number
+  /** Season total as a human reads it: millimetres, e.g. `212.4`. */
+  rainfallMm: number
+}
+
+export interface SubmitOracleReadingErrors {
+  farmAddress?: string
+  seasonStart?: string
+  rainfallMm?: string
+}
+
+/** The program stores millimetres × 10 in a `u32` — its hard ceiling. */
+export const MAX_RAINFALL_X10 = 4_294_967_295
+
+/** Millimetres → the program's `mm × 10` representation. */
+export function rainfallToScaledX10(mm: number): number {
+  return Math.round(mm * 10)
+}
+
+export function validateSubmitOracleReading(input: SubmitOracleReadingValues): SubmitOracleReadingErrors | null {
+  const scaled = rainfallToScaledX10(input.rainfallMm)
+  const errors: SubmitOracleReadingErrors = {
+    farmAddress: addressValidationError(input.farmAddress),
+    seasonStart: !Number.isInteger(input.seasonStart) || input.seasonStart < 1 ? 'Season start is missing' : undefined,
+    // NaN rather than 0: an empty field must never read as "0 mm of rain",
+    // which is a plausible season total and would post silently.
+    rainfallMm: !Number.isFinite(input.rainfallMm)
+      ? 'Rainfall must be a number'
+      : input.rainfallMm < 0
+        ? 'Rainfall must be zero or more'
+        : scaled > MAX_RAINFALL_X10
+          ? 'Rainfall is out of range'
+          : undefined,
   }
   return errorOrNull(errors)
 }

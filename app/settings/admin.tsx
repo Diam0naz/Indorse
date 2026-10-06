@@ -44,6 +44,8 @@ import { useVerifierSetQuery } from '@/features/admin/useVerifierSetQuery'
 import { useOracleSetQuery } from '@/features/admin/useOracleSetQuery'
 import { useUsdcBalanceQuery } from '@/features/admin/useUsdcBalanceQuery'
 import { useSettlePolicy } from '@/features/admin/useSettlePolicy'
+import { useCloseSettledPolicy } from '@/features/admin/useCloseSettledPolicy'
+import { useSubmitOracleReading } from '@/features/admin/useSubmitOracleReading'
 import { useWithdrawTreasury } from '@/features/admin/useWithdrawTreasury'
 import { useSetRoles } from '@/features/admin/useSetRoles'
 import { useAddOracle } from '@/features/admin/useAddOracle'
@@ -56,17 +58,19 @@ import { useInitOracleSet } from '@/features/admin/useInitOracleSet'
 import { useAdminStatus, useAllowlistUpdate } from '@/features/admin/adminApi'
 import type { AdminStatus, AllowlistUpdate } from '@/features/admin/adminApi'
 import {
-  addressValidationError,
+  validateCloseSettledPolicy,
   validateInitOracleSet,
   validateOracleMember,
   validateSetRoles,
   validateSettlePolicy,
+  validateSubmitOracleReading,
   validateVerifierSet,
   validateWithdrawTreasury,
 } from '@/features/admin/types'
 import { formatShortDate, formatUsdc, fromE6, shortenAddress, toE6 } from '@/lib/format'
 import { useT } from '@/lib/i18n'
 import { ataPda, insuranceVaultPda, treasuryPda } from '@/lib/program'
+import { addressValidationError } from '@/lib/validation'
 
 /* ── Local form state ──────────────────────────────────────────────────────── */
 
@@ -83,6 +87,8 @@ interface FormState {
   initBond: string
   initOk: string
   entry: string
+  /** Season rainfall total in millimetres, as shown on every weather screen. */
+  reading: string
 }
 
 const EMPTY_FORM: FormState = {
@@ -97,6 +103,7 @@ const EMPTY_FORM: FormState = {
   initBond: '',
   initOk: '',
   entry: '',
+  reading: '',
 }
 
 interface PendingConfirm {
@@ -158,10 +165,12 @@ export default function AdminSettingsScreen() {
 
   /* ── Actions ─────────────────────────────────────────────────────────────── */
   const settle = useSettlePolicy()
+  const closePolicy = useCloseSettledPolicy()
   const withdraw = useWithdrawTreasury()
   const setRoles = useSetRoles()
   const addOracle = useAddOracle()
   const removeOracle = useRemoveOracle()
+  const postReading = useSubmitOracleReading()
   const reconfigure = useReconfigureVerifierSet()
   const release = useReleaseVerifier()
   const slash = useSlashVerifier()
@@ -271,6 +280,29 @@ export default function AdminSettingsScreen() {
     ask(t('admin.confirmSettle'), t('admin.confirmSettleDesc'), 'settle_policy', () => settle.mutateAsync(input))
   }
 
+  /**
+   * Closing is terminal — the policy PDA is closed and both rents refund —
+   * so it takes the typed phrase, like `withdraw_treasury`. Nothing can be
+   * misdirected (every destination is pinned by the program), but there is
+   * no account left to come back to if it fires by accident.
+   */
+  const submitClose = () => {
+    if (!policy || !farmAddress) return
+    const input = {
+      farmAddress,
+      farmerAddress: policy.farmer,
+      policyCount: farm?.policyCount ?? 0,
+    }
+    const found = validateCloseSettledPolicy(input)
+    if (found) {
+      setLastResult({ ok: false, text: Object.values(found).filter(Boolean).join('; ') })
+      return
+    }
+    ask(t('admin.confirmClose'), t('admin.confirmCloseDesc'), 'close_settled_policy', () =>
+      closePolicy.mutateAsync(input),
+    )
+  }
+
   const submitReader = () => {
     const input = { member: form.reader }
     const found = validateOracleMember(input)
@@ -280,6 +312,30 @@ export default function AdminSettingsScreen() {
       await addOracle.mutateAsync(input)
       setField('reader', '')
     })
+  }
+
+  /**
+   * The reading's season comes from the policy — the weather PDA seeds off
+   * it — so this form only carries the number. An empty field is caught
+   * before the validator because `Number('')` is 0, and 0 mm is a plausible
+   * season total that would otherwise post silently.
+   */
+  const submitReading = () => {
+    if (!policy || !farmAddress) return
+    const raw = form.reading.trim()
+    if (raw === '') {
+      setErrors({ reading: t('admin.readingRequired') })
+      return
+    }
+    const input = {
+      farmAddress,
+      seasonStart: policy.seasonStart,
+      rainfallMm: Number(raw),
+    }
+    const found = validateSubmitOracleReading(input)
+    setErrors(found ? { reading: found.rainfallMm } : {})
+    if (found) return
+    ask(t('admin.confirmReading'), t('admin.confirmReadingDesc'), null, () => postReading.mutateAsync(input))
   }
 
   const submitReconfigure = () => {
@@ -401,11 +457,18 @@ export default function AdminSettingsScreen() {
   const funded = vaultBal !== null && policy !== null && vaultBal + 1e-9 >= coverage
   const shortfall = policy && vaultBal !== null ? Math.max(0, coverage - vaultBal) : coverage
   const canSettle = policy?.state === 'active' && seasonEnded && finalized
+  // Terminal states only — the program names them explicitly rather than
+  // treating "anything but Active" as closeable, so a future state can't
+  // become closeable by omission.
+  const canClose = policy?.state === 'paidOut' || policy?.state === 'expired'
   const triggerPreview =
     policy && reading && finalized && reading.totalRainfallMm > 0 ? wouldTrigger(policy, reading.totalRainfallMm) : null
 
   const verifierSet = verifierQuery.set
   const oracleSet = oracleSetQuery.set
+  // `submit_oracle_reading` gates on set membership, not on `config.admin`,
+  // so the connected wallet needs a seat of its own to post.
+  const isReader = !!address && !!oracleSet && oracleSet.members.includes(address)
 
   return (
     <SettingsScreen title={t('admin.title')} subtitle={t('admin.subtitle')}>
@@ -493,6 +556,15 @@ export default function AdminSettingsScreen() {
               {!funded ? <SettingsNote>{t('admin.vaultWarn')}</SettingsNote> : null}
               <SettingsButton label={t('admin.settle')} tone="primary" onPress={submitSettle} disabled={!canSettle} />
             </View>
+
+            {/* Settling moves coverage; closing is what recognises the premium
+                still sitting in the vault and lets both accounts go. */}
+            {canClose ? (
+              <View style={styles.formBox}>
+                <SettingsNote>{t('admin.closeHint')}</SettingsNote>
+                <SettingsButton label={t('admin.close')} tone="primary" onPress={submitClose} />
+              </View>
+            ) : null}
           </>
         )}
       </SettingsGroup>
@@ -539,6 +611,24 @@ export default function AdminSettingsScreen() {
               <TextInput {...inputProps('reader', t('admin.phReader'))} />
               {fieldError('reader')}
               <SettingsButton label={t('admin.addReader')} tone="secondary" onPress={submitReader} />
+            </View>
+
+            {/* ── Post a season reading ────────────────────────────────── */}
+            <SettingRow
+              title={t('admin.readingTally')}
+              description={`${reading?.readings.length ?? 0} / ${oracleSet.k}`}
+            />
+            {!isReader ? <SettingsNote>{t('admin.readingNoSeat')}</SettingsNote> : null}
+            {reading?.finalized ? <SettingsNote>{t('admin.oracleFinalized')}</SettingsNote> : null}
+            <View style={styles.formBox}>
+              <TextInput {...inputProps('reading', t('admin.phReading'), true)} />
+              {fieldError('reading')}
+              <SettingsButton
+                label={t('admin.readingSubmit')}
+                tone="secondary"
+                onPress={submitReading}
+                disabled={!policy || !isReader || !!reading?.finalized}
+              />
             </View>
           </>
         )}

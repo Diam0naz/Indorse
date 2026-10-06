@@ -18,6 +18,7 @@ import { getBase58Decoder } from '@solana/kit'
 import type { ReactElement } from 'react'
 import { router } from 'expo-router'
 import ProfileScreen from '@/app/(tabs)/rewards'
+import { AuthProvider } from '@/components/auth-provider'
 import AdminSettingsScreen from '@/app/settings/admin'
 
 /* ── Scenario state shared by the mock factories ──────────────────────────── */
@@ -28,6 +29,7 @@ const scenario = vi.hoisted(() => ({
   farm: null as Record<string, unknown> | null,
   policy: null as Record<string, unknown> | null,
   reading: null as Record<string, unknown> | null,
+  oracleSet: null as { k: number; members: string[] } | null,
   balance: null as number | null,
   sendTxs: vi.fn(),
 }))
@@ -134,7 +136,7 @@ vi.mock('@/features/admin/useVerifierSetQuery', () => ({
 }))
 
 vi.mock('@/features/admin/useOracleSetQuery', () => ({
-  useOracleSetQuery: () => ({ set: null, state: 'ready' as const, retry: vi.fn() }),
+  useOracleSetQuery: () => ({ set: scenario.oracleSet, state: 'ready' as const, retry: vi.fn() }),
 }))
 
 vi.mock('@/features/admin/useUsdcBalanceQuery', () => ({
@@ -172,6 +174,12 @@ const ACTIVE_ENDED_POLICY = {
   bump: 255,
 }
 
+/** The same policy after `settle_policy` — terminal, vault still holding the premium. */
+const PAID_OUT_POLICY = {
+  ...ACTIVE_ENDED_POLICY,
+  state: 'paidOut',
+}
+
 const FINALIZED_READING = {
   farm: FARM_ADDR,
   seasonStart: SEASON_START,
@@ -197,8 +205,14 @@ const FARM = {
 }
 
 function renderScreen(ui: ReactElement) {
+  // The profile's logout action reads the app-lock state, so AuthProvider
+  // rides along with the query client for every screen here.
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } })
-  return render(<QueryClientProvider client={client}>{ui}</QueryClientProvider>)
+  return render(
+    <QueryClientProvider client={client}>
+      <AuthProvider>{ui}</AuthProvider>
+    </QueryClientProvider>,
+  )
 }
 
 beforeEach(() => {
@@ -210,6 +224,7 @@ beforeEach(() => {
   scenario.farm = null
   scenario.policy = null
   scenario.reading = null
+  scenario.oracleSet = null
   scenario.balance = null
 })
 
@@ -318,5 +333,85 @@ describe('deliberate confirmation', () => {
     await fireEvent.press(await screen.findByLabelText('Settle policy'))
     expect(scenario.sendTxs).not.toHaveBeenCalled()
     expect(screen.queryByText('Settle the policy?')).toBeNull()
+  })
+
+  it('offers closing only once the policy has reached a terminal state', async () => {
+    scenario.farm = FARM
+    scenario.policy = ACTIVE_ENDED_POLICY
+
+    const screen = await renderScreen(<AdminSettingsScreen />)
+    await screen.findByText('Settle policy')
+
+    // Active: settlement is the only move — closing would refuse on-chain.
+    expect(screen.queryByLabelText('Close settled policy')).toBeNull()
+  })
+
+  it('sweeps a settled policy closed, armed by the instruction name', async () => {
+    scenario.farm = FARM
+    scenario.policy = PAID_OUT_POLICY
+    scenario.reading = FINALIZED_READING
+    scenario.balance = 0
+
+    const screen = await renderScreen(<AdminSettingsScreen />)
+    await fireEvent.press(await screen.findByLabelText('Close settled policy'))
+    expect(await screen.findByText('Close this policy?')).toBeTruthy()
+
+    // Terminal — it releases the policy account, so one tap must not do it.
+    await fireEvent.press(screen.getByLabelText('Confirm'))
+    expect(scenario.sendTxs).not.toHaveBeenCalled()
+    expect(screen.getByText('Close this policy?')).toBeTruthy()
+
+    await fireEvent.changeText(screen.getByLabelText('Type close_settled_policy to confirm'), 'close_settled_policy')
+    await fireEvent.press(screen.getByLabelText('Confirm'))
+    await waitFor(() => expect(scenario.sendTxs).toHaveBeenCalledTimes(1))
+    await waitFor(() => expect(screen.queryByText('Close this policy?')).toBeNull())
+    expect(await screen.findByText('Done.')).toBeTruthy()
+  })
+})
+
+/* ── Weather tally — the app's only path onto the reading account ─────────── */
+
+describe('weather tally', () => {
+  const seedReading = () => {
+    scenario.farm = FARM
+    scenario.policy = ACTIVE_ENDED_POLICY
+    scenario.reading = PENDING_READING
+    scenario.oracleSet = { k: 3, members: [ADMIN_ADDR] }
+  }
+
+  it('posts the season total once a reading is entered and confirmed', async () => {
+    seedReading()
+    const screen = await renderScreen(<AdminSettingsScreen />)
+
+    expect(await screen.findByText('Readings in')).toBeTruthy()
+
+    // An empty field must not read as "0 mm of rain" — that is a plausible
+    // season total, so it stops before any transaction is built.
+    await fireEvent.press(await screen.findByLabelText('Submit reading'))
+    expect(await screen.findByText('Rainfall is required')).toBeTruthy()
+    expect(scenario.sendTxs).not.toHaveBeenCalled()
+
+    await fireEvent.changeText(await screen.findByLabelText('Season total (mm)'), '212.4')
+    await fireEvent.press(screen.getByLabelText('Submit reading'))
+    expect(await screen.findByText('Submit this reading?')).toBeTruthy()
+
+    // One-tap confirm — no value moves, the reading is this wallet's own seat.
+    await fireEvent.press(screen.getByLabelText('Confirm'))
+    await waitFor(() => expect(scenario.sendTxs).toHaveBeenCalledTimes(1))
+    await waitFor(() => expect(screen.queryByText('Submit this reading?')).toBeNull())
+    expect(await screen.findByText('Done.')).toBeTruthy()
+  })
+
+  it('refuses to post when the wallet holds no reader seat', async () => {
+    seedReading()
+    scenario.oracleSet = { k: 3, members: [OTHER_ADDR] }
+
+    const screen = await renderScreen(<AdminSettingsScreen />)
+    expect(await screen.findByText(/no reader seat/)).toBeTruthy()
+
+    // Disabled before the policy's season is even consulted.
+    await fireEvent.press(await screen.findByLabelText('Submit reading'))
+    expect(scenario.sendTxs).not.toHaveBeenCalled()
+    expect(screen.queryByText('Submit this reading?')).toBeNull()
   })
 })
