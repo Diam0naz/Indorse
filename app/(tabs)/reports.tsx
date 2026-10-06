@@ -20,12 +20,17 @@ import { Pressable, ScrollView, Text, View } from 'react-native'
 import Svg, { Line, Rect, Text as SvgText } from 'react-native-svg'
 import { Banner, Card, Chip, EmptyState, ErrorState, SectionLabel, Skeleton } from '@/components/screen-kit'
 import { ConfirmModal } from '@/components/confirm-modal'
+import { PolicyStrip } from '@/components/policy-strip'
 import { UnderwritePolicyModal } from '@/components/underwrite-policy-modal'
+import { useFarmRegistry } from '@/components/farm-registry-provider'
 import { useTheme } from '@/components/theme-provider'
 import { createStyles, fontSizes, fontWeights, radii, spacing, type Colors } from '@/constants/theme'
+import { useOracleSetQuery } from '@/features/admin/useOracleSetQuery'
 import { useFarmQuery } from '@/features/farm/useFarmQuery'
+import type { WeatherReading } from '@/features/insurance/types'
 import { usePolicyQuery } from '@/features/insurance/usePolicyQuery'
 import { useRevokePolicy } from '@/features/insurance/useRevokePolicy'
+import { useRosterPoliciesQuery } from '@/features/insurance/useRosterPolicies'
 import { useWeatherOracleQuery } from '@/features/insurance/useWeatherOracleQuery'
 import { formatTimestamp, shortenAddress } from '@/lib/format'
 import { useT } from '@/lib/i18n'
@@ -48,10 +53,19 @@ export default function WeatherScreen() {
   const policyQuery = usePolicyQuery(farm && farmAddress ? { farmAddress, policyCount: farm.policyCount } : null)
   const policy = policyQuery.policy
 
+  // The roster strip: one pill per chain farm, in registry order. Mounted
+  // before the early returns so the hook count never depends on state.
+  const registry = useFarmRegistry()
+  const rosterPolicies = useRosterPoliciesQuery(registry.farms)
+
   const oracleQuery = useWeatherOracleQuery(
     policy && farmAddress ? { farmAddress, seasonStart: policy.seasonStart } : null,
   )
   const reading = oracleQuery.reading
+  // The oracle set carries the median quorum K — the denominator of the
+  // tally's progress line. Read independently of the policy, and null
+  // (account unreadable/absent) simply drops the denominator.
+  const oracleSetQuery = useOracleSetQuery()
 
   // ── Loading ────────────────────────────────────────────────────────────
   const loading = farmQuery.state === 'loading' || (farm !== null && policyQuery.state === 'loading')
@@ -103,12 +117,19 @@ export default function WeatherScreen() {
       <ScrollView contentContainerStyle={styles.content} showsVerticalScrollIndicator={false}>
         {expiryBanner}
 
+        {/* ── Roster strip — ordered one-pill-per-farm presentation.
+            Tapping selects that farm for the header pill; the detail card
+            below stays bound to the wallet's farm, labelled as such. ── */}
+        <PolicyStrip items={rosterPolicies} currentId={registry.currentId} onSelect={registry.setCurrent} />
+
         {/* ── Policy ────────────────────────────────────────────── */}
         {hasPolicy && policy ? (
           <Card>
             <View style={styles.policyTop}>
               <View style={styles.policyMain}>
-                <SectionLabel>{t('wx.policy')}</SectionLabel>
+                {/* The farm's name travels with the card: after browsing the
+                    strip, "whose policy am I reading" must not be ambiguous. */}
+                <SectionLabel>{`${t('wx.policy')} · ${farm?.name ?? '—'}`}</SectionLabel>
                 <Text style={styles.policyId}>{policyLabel}</Text>
               </View>
               <Chip
@@ -218,6 +239,13 @@ export default function WeatherScreen() {
               <Text style={styles.axisText}>{t('wx.axisMax')}</Text>
             </View>
           </View>
+
+          {/* The contract's own question, answered from the tally — and
+              where the number came from. Needs a policy to compare against;
+              the block itself is silent until an oracle account exists. */}
+          {policy ? (
+            <VerdictBlock triggerMm={triggerMm} reading={reading} quorum={oracleSetQuery.set?.k ?? null} />
+          ) : null}
 
           <View style={styles.oracleFooter}>
             <View>
@@ -377,6 +405,81 @@ function SeasonChartCard({
   )
 }
 
+/* ── Verdict & provenance ───────────────────────────────────────────────────── */
+
+/**
+ * The contract's own question, answered from the tally: does the season's
+ * rainfall sit below the trigger — and where did the number come from.
+ * Official once the quorum froze the median; a clearly-labelled provisional
+ * median while the count is open; nothing at all before the oracle account
+ * exists. Only the frozen figure may settle a policy, so only that one
+ * speaks in facts.
+ */
+function VerdictBlock({
+  triggerMm,
+  reading,
+  quorum,
+}: {
+  triggerMm: number
+  reading: WeatherReading | null
+  /** The oracle set's median quorum K — null while that account is unread. */
+  quorum: number | null
+}) {
+  const { colors } = useTheme()
+  const styles = makeStyles(colors)
+  const t = useT()
+
+  if (!reading) return null
+
+  const votes = reading.readings ?? []
+  // Median of the votes so far — provisional, because only the frozen
+  // figure may settle a policy.
+  const provisionalMm = votes.length > 0 ? median(votes.map((vote) => vote.totalRainfallMm)) / 10 : null
+
+  let tone: string
+  let verdict: string
+  if (reading.finalized) {
+    const rainfallMm = reading.totalRainfallMm / 10
+    const deltaMm = Math.abs(rainfallMm - triggerMm)
+    if (rainfallMm < triggerMm) {
+      tone = colors.danger
+      verdict = t('wx.verdict.below', { mm: deltaMm })
+    } else {
+      tone = colors.sage
+      verdict = t('wx.verdict.above', { mm: deltaMm })
+    }
+  } else if (provisionalMm !== null) {
+    tone = colors.amber
+    verdict = t('wx.verdict.provisional', { mm: provisionalMm })
+  } else {
+    tone = colors.textMuted
+    verdict = t('wx.verdict.noReadings')
+  }
+
+  const caption =
+    votes.length === 0
+      ? null
+      : reading.finalized
+        ? t('wx.provenance.final', { n: votes.length })
+        : quorum !== null
+          ? t('wx.provenance.progress', { n: votes.length, k: quorum })
+          : t('wx.provenance.progressNoK', { n: votes.length })
+
+  return (
+    <View style={styles.verdictBox}>
+      <Text style={[styles.verdictText, { color: tone }]}>{verdict}</Text>
+      {caption ? <Text style={styles.verdictCaption}>{caption}</Text> : null}
+    </View>
+  )
+}
+
+/** Middle value of a numeric list — the tally's provisional median. */
+function median(values: number[]): number {
+  const sorted = [...values].sort((a, b) => a - b)
+  const mid = Math.floor(sorted.length / 2)
+  return sorted.length % 2 === 1 ? sorted[mid] : (sorted[mid - 1] + sorted[mid]) / 2
+}
+
 /* ── Error / Skeleton shells ───────────────────────────────────────────────── */
 
 function WeatherError({ onRetry }: { onRetry: () => void }) {
@@ -506,6 +609,16 @@ const makeStyles = (colors: Colors) =>
     daysLeft: { fontSize: fontSizes['2xl'], fontWeight: fontWeights.bold, color: colors.warningText },
     lastUpdate: { alignItems: 'flex-end' },
     lastUpdateText: { fontFamily: 'monospace', fontSize: fontSizes.sm, color: colors.textMuted },
+
+    verdictBox: {
+      backgroundColor: colors.surface,
+      borderRadius: radii.md,
+      borderWidth: 1,
+      borderColor: colors.border,
+      padding: spacing.md + 2,
+    },
+    verdictText: { fontSize: fontSizes.md, fontWeight: fontWeights.semibold, lineHeight: 19 },
+    verdictCaption: { fontFamily: 'monospace', fontSize: fontSizes.xs, color: colors.textMuted, marginTop: 5 },
 
     legend: { flexDirection: 'row', gap: spacing.md, marginBottom: spacing.md, flexWrap: 'wrap' },
     legendItem: { flexDirection: 'row', alignItems: 'center', gap: 5 },
