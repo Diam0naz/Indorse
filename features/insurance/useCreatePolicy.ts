@@ -26,6 +26,7 @@ import { toWalletInstruction, walletSigner } from '@/features/wallet/mwaTransact
 import { USDC_DEVNET, USDC_MAINNET } from '@/constants/tokens'
 import { getCreatePolicyInstruction } from '@/lib/generated/indorse'
 import { ataPda, buildCreateAtaInstruction, insuranceVaultPda, policyPda, toAddress } from '@/lib/program'
+import { checkFundTier } from '@/lib/funds-tier'
 import { usdcToLamports } from '@/lib/format'
 import { validateCreatePolicy } from './types'
 import type { CreatePolicyInput } from './types'
@@ -39,6 +40,21 @@ export function useCreatePolicy() {
     actionLabel: 'create policy',
     validate: validateCreatePolicy,
     action: async (input, address) => {
+      // Tier gate — asked BEFORE any PDA derivation or instruction build.
+      // The contract has no notion of tiers; an over-limit request never
+      // reaches it (and never prompts the wallet). Fail-closed: a configured
+      // but unreachable gate throws, so no instruction is built on a guess.
+      const verdict = await checkFundTier({
+        amountUsdc: input.coverageUsdc,
+        wallet: address,
+        seeker: process.env.EXPO_PUBLIC_FORCE_SEEKER === 'true',
+      })
+      if (!verdict.allowed) {
+        throw new Error(
+          `Cover of $${input.coverageUsdc} exceeds this device's $${verdict.limitUsdc} tier limit (${verdict.tier ?? 'unknown'}).`,
+        )
+      }
+
       const mint = network.cluster === 'mainnet' ? USDC_MAINNET : USDC_DEVNET
       const [policy, insuranceVault, farmerUsdc] = await Promise.all([
         policyPda(input.farmAddress, input.policyCount),

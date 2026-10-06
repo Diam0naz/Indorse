@@ -25,6 +25,26 @@ export class TransactionError extends Error {
     super(message)
     this.name = 'TransactionError'
   }
+
+  /**
+   * The underlying reason, when it says something the label does not.
+   * "Failed to create policy" alone is a dead end for the farmer — and for
+   * whoever is trying to work out why the wallet bounced back.
+   */
+  get detail(): string | undefined {
+    if (this.cause == null) return undefined
+    const reason = this.cause instanceof Error ? this.cause.message : String(this.cause)
+    const trimmed = reason.trim()
+    if (!trimmed || trimmed === this.message) return undefined
+    return trimmed
+  }
+}
+
+/** Message plus underlying reason, for rendering in an error box. */
+export function describeTransactionError(error: unknown): string {
+  if (!(error instanceof Error)) return String(error)
+  const detail = error instanceof TransactionError ? error.detail : undefined
+  return detail ? `${error.message} — ${detail}` : error.message
 }
 
 /** Options accepted by the `useWalletMutation` factory. */
@@ -68,6 +88,10 @@ export function useWalletMutation<TInput, TResult>(options: UseWalletMutationOpt
         return await action(input, account.address)
       } catch (e) {
         if (e instanceof TransactionError) throw e
+        // The wrapped label is all the UI renders, so without this the real
+        // reason vanishes — and wallet-protocol failures (session, chain,
+        // minContextSlot) are exactly the ones you need to see. Log it.
+        console.error(`[wallet] ${actionLabel} failed:`, e)
         throw new TransactionError(`Failed to ${actionLabel}`, e)
       }
     },

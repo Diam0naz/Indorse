@@ -86,6 +86,15 @@ vi.mock('@/features/insurance/useWeatherOracleQuery', () => ({
   useWeatherOracleQuery: () => ({ reading: null, state: 'ready', retry: vi.fn() }),
 }))
 
+// The one chain read this screen does NOT get for free: leaving it real made
+// "success closes the form" flaky — the mutation's hook-level onSuccess awaits
+// `invalidateQueries(['indorse'])`, which refetches this active query (retry: 1)
+// before the per-call onSuccess hides the modal, so a slow devnet refetch raced
+// the close assertion (~1 run in 3). Mocked like every other chain read here.
+vi.mock('@/features/admin/useOracleSetQuery', () => ({
+  useOracleSetQuery: () => ({ set: null, state: 'ready' as const, retry: vi.fn() }),
+}))
+
 /** Base58 of 32 fixed bytes — round-trips through kit's strict `address()`. */
 const b58 = (fill: number) => getBase58Decoder().decode(new Uint8Array(32).fill(fill))
 
@@ -212,8 +221,8 @@ describe('weather policy setup', () => {
     await fireEvent.changeText(screen.getByLabelText('Premium (USDC)'), '25')
     // The form takes whole millimetres; the program stores mm × 10.
     await fireEvent.changeText(screen.getByLabelText('Rainfall trigger (mm)'), '50')
-    await fireEvent.changeText(screen.getByLabelText('Season start'), '2026-04-01')
-    await fireEvent.changeText(screen.getByLabelText('Season end'), '2026-10-01')
+    await fireEvent.changeText(screen.getByLabelText('Season start'), '2027-04-01')
+    await fireEvent.changeText(screen.getByLabelText('Season end'), '2027-10-01')
     await fireEvent.press(screen.getByTestId('underwrite-submit'))
 
     await waitFor(() => expect(wallet.sendTransactions).toHaveBeenCalledTimes(1))
@@ -226,8 +235,8 @@ describe('weather policy setup', () => {
           coverageUsdc: 500_000_000,
           premiumUsdc: 25_000_000,
           triggerThresholdMm: 500,
-          seasonStart: Math.floor(Date.parse('2026-04-01') / 1000),
-          seasonEnd: Math.floor(Date.parse('2026-10-01') / 1000),
+          seasonStart: Math.floor(Date.parse('2027-04-01') / 1000),
+          seasonEnd: Math.floor(Date.parse('2027-10-01') / 1000),
         }),
       ),
     )

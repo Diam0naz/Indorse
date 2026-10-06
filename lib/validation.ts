@@ -7,6 +7,20 @@
  * copy-pasted lat/lng and finalize boilerplate.
  */
 
+import { address as toAddress } from '@solana/kit'
+
+/** Field-level check for any 32-byte base58 address. */
+export function addressValidationError(value: string): string | undefined {
+  const trimmed = (value ?? '').trim()
+  if (!trimmed) return 'Address is required'
+  try {
+    toAddress(trimmed)
+    return undefined
+  } catch {
+    return 'Not a valid Solana address'
+  }
+}
+
 /** Return the errors object when any field has a message, otherwise null. */
 export function errorOrNull<E extends object>(errors: E): E | null {
   return Object.values(errors).some((v) => typeof v === 'string' && v.length > 0) ? errors : null

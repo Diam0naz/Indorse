@@ -6,6 +6,12 @@
  * stored on-chain as mm × 10) and the season window (ISO dates → unix
  * seconds), then runs `create_policy` through `useCreatePolicy`.
  *
+ * Validation refuses the unreasonable entries before any instruction is
+ * built: a premium above the coverage it buys, a trigger no season could
+ * fall below (1500 mm), a season that has already started, and — when the
+ * farm has policy history — a gap shorter than MIN_SEASON_GAP_DAYS between
+ * the previous season's end and the new start.
+ *
  * Policies live only on-chain, so a guest sees an honest "connect a
  * wallet" note and a disabled submit — no local fallback. On success the
  * provider's invalidation refetches the policy and the Weather screen
@@ -18,7 +24,9 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context'
 import { useTheme } from '@/components/theme-provider'
 import { createStyles, fontSizes, fontWeights, radii, spacing, type Colors } from '@/constants/theme'
 import { useCreatePolicy } from '@/features/insurance/useCreatePolicy'
+import { usePolicyQuery } from '@/features/insurance/usePolicyQuery'
 import { validateCreatePolicy, type PolicyValidationError } from '@/features/insurance/types'
+import { describeTransactionError } from '@/features/wallet/useWalletMutation'
 import { useMobileWalletSetup } from '@/features/wallet/useMobileWalletSetup'
 import { useT } from '@/lib/i18n'
 
@@ -47,6 +55,12 @@ export function UnderwritePolicyModal({ farmAddress, policyCount, onClose }: Und
   const { walletState } = useMobileWalletSetup()
   const connected = walletState === 'connected'
 
+  // The most recent policy (index = policyCount − 1) — its season end is the
+  // anchor for the season-spacing rule. Same cache key as the Weather
+  // screen's read, so this is usually already warm; disabled (and the rule
+  // skipped) on a farm's first policy.
+  const previousPolicy = usePolicyQuery(policyCount > 0 ? { farmAddress, policyCount } : null)
+
   const [crop, setCrop] = useState('')
   const [coverage, setCoverage] = useState('')
   const [premium, setPremium] = useState('')
@@ -70,6 +84,7 @@ export function UnderwritePolicyModal({ farmAddress, policyCount, onClose }: Und
       triggerThresholdMm: Math.round(Number.parseFloat(thresholdMm) * 10),
       seasonStart: dateToUnix(seasonStart),
       seasonEnd: dateToUnix(seasonEnd),
+      previousSeasonEnd: previousPolicy.policy?.seasonEnd ?? null,
     }
     const found = validateCreatePolicy(input)
     setErrors(found ?? EMPTY_ERRORS)
@@ -191,7 +206,7 @@ export function UnderwritePolicyModal({ farmAddress, policyCount, onClose }: Und
 
           {create.isError && create.error ? (
             <View style={styles.errorBox}>
-              <Text style={styles.errorText}>{create.error.message}</Text>
+              <Text style={styles.errorText}>{describeTransactionError(create.error)}</Text>
             </View>
           ) : null}
 
