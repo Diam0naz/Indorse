@@ -18,6 +18,8 @@ export type ChainReport = ScoutReport & { address: string }
 export interface ReportsQueryResult {
   reports: ChainReport[]
   state: 'loading' | 'error' | 'ready'
+  /** True while a background refetch runs — drives the pull-to-refresh spinner. */
+  isFetching: boolean
   retry: () => void
 }
 
@@ -48,6 +50,7 @@ export function useReportsQuery(target: { address: string; reportCount: number }
   return {
     reports: query.data ?? [],
     state: !enabled ? 'ready' : query.isPending ? 'loading' : query.isError ? 'error' : 'ready',
+    isFetching: query.isFetching,
     retry: query.refetch,
   }
 }

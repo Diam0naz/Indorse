@@ -109,5 +109,19 @@ describe('farm/types', () => {
       expect(result?.lat).toBeTruthy()
       expect(result?.lng).toBeTruthy()
     })
+
+    it('accepts absent, fractional and boundary acreage', () => {
+      // Optional local detail — absent must never block registration.
+      expect(validateRegisterFarm({ ...valid, acres: undefined })).toBeNull()
+      expect(validateRegisterFarm({ ...valid, acres: 45.5 })).toBeNull()
+      expect(validateRegisterFarm({ ...valid, acres: 100_000 })).toBeNull()
+    })
+
+    it('refuses non-positive, non-finite and absurd acreage', () => {
+      expect(validateRegisterFarm({ ...valid, acres: 0 })?.acres).toBe('Acres must be greater than 0')
+      expect(validateRegisterFarm({ ...valid, acres: -12 })?.acres).toBe('Acres must be greater than 0')
+      expect(validateRegisterFarm({ ...valid, acres: Number.NaN })?.acres).toBe('Acres must be greater than 0')
+      expect(validateRegisterFarm({ ...valid, acres: 100_001 })?.acres).toBe('Acres must be 100000 or less')
+    })
   })
 })

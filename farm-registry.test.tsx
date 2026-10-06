@@ -12,8 +12,9 @@
  *     existing selection;
  *   - a stale selection falls back to the first farm, so the pill can't
  *     render a ghost while a farm exists;
- *   - FarmChainSync mirrors what `useFarmQuery` reads off the chain into the
- *     registry (source: 'chain', PDA address, report count).
+ *   - FarmChainSync enumerates the wallet's roster (farm_counter → farms
+ *     0…count-1) and mirrors each into the registry (source: 'chain', PDA
+ *     address, report count).
  *
  * The default context (no provider) is also pinned: tests that render
  * components without the provider get `ready: true, farms: []` and no-ops.
@@ -22,20 +23,49 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { Pressable, Text, View } from 'react-native'
 import { fireEvent, render, waitFor } from '@testing-library/react-native'
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import AsyncStorage from '@react-native-async-storage/async-storage'
 import { FarmRegistryProvider, useFarmRegistry } from '@/components/farm-registry-provider'
 import { FarmChainSync } from '@/features/farm/FarmChainSync'
 
 const STORE_KEY = 'indorse.farms.v1'
 
-vi.mock('@/features/farm/useFarmQuery', () => ({
-  useFarmQuery: () => ({
-    farm: { name: 'Chain Farm', latE6: 3000000, lngE6: 4000000, reportCount: 7 },
-    farmAddress: 'Chain111111111111111111111111111111111111',
-    state: 'success',
-    retry: vi.fn(),
-  }),
+const OWNER = 'GVenujqgMJZCvYPKqMmPiAXQp7o3mwQbXw1nSBu3U5Ht'
+const COUNTER_ADDR = 'Counter11111111111111111111111111111111111'
+const FARM0_ADDR = 'Farm11111111111111111111111111111111111111'
+
+vi.mock('@/features/wallet/useMobileWalletSetup', () => ({
+  useMobileWalletSetup: () => ({ address: OWNER, walletState: 'connected' }),
 }))
+
+// The sync's chain reads: the roster counter names the next slot (1 here),
+// so farms 0…0 exist; `fetchAccount` answers by account name.
+vi.mock('@/lib/program', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@/lib/program')>()
+  return {
+    ...actual,
+    useProgramRpc: vi.fn(() => ({})),
+    useRpcUrl: vi.fn(() => 'stub-rpc'),
+    farmCounterPda: vi.fn(async () => COUNTER_ADDR),
+    farmPda: vi.fn(async (_owner: string, index: number) => (index === 0 ? FARM0_ADDR : `Farm${index}111111111111`)),
+    fetchAccount: vi.fn(async (_rpc: unknown, _addr: string, name: string) =>
+      name === 'FarmCounter'
+        ? { owner: OWNER, count: 1, bump: 255 }
+        : {
+            owner: OWNER,
+            name: 'Chain Farm',
+            latE6: 3_000_000,
+            lngE6: 4_000_000,
+            reportCount: 7,
+            batchCount: 0,
+            verifiedReportCount: 0,
+            policyCount: 0,
+            index: 0,
+            bump: 254,
+          },
+    ),
+  }
+})
 
 /** Renders the registry's observable surface + buttons for every mutation. */
 function Probe() {
@@ -170,11 +200,14 @@ describe('farm registry — removal & reset', () => {
 
 describe('farm registry — chain mirroring (FarmChainSync)', () => {
   it('mirrors the on-chain farm as a chain entry with its report count', async () => {
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } })
     const screen = await render(
-      <FarmRegistryProvider>
-        <FarmChainSync />
-        <Probe />
-      </FarmRegistryProvider>,
+      <QueryClientProvider client={client}>
+        <FarmRegistryProvider>
+          <FarmChainSync />
+          <Probe />
+        </FarmRegistryProvider>
+      </QueryClientProvider>,
     )
 
     await waitFor(() => expect(screen.getByTestId('farms').props.children).toBe('Chain Farm:chain:7'))

@@ -502,7 +502,13 @@ describe('profile settings', () => {
   }
 
   it('lists every settings destination', async () => {
-    const screen = await renderProfile(<ProfileScreen />)
+    // The profile now carries the logout action, which reads the app-lock
+    // state — same AuthProvider requirement as the security screen below.
+    const screen = await renderProfile(
+      <AuthProvider>
+        <ProfileScreen />
+      </AuthProvider>,
+    )
 
     // Disconnected: the identity falls back to the guest wallet name.
     await screen.findByText('Guest Wallet', {}, LOAD)

@@ -37,6 +37,11 @@ export interface FarmEntry {
   address?: string
   /** On-chain report count, mirrored from the farm account. */
   reportCount?: number
+  /**
+   * Acreage — device-local: the chain account has no such field, so this
+   * lives only here (absent on entries recorded before the input existed).
+   */
+  acres?: number
   addedAt: number
 }
 
@@ -47,6 +52,8 @@ export interface AddFarmInput {
   source: 'chain' | 'local'
   /** The PDA when registering on-chain — doubles as the stable id. */
   address?: string
+  /** Acres typed at registration — local detail, never sent on-chain. */
+  acres?: number
 }
 
 interface FarmRegistryDoc {
@@ -89,6 +96,7 @@ const DEFAULT_VALUE: FarmRegistryValue = {
     lng: input.lng,
     source: input.source,
     address: input.address,
+    acres: input.acres,
     addedAt: Date.now(),
   }),
   upsertChainFarm: () => {},
@@ -139,13 +147,21 @@ export function FarmRegistryProvider({ children }: PropsWithChildren) {
       lng: input.lng,
       source: input.source,
       address: input.address,
+      acres: input.acres,
       addedAt: Date.now(),
     }
     setFarms((prev) => {
       const existing = prev.findIndex((f) => f.id === entry.id)
       if (existing >= 0) {
         const next = [...prev]
-        next[existing] = { ...next[existing], ...entry, addedAt: next[existing].addedAt }
+        // Acres only ever arrives explicitly: a re-register that omits
+        // the field must not erase what the first pass recorded.
+        next[existing] = {
+          ...next[existing],
+          ...entry,
+          acres: entry.acres ?? next[existing].acres,
+          addedAt: next[existing].addedAt,
+        }
         return next
       }
       return [...prev, entry]

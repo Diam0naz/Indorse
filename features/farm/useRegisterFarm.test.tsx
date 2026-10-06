@@ -49,14 +49,12 @@ beforeEach(() => {
 })
 
 describe('useRegisterFarm preflight', () => {
-  it('rejects with the real reason when the wallet already owns a farm — without opening the wallet', async () => {
+  it('rejects with the real reason when the roster slot is already occupied — without opening the wallet', async () => {
     vi.mocked(fetchAccount).mockResolvedValue({ name: 'Blue Berry Farms' } as never)
     const { result } = await renderHook(() => useRegisterFarm(), { wrapper: makeWrapper() })
 
     await act(async () => {
-      await expect(result.current.mutateAsync(INPUT)).rejects.toThrow(
-        /already owns the on-chain farm "Blue Berry Farms"/,
-      )
+      await expect(result.current.mutateAsync(INPUT)).rejects.toThrow(/already occupied on chain/)
     })
 
     expect(sendTransactions).not.toHaveBeenCalled()
@@ -72,7 +70,7 @@ describe('useRegisterFarm preflight', () => {
       farm = await result.current.mutateAsync(INPUT)
     })
 
-    expect(farm).toBe(await farmPda(OWNER))
+    expect(farm).toBe(await farmPda(OWNER, 0))
     expect(sendTransactions).toHaveBeenCalledTimes(1)
     const [instructions] = sendTransactions.mock.calls[0]
     expect(instructions).toHaveLength(1)

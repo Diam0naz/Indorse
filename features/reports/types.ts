@@ -4,6 +4,7 @@
  */
 
 import {
+  addressValidationError,
   firstError,
   requiredString,
   maxStringLength,
@@ -58,6 +59,16 @@ export function validateSubmitReport(input: SubmitScoutReportInput): SubmitRepor
     photoHash: exactArrayLength(input.photoHash, 32, 'Photo hash'),
   }
   return errorOrNull(errors)
+}
+
+/**
+ * Validates a `reward_report` claim. The payout's destination and amount are
+ * both protocol-pinned and `reward_report` carries no arguments, so the only
+ * thing a caller controls is *which* report is claimed — the rest is read
+ * back from the chain.
+ */
+export function validateRewardReport(report: string): { report?: string } | null {
+  return errorOrNull({ report: addressValidationError(report) })
 }
 
 /**

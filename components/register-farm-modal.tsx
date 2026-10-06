@@ -2,7 +2,8 @@
  * components/register-farm-modal.tsx — Onboarding form for the farm
  *
  * Collects name + GPS coordinates (with a "use my location" button that
- * fills them from one fix), validates with the shared validators and:
+ * fills them from one fix) plus optional acreage — a local detail the
+ * chain never sees — validates with the shared validators and:
  *
  *   - wallet connected → sends `register_farm` through `useRegisterFarm`
  *     and records the PDA-backed farm in the local registry;
@@ -51,6 +52,7 @@ export function RegisterFarmModal({ onClose, onRegistered }: RegisterFarmModalPr
   const [name, setName] = useState('')
   const [lat, setLat] = useState('')
   const [lng, setLng] = useState('')
+  const [acres, setAcres] = useState('')
   const [errors, setErrors] = useState<RegisterFarmValidationError>(EMPTY_ERRORS)
   const [locating, setLocating] = useState(false)
   const [locError, setLocError] = useState<string | null>(null)
@@ -75,7 +77,15 @@ export function RegisterFarmModal({ onClose, onRegistered }: RegisterFarmModalPr
 
   function submit() {
     if (busy) return
-    const input = { name: name.trim(), lat: Number.parseFloat(lat), lng: Number.parseFloat(lng) }
+    const acresText = acres.trim()
+    const input = {
+      name: name.trim(),
+      lat: Number.parseFloat(lat),
+      lng: Number.parseFloat(lng),
+      // Blank means "not recorded": the field is optional enrichment, and
+      // the chain stores no acreage either way.
+      ...(acresText === '' ? {} : { acres: Number.parseFloat(acresText) }),
+    }
     const found = validateRegisterFarm(input)
     setErrors(found ?? EMPTY_ERRORS)
     if (found) return
@@ -166,6 +176,21 @@ export function RegisterFarmModal({ onClose, onRegistered }: RegisterFarmModalPr
             </Text>
           </Pressable>
           {locError ? <Text style={styles.fieldError}>{locError}</Text> : null}
+
+          <View style={styles.acresField}>
+            <Text style={styles.label}>{t('scout.register.acres')}</Text>
+            <TextInput
+              style={[styles.input, errors.acres ? styles.inputError : null]}
+              value={acres}
+              onChangeText={setAcres}
+              placeholder={t('scout.register.phAcres')}
+              placeholderTextColor={colors.textDim}
+              editable={!busy}
+              keyboardType="decimal-pad"
+              accessibilityLabel={t('scout.register.acres')}
+            />
+            {errors.acres ? <Text style={styles.fieldError}>{errors.acres}</Text> : null}
+          </View>
 
           {!connected && (
             <View style={styles.localNote}>
@@ -280,6 +305,9 @@ const makeStyles = (colors: Colors) =>
     },
     coordField: {
       flex: 1,
+    },
+    acresField: {
+      marginTop: spacing.lg,
     },
     locate: {
       marginTop: spacing.md,

@@ -20,14 +20,18 @@ import Svg, { Path } from 'react-native-svg'
 import * as Haptics from 'expo-haptics'
 import { router, type Href } from 'expo-router'
 import { useMobileWalletSetup } from '@/features/wallet'
+import { useLogout } from '@/features/wallet/useLogout'
 import { useWalletBalances } from '@/features/wallet/useWalletBalances'
 import { useConfigQuery } from '@/features/admin/useConfigQuery'
 import { useFarmQuery } from '@/features/farm/useFarmQuery'
+import { useFarmSinceQuery } from '@/features/farm/useFarmSince'
+import { seasonForLocation, seasonKey } from '@/features/farm/season'
 import { useReportsQuery } from '@/features/reports/useReportsQuery'
 import { useEscrowQuery } from '@/features/escrow/useEscrowQuery'
 import { setupProgress } from '@/features/profile/types'
 import { useSetupSignals } from '@/features/profile/useSetupSignals'
 import { Card, Divider, EmptyState, SectionLabel, Skeleton } from '@/components/screen-kit'
+import { useFarmRegistry } from '@/components/farm-registry-provider'
 import { useProfile } from '@/components/profile-provider'
 import { PersonIcon } from '@/components/person-icon'
 import { useSettings } from '@/components/settings-provider'
@@ -88,10 +92,15 @@ export default function ProfileScreen() {
   const farm = farmQuery.farm
   const farmAddress = farmQuery.farmAddress
 
+  // Device-local registry — the only home acreage has (the chain account
+  // stores none), and the source of the profile's total.
+  const registry = useFarmRegistry()
+
   const reportsQuery = useReportsQuery(
     farm && farmAddress ? { address: farmAddress, reportCount: farm.reportCount } : null,
   )
   const escrowQuery = useEscrowQuery(farm && farmAddress ? { farmAddress, batchCount: farm.batchCount } : null)
+  const sinceQuery = useFarmSinceQuery(farmAddress)
   const { balances, loading: balancesLoading } = useWalletBalances(address)
   const skrName = useSkrName(address)
 
@@ -99,6 +108,9 @@ export default function ProfileScreen() {
   const configQuery = useConfigQuery()
   const isAdmin = !!address && configQuery.config?.admin === address
   const settingsItems = isAdmin ? [...SETTINGS, ADMIN_ENTRY] : SETTINGS
+
+  // Log out — disconnect + re-arm the passcode gate (see useLogout).
+  const { logout, busy: loggingOut, available: showLogout } = useLogout()
 
   // Setup wizard: saved profile (identity) + live banner progress.
   const { profile } = useProfile()
@@ -129,9 +141,18 @@ export default function ProfileScreen() {
   // Farm details rows
   const farmName = farm?.name ?? '—'
   const farmLocation = farm ? `${fromE6(farm.latE6).toFixed(4)}° N, ${Math.abs(fromE6(farm.lngE6)).toFixed(4)}° W` : '—'
-  const farmSeason = '—' // not stored on-chain
-  const farmAcres = '—' // not stored on-chain
-  const memberSince = '—' // not stored on-chain
+  // Season is derived from the farm's coordinates + today's date — honest
+  // by construction, and it renders '—' only when the coordinates are
+  // unreadable (the derivation itself always answers).
+  const derivedSeason = farm ? seasonForLocation(fromE6(farm.latE6), fromE6(farm.lngE6)) : null
+  const farmSeason = derivedSeason ? `${t(seasonKey(derivedSeason.name))} ${derivedSeason.year}` : '—'
+  // Total acreage across this device's registry — the chain account has
+  // no acreage field at all, so this is the only home the number has.
+  // Farms registered before the input existed contribute nothing.
+  const acresTotal = Math.round(registry.farms.reduce((sum, entry) => sum + (entry.acres ?? 0), 0) * 100) / 100
+  const farmAcres = acresTotal > 0 ? `${acresTotal} ac` : '—'
+  // Oldest signature touching the farm PDA = its registration moment.
+  const memberSince = sinceQuery.since ? formatShortDate(sinceQuery.since) : '—'
 
   // Activity: latest 5 reports + escrow event
   const activityRows: { label: string; detail: string; time: string; color: string }[] = []
@@ -378,6 +399,26 @@ export default function ProfileScreen() {
             )
           })}
         </Card>
+
+        {/* ── Log out — ends the session entirely: the wallet disconnects
+            and the passcode gate re-arms. Hidden only when there is
+            nothing to end. ── */}
+        {showLogout ? (
+          <Pressable
+            style={[styles.logoutBtn, loggingOut && styles.logoutBtnBusy]}
+            onPress={() => {
+              Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium)
+              void logout()
+            }}
+            accessibilityRole="button"
+            accessibilityLabel={t('profile.logout')}
+            accessibilityState={{ busy: loggingOut }}
+            disabled={loggingOut}
+          >
+            <FontAwesome5 name="door-open" size={15} color={colors.danger} />
+            <Text style={styles.logoutText}>{t('profile.logout')}</Text>
+          </Pressable>
+        ) : null}
       </ScrollView>
     </View>
   )
@@ -592,6 +633,19 @@ const makeStyles = (colors: Colors) =>
     walletActionMuted: { backgroundColor: 'transparent', borderColor: colors.borderMid },
     walletActionText: { fontSize: fontSizes.base, fontWeight: fontWeights.semibold, color: colors.surface },
     walletActionTextMuted: { color: colors.textSecondary },
+
+    logoutBtn: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      justifyContent: 'center',
+      gap: spacing.sm,
+      borderWidth: 1,
+      borderColor: colors.danger,
+      borderRadius: radii.lg,
+      paddingVertical: spacing.md,
+    },
+    logoutBtnBusy: { opacity: 0.6 },
+    logoutText: { fontSize: fontSizes.base, fontWeight: fontWeights.semibold, color: colors.danger },
 
     detailRow: {
       flexDirection: 'row',
