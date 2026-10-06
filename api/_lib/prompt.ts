@@ -51,6 +51,13 @@ export const VISION_PROMPT = [
   '- "notes" is one or two plain sentences, at most 200 characters, that a field scout can act on:',
   'what is visible and where. Do not name pesticide, fungicide or fertilizer products, brands or',
   'dosages — describe the symptom and its extent only.',
+  '- "commonName" is the plant the photo shows, in plain English (e.g. "Maize", "Tomato"), and',
+  '"botanicalName" its Latin binomial (e.g. "Zea mays", "Solanum lycopersicum"). Return "" for',
+  'both when the plant cannot be identified or no plant is visible.',
+  '- "pathogenName" is the scientific name of the causal agent behind the diagnosis — fungus,',
+  'bacterium, virus or pest — e.g. "Ustilago maydis" for Corn Smut or "Cercospora zeae-maydis" for',
+  'Gray Leaf Spot. Return "" when the finding is abiotic (drought, nutrient deficiency, physical',
+  'damage) or the agent itself cannot be identified.',
   '- Return only the structured verdict; no prose, no markdown.',
 ].join('\n')
 
@@ -80,7 +87,19 @@ export const EVENT_DIAGNOSIS_SCHEMA = {
       type: 'string',
       description: 'One or two plain sentences, at most 200 characters, no product names or doses.',
     },
+    commonName: {
+      type: 'string',
+      description: 'Plain-English common name of the plant shown, e.g. "Maize"; empty when not identifiable.',
+    },
+    botanicalName: {
+      type: 'string',
+      description: 'Latin binomial of the plant shown, e.g. "Zea mays"; empty when not identifiable.',
+    },
+    pathogenName: {
+      type: 'string',
+      description: 'Scientific name of the causal agent, e.g. "Ustilago maydis"; empty when abiotic or unknown.',
+    },
   },
-  required: ['label', 'confidence', 'severity', 'notes'],
+  required: ['label', 'confidence', 'severity', 'notes', 'commonName', 'botanicalName', 'pathogenName'],
   additionalProperties: false,
 } as const

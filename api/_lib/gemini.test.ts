@@ -246,8 +246,20 @@ describe('toGeminiSchema / GEMINI_VERDICT_SCHEMA', () => {
           type: 'STRING',
           description: EVENT_DIAGNOSIS_SCHEMA.properties.notes.description,
         },
+        commonName: {
+          type: 'STRING',
+          description: EVENT_DIAGNOSIS_SCHEMA.properties.commonName.description,
+        },
+        botanicalName: {
+          type: 'STRING',
+          description: EVENT_DIAGNOSIS_SCHEMA.properties.botanicalName.description,
+        },
+        pathogenName: {
+          type: 'STRING',
+          description: EVENT_DIAGNOSIS_SCHEMA.properties.pathogenName.description,
+        },
       },
-      required: ['label', 'confidence', 'severity', 'notes'],
+      required: ['label', 'confidence', 'severity', 'notes', 'commonName', 'botanicalName', 'pathogenName'],
     })
   })
 

@@ -48,7 +48,7 @@ export const GEMINI_RETRY_DELAY_MS = 500
 /** Extra attempts after the first when Gemini answers 503/429. */
 export const GEMINI_MAX_RETRIES = 2
 
-const GEMINI_BASE_URL = 'https://generativelanguage.googleapis.com/v1beta/models'
+export const GEMINI_BASE_URL = 'https://generativelanguage.googleapis.com/v1beta/models'
 
 /** The JSON-schema subset Gemini's `Schema` accepts, in its dialect. */
 interface GeminiSchemaNode {
@@ -186,7 +186,7 @@ export async function classifyWithGemini(
  * model at random, so a couple of quick retries turn most of them into a
  * verdict instead of a 502 to the app. Non-transient failures return at once.
  */
-async function sendWithRetry(send: () => Promise<Response>, retryDelayMs: number): Promise<Response> {
+export async function sendWithRetry(send: () => Promise<Response>, retryDelayMs: number): Promise<Response> {
   for (let attempt = 0; ; attempt += 1) {
     const response = await send()
     const transient = response.status === 503 || response.status === 429
@@ -196,7 +196,7 @@ async function sendWithRetry(send: () => Promise<Response>, retryDelayMs: number
 }
 
 /** Read the verdict text out of a buffered `generateContent` payload. */
-function extractText(payload: unknown): { text: string; blocked: string | null; incomplete: boolean } {
+export function extractText(payload: unknown): { text: string; blocked: string | null; incomplete: boolean } {
   if (!payload || typeof payload !== 'object') return { text: '', blocked: null, incomplete: false }
   const body = payload as GeminiPayload
 

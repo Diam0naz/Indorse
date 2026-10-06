@@ -90,7 +90,15 @@ describe('classifyWithOpenAI', () => {
       strict: true,
       schema: EVENT_DIAGNOSIS_SCHEMA,
     })
-    expect(EVENT_DIAGNOSIS_SCHEMA.required).toEqual(['label', 'confidence', 'severity', 'notes'])
+    expect(EVENT_DIAGNOSIS_SCHEMA.required).toEqual([
+      'label',
+      'confidence',
+      'severity',
+      'notes',
+      'commonName',
+      'botanicalName',
+      'pathogenName',
+    ])
     expect(EVENT_DIAGNOSIS_SCHEMA.additionalProperties).toBe(false)
     expect(EVENT_DIAGNOSIS_SCHEMA.properties.severity.enum).toEqual(['high', 'medium', 'low', 'none'])
 

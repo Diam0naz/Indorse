@@ -71,6 +71,12 @@ export function collectImages(body: Record<string, unknown>): CollectedImages {
 export interface ProxyRequest {
   method?: string
   body?: unknown
+  /**
+   * Client address when the host knows it (`serve-api` passes the socket
+   * peer). Used only for rate limiting — handlers must tolerate its absence
+   * on hosts that do not expose it.
+   */
+  ip?: string
 }
 
 export interface ProxyResponse {
