@@ -3,6 +3,7 @@ import startHandler from '@/api/email/start'
 import verifyHandler from '@/api/email/verify'
 import { RESEND_ENDPOINT } from '@/api/_lib/email'
 import { EmailOtpStore, emailOtpStore, normalizeEmail, otpKey } from '@/api/_lib/otp-store'
+import { darkTokens } from '@/constants/theme'
 
 function mockRes() {
   const res = {
@@ -164,6 +165,26 @@ describe('POST /api/email/start', () => {
     expect(email.to).toBe(EMAIL)
     expect(email.subject).toBe('Your Indorse verification code')
     expect(codeFromLastEmail()).toMatch(/^\d{6}$/)
+  })
+
+  it('themes the html body with the app palette', async () => {
+    stubFetch()
+    const res = await start()
+    expect(res.statusCode).toBe(200)
+
+    const html = lastEmail().html ?? ''
+    // "Warm Charcoal", exactly as constants/theme.ts declares it — the email
+    // mirrors darkTokens server-side, and this is what keeps the mirror true.
+    expect(html).toContain(darkTokens.background)
+    expect(html).toContain(darkTokens.surface)
+    expect(html).toContain(darkTokens.surfaceAlt)
+    expect(html).toContain(darkTokens.border)
+    expect(html).toContain(darkTokens.primary)
+    expect(html).toContain(darkTokens.text)
+    expect(html).toContain(darkTokens.textMuted)
+    // The code sits in the themed well, and the message stays link-free.
+    expect(html).toContain(codeFromLastEmail())
+    expect(html).not.toMatch(/href=/i)
   })
 
   it('maps a provider auth failure to a 502 without leaking internals', async () => {
