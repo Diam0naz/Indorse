@@ -23,14 +23,16 @@
     "test:watch": "vitest",
     "web": "expo start --web"
   },
-  "displayName": "Expo Kit Minimal example",
-  "description": "A minimal template for building a Solana mobile app with Expo, React Native, and Solana Kit.",
+  "displayName": "indorse",
+  "description": "A Solana mobile dApp for decentralised farm scouting and parametric weather crop insurance, built with Expo, React Native, and Solana Kit.",
   "usecase": "Mobile",
   "keywords": [
     "expo",
     "mobile-wallet-adapter",
     "react-native",
-    "solana-kit"
+    "solana-kit",
+    "agriculture",
+    "parametric-insurance"
   ],
   "main": "./index.js",
   "version": "1.0.0",

@@ -92,8 +92,9 @@ app ──▶ POST /api/siws/nonce   ──▶ server issues the whole payload, 
 The app side is `features/wallet/useDeviceVerification.ts`; the verdict is
 rendered as the device-verified mark in Settings → Wallet & Security.
 
-## Not wired yet (deliberately)
+## Wired
 
-Full wiring is gated on the native rebuild (`expo-camera`, `expo-location`) and
-the devnet program deploy. When ready, the label flows into the `aiLabel` field
-of `submit_scout_report` via `useSubmitReport` — no changes to this proxy.
+The label produced here is flowed into the `aiLabel` field of
+`submit_scout_report` by `useSubmitReport` — the 32-char / 32-byte cap in
+`features/ai/types.ts` exists precisely to keep the proxy's verdict legal for
+the chain. Nothing about this proxy changes as a result.

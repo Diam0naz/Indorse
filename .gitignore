@@ -59,6 +59,15 @@ app-example
 # generated video/motion outputs (dated artifact dirs)
 brag-output-*/
 
+# HyperFrames deck build caches — thumbnails and preview HTML are regenerated
+# by `hyperframes preview` / `snapshot` on every run
+deck/.thumbnails/
+deck/.hyperframes/
+
+# nested Anchor workspace install (the root node_modules/ rule doesn't reach
+# two levels deep) — regenerable from programs/indorse_program/package.json
+programs/indorse_program/node_modules/
+
 # Anchor / Solana program build (target/deploy holds the program keypair,
 # test-ledger holds validator/faucet keypairs — never commit those)
 programs/**/target/
