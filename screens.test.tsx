@@ -223,6 +223,25 @@ vi.mock('@/features/admin/useOracleSetQuery', () => ({
   useOracleSetQuery: () => ({ set: oracleSetScenario.set, state: 'ready' as const, retry: vi.fn() }),
 }))
 
+/**
+ * The Discover card reads the farm directory over HTTP — stubbed at the
+ * hook layer like every other screen read: empty by default (the card
+ * hides and nothing else changes), populated only by the discovery tests.
+ */
+const directoryScenario = vi.hoisted(() => ({
+  farms: [] as unknown[],
+  state: 'ready' as 'loading' | 'error' | 'ready',
+  retry: vi.fn(),
+}))
+
+vi.mock('@/features/farm/useDirectoryQuery', () => ({
+  useDirectoryQuery: () => ({
+    farms: directoryScenario.farms,
+    state: directoryScenario.state,
+    retry: directoryScenario.retry,
+  }),
+}))
+
 /** Simulated fetches resolve in 450–550ms; give each assertion room. */
 const LOAD = { timeout: 3000 }
 
@@ -265,10 +284,18 @@ beforeEach(async () => {
   await AsyncStorage.removeItem('indorse.farms.v1')
   // The weather scenario's oracle set (the tally denominator) resets too.
   oracleSetScenario.set = null
+  // And the directory — discovery must not leak between tests.
+  directoryScenario.farms = []
+  directoryScenario.state = 'ready'
+  directoryScenario.retry.mockClear()
 })
 
 /** Demo policy fixture: 180 mm trigger, $96k cover, 30 days left of season. */
 const POLICY_ADDRESS = 'GVenujqgMJZCvYPKqMmPiAXQp7o3mwQbXw1nSBu3U5Ht'
+
+/** The featured farm's PDA (the useFarmQuery mock) and a foreign farm. */
+const OWN_ADDRESS = 'FARMqVz2s1hQM4aq2GPJ5dJEG8vN3yXkpRCn1oS9Ku2'
+const OTHER_ADDRESS = 'DiscoverFarm1111111111111111111111111111111'
 
 function seasonPolicy() {
   const now = Math.floor(Date.now() / 1000)
@@ -741,6 +768,172 @@ describe('screen redesign', () => {
       const doc = JSON.parse((await AsyncStorage.getItem('indorse.scout.v1')) ?? '{}')
       expect(doc.events).toHaveLength(0)
     })
+  })
+
+  /* ── Cross-farm discovery ───────────────────────────────────── */
+
+  it('discovers other farms, arms the scout target from the sheet, and stands down from the badge', async () => {
+    scoutSetup.address = POLICY_ADDRESS
+    scoutSetup.farm = { name: 'Green Valley', reportCount: 0 }
+    // The device's own chain farm is in the registry — and also listed in
+    // the directory below. The card must drop it: own farms live in the
+    // switcher, never in discovery.
+    await AsyncStorage.setItem(
+      'indorse.farms.v1',
+      JSON.stringify({
+        farms: [
+          {
+            id: 'chain-0',
+            name: 'Green Valley',
+            lat: 46.8821,
+            lng: -98.7023,
+            source: 'chain',
+            address: OWN_ADDRESS,
+            reportCount: 0,
+            addedAt: 1,
+          },
+        ],
+        currentId: 'chain-0',
+      }),
+    )
+    const ownListing = {
+      address: OWN_ADDRESS,
+      name: 'Own Farm Listing',
+      lat: 46.8821,
+      lng: -98.7023,
+      owner: 'x',
+      reportCount: 0,
+      verifiedReportCount: 0,
+      batchCount: 0,
+      policyCount: 0,
+      updatedAt: 1,
+    }
+    const other = {
+      address: OTHER_ADDRESS,
+      // At the device position — the mocked fix pins its distance to 0 m.
+      name: 'Rowan Ridge',
+      lat: 46.8821,
+      lng: -98.7023,
+      owner: 'y',
+      reportCount: 3,
+      verifiedReportCount: 1,
+      batchCount: 0,
+      policyCount: 0,
+      updatedAt: 1,
+    }
+    directoryScenario.farms = [ownListing, other]
+
+    const screen = await renderWithProviders(<ScoutingScreen />)
+
+    // The foreign farm lists with its decision-ready facts…
+    expect(await screen.findByText('Rowan Ridge', {}, LOAD)).toBeTruthy()
+    expect(screen.getByText('33%')).toBeTruthy()
+    expect(await screen.findByText('0 m · 1 of 3 verified', {}, LOAD)).toBeTruthy()
+    expect(screen.getByText(/2 awaiting verification/)).toBeTruthy()
+    // …and the roster's own farm never does, once the registry hydrates.
+    await waitFor(() => expect(screen.queryByText('Own Farm Listing')).toBeNull(), LOAD)
+
+    // The sheet carries the chain-public detail the card promised.
+    await fireEvent.press(screen.getByTestId(`discover-row-${OTHER_ADDRESS}`))
+    await screen.findByText('46.88210, -98.70230', {}, LOAD)
+    expect(screen.getByText(OTHER_ADDRESS)).toBeTruthy()
+    expect(screen.getByText('Distance')).toBeTruthy()
+    expect(screen.getByText('0 m')).toBeTruthy()
+    expect(screen.getByText('Reports')).toBeTruthy()
+    expect(screen.getByText('3')).toBeTruthy()
+    expect(screen.getByText('Verified')).toBeTruthy()
+    expect(screen.getByText('1')).toBeTruthy()
+
+    // Arming the target closes the sheet and rides the dock badge…
+    await fireEvent.press(screen.getByTestId('discover-scout'))
+    expect(screen.queryByTestId('discover-scout')).toBeNull()
+    await screen.findByText('Scouting Rowan Ridge', {}, LOAD)
+
+    // …and the badge is the way back: tap it to scout your own farm again.
+    await fireEvent.press(screen.getByTestId('scout-target-badge'))
+    await waitFor(() => expect(screen.queryByTestId('scout-target-badge')).toBeNull(), LOAD)
+  })
+
+  it('states a directory failure honestly without breaking the rest of the scout screen', async () => {
+    scoutSetup.address = POLICY_ADDRESS
+    scoutSetup.farm = { name: 'Green Valley', reportCount: 0 }
+    directoryScenario.state = 'error'
+
+    const screen = await renderWithProviders(<ScoutingScreen />)
+
+    await screen.findByText('Directory unreachable', {}, LOAD)
+    expect(screen.getByText('The farm directory could not load. Your own scouting is unaffected.')).toBeTruthy()
+    // The dashboard around it keeps working — and the retry is wired.
+    expect(screen.getByText('Field Status')).toBeTruthy()
+    expect(screen.getByText('Scouting Log · 0')).toBeTruthy()
+    await fireEvent.press(screen.getByText('Retry'))
+    expect(directoryScenario.retry).toHaveBeenCalled()
+  })
+
+  it('anchors a queued capture to the farm it was stamped with, not the featured one', async () => {
+    scoutSetup.address = POLICY_ADDRESS
+    scoutSetup.farm = { name: 'Green Valley', reportCount: 0 }
+    const common = {
+      date: 'Oct 4',
+      crop: '—',
+      diagnosis: 'Late blight',
+      confidence: 0.91,
+      severity: 'high',
+      txSig: 'ab'.repeat(32),
+      notes: 'Lesions on lower leaves.',
+      images: 1,
+      lat: 46.8821,
+      lng: -98.7023,
+      anchorStatus: 'queued',
+    }
+    // Captured while scouting the foreign farm — stamped at capture time.
+    const stamped = {
+      ...common,
+      id: 'scStamped',
+      field: 'Rowan Ridge',
+      anchor: {
+        photoHashHex: 'ab'.repeat(32),
+        uri: 'indorse://scout/1.jpg',
+        aiLabel: 'Late blight',
+        photoUris: [],
+        farmAddress: OTHER_ADDRESS,
+      },
+    }
+    // An ordinary capture from before discovery — no farm in its payload.
+    const plain = {
+      ...common,
+      id: 'scPlain',
+      field: 'Unregistered area',
+      anchor: { photoHashHex: 'cd'.repeat(32), uri: 'indorse://scout/2.jpg', aiLabel: 'Early blight', photoUris: [] },
+    }
+    await AsyncStorage.setItem('indorse.scout.v1', JSON.stringify({ events: [stamped, plain] }))
+    submitScenario.mutateAsync
+      .mockImplementationOnce(async () => 'ReportAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA')
+      .mockImplementationOnce(async () => 'ReportBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB')
+
+    await renderWithProviders(<ScoutingScreen />)
+
+    // Both rows anchor on the first pass, in capture order — but each to
+    // its own farm: the stamp wins for the stamped capture.
+    await waitFor(() => expect(submitScenario.mutateAsync).toHaveBeenCalledTimes(2), LOAD)
+    expect(submitScenario.mutateAsync).toHaveBeenNthCalledWith(
+      1,
+      expect.objectContaining({ farmAddress: OTHER_ADDRESS }),
+    )
+    expect(submitScenario.mutateAsync).toHaveBeenNthCalledWith(2, expect.objectContaining({ farmAddress: OWN_ADDRESS }))
+
+    // Each row keeps the identity it was captured under — the target's
+    // name for the stamped capture, the featured farm's for the other.
+    await waitFor(async () => {
+      const doc = JSON.parse((await AsyncStorage.getItem('indorse.scout.v1')) ?? '{}') as {
+        events: { field: string; anchorStatus: string }[]
+      }
+      expect(doc.events).toHaveLength(2)
+      const fields = doc.events.map((event) => event.field)
+      expect(fields).toContain('Rowan Ridge')
+      expect(fields).toContain('Green Valley')
+      expect(doc.events.every((event) => event.anchorStatus === 'anchored')).toBe(true)
+    }, LOAD)
   })
 })
 

@@ -80,6 +80,14 @@ export interface ScoutAnchorPayload {
   aiLabel: string
   /** Local file URIs of the real shots — best-effort evidence for re-hashing. */
   photoUris: string[]
+  /**
+   * Set when the capture was taken while scouting a specific farm (the
+   * cross-farm target): the flush anchors there instead of the featured
+   * farm, and the row keeps the name it was captured under. Absent on
+   * ordinary captures, which anchor to whatever farm is featured when the
+   * wallet next comes up — exactly as before.
+   */
+  farmAddress?: string
 }
 
 export const SCOUT_EVENTS: ScoutEvent[] = [

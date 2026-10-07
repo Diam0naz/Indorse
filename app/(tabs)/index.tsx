@@ -25,8 +25,8 @@
  * capture order — or parks it as `failed` for an explicit retry.
  */
 
-import { useEffect, useRef, useState } from 'react'
-import { Animated, Easing, Pressable, RefreshControl, ScrollView, Text, View } from 'react-native'
+import { useEffect, useMemo, useRef, useState } from 'react'
+import { Animated, Easing, Modal, Pressable, RefreshControl, ScrollView, Text, View } from 'react-native'
 import Svg, { Circle, Path } from 'react-native-svg'
 import * as Haptics from 'expo-haptics'
 import { CameraOverlay } from '@/components/camera-overlay'
@@ -41,6 +41,8 @@ import {
   Chip,
   EmptyState,
   ErrorState,
+  LabelValue,
+  Mono,
   RiskBar,
   SectionLabel,
   SeverityPill,
@@ -51,11 +53,14 @@ import { createStyles, fieldStatusFor, fontSizes, fontWeights, radii, spacing, t
 import type { ScoutEvent, Field } from '@/constants/data'
 import { useMobileWalletSetup } from '@/features/wallet/useMobileWalletSetup'
 import { useFarmQuery } from '@/features/farm/useFarmQuery'
+import { useDirectoryQuery } from '@/features/farm/useDirectoryQuery'
+import { deriveDiscovery, formatDistance, type DiscoveryFarm } from '@/features/farm/directory'
 import { useReportsQuery } from '@/features/reports/useReportsQuery'
 import { useRewardReport } from '@/features/reports/useRewardReport'
 import { useSubmitReport } from '@/features/reports/useSubmitReport'
 import { mergeLogEvents, reportToScoutEvent } from '@/features/reports/chain-events'
 import { buildFieldsFromReports } from '@/features/scout/fields'
+import { getCurrentCoords } from '@/features/scout/location'
 import { sha256HexToBytes } from '@/features/scout/photo'
 import { useT, type MessageKey } from '@/lib/i18n'
 
@@ -99,6 +104,35 @@ export default function ScoutingScreen() {
   // Claiming is permissionless — the program pins the payout to the report's
   // own reporter — so the row offers it to whoever is looking at it.
   const claimReward = useRewardReport()
+
+  /* ── Cross-farm discovery ───────────────────────────────────
+   * The directory lists OTHER farms (the server re-verifies every row
+   * against the chain before storing it). `scoutTarget` is the farm NEW
+   * captures anchor to — null means own/featured farm, exactly the
+   * behaviour that predates discovery. Distances ask for one position
+   * fix; without permission the card still lists, just distance-free. */
+  const directoryQuery = useDirectoryQuery()
+  const [scoutTarget, setScoutTarget] = useState<{ address: string; name: string } | null>(null)
+  const [discoverySelected, setDiscoverySelected] = useState<DiscoveryFarm | null>(null)
+  const [deviceCoords, setDeviceCoords] = useState<{ lat: number; lng: number } | null>(null)
+  const ownAddresses = useMemo(
+    () => registry.farms.map((entry) => entry.address).filter((addr): addr is string => !!addr),
+    [registry.farms],
+  )
+  const discoveryRows = useMemo(
+    () => deriveDiscovery(directoryQuery.farms, { excludeAddresses: ownAddresses, origin: deviceCoords }),
+    [directoryQuery.farms, ownAddresses, deviceCoords],
+  )
+  useEffect(() => {
+    if (deviceCoords || discoveryRows.length === 0) return
+    let cancelled = false
+    void getCurrentCoords().then((point) => {
+      if (!cancelled && point) setDeviceCoords({ lat: point.lat, lng: point.lng })
+    })
+    return () => {
+      cancelled = true
+    }
+  }, [deviceCoords, discoveryRows])
 
   const connected = !!address
   const onChain = connected && farmQuery.state === 'ready' && !!farm
@@ -173,6 +207,20 @@ export default function ScoutingScreen() {
     })
   }
 
+  /**
+   * The Discover sheet's primary action: arm the scout target so new
+   * captures anchor to that farm — or stand down when it is the target
+   * already. This is the only thing that changes where captures anchor;
+   * the featured farm keeps owning everything else on this screen.
+   */
+  function handleScoutTarget() {
+    if (!discoverySelected) return
+    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium)
+    const already = scoutTarget?.address === discoverySelected.address
+    setScoutTarget(already ? null : { address: discoverySelected.address, name: discoverySelected.name })
+    setDiscoverySelected(null)
+  }
+
   /* ── Outbox flush ────────────────────────────────────────────────────
    * Queued captures anchor themselves as soon as there is a farm to anchor
    * them to — one wallet transaction per row, in capture order. A failed
@@ -188,29 +236,42 @@ export default function ScoutingScreen() {
   const farmName = farm?.name ?? null
 
   useEffect(() => {
-    if (!onChain || !farmAddress || !farmName || queuedCount === 0 || flushingRef.current) return
+    if (!onChain || queuedCount === 0 || flushingRef.current) return
     const queue = log.events.filter((event) => event.anchorStatus === 'queued' && event.anchor)
     flushingRef.current = true
     void (async () => {
+      // Progress — not attempt — drives the tick: a row with no farm to
+      // anchor to stays queued without spinning the effect into a loop.
+      let progressed = false
       for (const event of queue) {
         const payload = event.anchor
         if (!payload) continue
+        // A capture stamped with its scout target anchors THERE (and keeps
+        // the name it was captured under); an ordinary capture anchors to
+        // the featured farm, exactly as before.
+        const targetAddress = payload.farmAddress ?? farmAddress
+        if (!targetAddress) continue
         try {
           const reportAddress = await mutateAsync({
-            farmAddress,
+            farmAddress: targetAddress,
             photoHash: sha256HexToBytes(payload.photoHashHex),
             uri: payload.uri,
             lat: event.lat,
             lng: event.lng,
             aiLabel: payload.aiLabel,
           })
-          log.markAnchored(event.id, { reportAddress, field: farmName })
+          log.markAnchored(event.id, {
+            reportAddress,
+            field: payload.farmAddress ? event.field : (farmName ?? event.field),
+          })
+          progressed = true
         } catch {
           log.markFailed(event.id)
+          progressed = true
         }
       }
       flushingRef.current = false
-      setFlushTick((tick) => tick + 1)
+      if (progressed) setFlushTick((tick) => tick + 1)
     })()
   }, [onChain, farmAddress, farmName, queuedCount, flushTick, log, mutateAsync])
 
@@ -246,7 +307,8 @@ export default function ScoutingScreen() {
             onClose={() => setCameraOpen(false)}
             onSubmit={handleNewEvent}
             farmAddress={null}
-            farmName={null}
+            farmName={scoutTarget?.name ?? null}
+            queuedFarmAddress={scoutTarget?.address ?? null}
           />
         )}
 
@@ -347,6 +409,64 @@ export default function ScoutingScreen() {
             </View>
           )}
         </View>
+
+        {/* ── Cross-farm discovery — other farms, scouted from here ── */}
+        {/* Hidden while there is nothing to discover (an empty directory is
+            not an error) and surfaced honestly when the directory itself
+            fails — the rest of the screen keeps working either way. */}
+        {directoryQuery.state === 'error' ? (
+          <View style={styles.block}>
+            <SectionLabel>{t('discover.title')}</SectionLabel>
+            <ErrorState
+              title={t('discover.error')}
+              message={t('discover.errorBody')}
+              retryLabel={t('discover.retry')}
+              onRetry={directoryQuery.retry}
+            />
+          </View>
+        ) : discoveryRows.length > 0 ? (
+          <View style={styles.block}>
+            <SectionLabel>{t('discover.title')}</SectionLabel>
+            <Text style={styles.discoverLead}>{t('discover.lead')}</Text>
+            <View style={styles.stack}>
+              {discoveryRows.map((row) => (
+                <Pressable
+                  key={row.address}
+                  testID={`discover-row-${row.address}`}
+                  onPress={() => {
+                    Haptics.selectionAsync()
+                    setDiscoverySelected(row)
+                  }}
+                  style={[styles.discoverCard, scoutTarget?.address === row.address && styles.discoverCardTarget]}
+                >
+                  <View style={styles.discoverTop}>
+                    <Text style={styles.discoverName} numberOfLines={1}>
+                      {row.name}
+                    </Text>
+                    {/* Provenance only claims itself once somebody reported. */}
+                    {row.reportCount > 0 ? (
+                      <Chip
+                        label={`${row.score ?? 0}%`}
+                        color={row.score === 100 ? colors.sage : colors.amber}
+                        filled
+                      />
+                    ) : null}
+                  </View>
+                  {/* Distance only claims itself once a position fix exists. */}
+                  <Text style={styles.discoverMeta}>
+                    {row.km !== undefined ? `${formatDistance(row.km)} · ` : ''}
+                    {row.reportCount === 0
+                      ? t('discover.noReports')
+                      : t('discover.score', { v: row.verifiedReportCount, r: row.reportCount })}
+                  </Text>
+                  {row.pending > 0 ? (
+                    <Text style={styles.discoverPending}>{t('discover.pending', { n: row.pending })}</Text>
+                  ) : null}
+                </Pressable>
+              ))}
+            </View>
+          </View>
+        ) : null}
 
         {/* ── Scouting log ──────────────────────────────────────── */}
         <View
@@ -572,6 +692,25 @@ export default function ScoutingScreen() {
           state, so this is what makes it reachable for everyone. `box-none`
           keeps the gap between the circle and the content scrollable. */}
       <View style={styles.fabStack} pointerEvents="box-none" testID="scout-actions">
+        {/* The active scout target rides above the fold — always visible
+            while set, and tapping it stands down: new captures return to
+            the featured farm (captures already queued keep the farm they    were stamped with). */}
+        {scoutTarget && (
+          <Pressable
+            testID="scout-target-badge"
+            accessibilityLabel={t('discover.backToOwn')}
+            onPress={() => {
+              Haptics.selectionAsync()
+              setScoutTarget(null)
+            }}
+            style={styles.targetBadge}
+          >
+            <Text style={styles.targetBadgeText} numberOfLines={1}>
+              {t('discover.scouting', { name: scoutTarget.name })}
+            </Text>
+            <Text style={styles.targetBadgeClose}>✕</Text>
+          </Pressable>
+        )}
         <Animated.View style={styles.fabActions} pointerEvents={actionsOpen ? 'auto' : 'none'}>
           <Animated.View style={{ opacity: scoutReveal, transform: [{ translateY: scoutRise }] }}>
             <Pressable
@@ -635,12 +774,66 @@ export default function ScoutingScreen() {
         <CameraOverlay
           onClose={() => setCameraOpen(false)}
           onSubmit={handleNewEvent}
-          farmAddress={farm && onChain ? farmQuery.farmAddress : null}
-          farmName={farm?.name ?? null}
+          // A set scout target overrides the featured farm for NEW captures —
+          // the row goes straight on-chain there when the wallet is up, and
+          // the outbox stamps it so it anchors there even if it is not.
+          farmAddress={onChain ? (scoutTarget?.address ?? farmQuery.farmAddress) : null}
+          farmName={scoutTarget?.name ?? farm?.name ?? null}
+          queuedFarmAddress={scoutTarget?.address ?? null}
         />
       )}
 
       {registerOpen && <RegisterFarmModal onClose={() => setRegisterOpen(false)} />}
+
+      {/* Discover sheet — the chain-public detail behind one row, with the
+          single action that arms the scout target. The backdrop closes;
+          the sheet itself only reacts to its own controls. */}
+      {discoverySelected && (
+        <Modal
+          visible
+          transparent
+          animationType="fade"
+          statusBarTranslucent
+          onRequestClose={() => setDiscoverySelected(null)}
+        >
+          <Pressable style={styles.sheetBackdrop} onPress={() => setDiscoverySelected(null)}>
+            <Pressable style={styles.sheet} onPress={() => undefined}>
+              <View style={styles.sheetHandle} />
+              <Text style={styles.sheetTitle} numberOfLines={1}>
+                {discoverySelected.name}
+              </Text>
+              <Mono>{discoverySelected.address}</Mono>
+              <View style={styles.sheetRows}>
+                {discoverySelected.km !== undefined ? (
+                  <LabelValue label={t('discover.distanceLabel')} value={formatDistance(discoverySelected.km)} />
+                ) : null}
+                {/* Coordinates are public on-chain by design — shown raw. */}
+                <LabelValue
+                  label={t('discover.coords')}
+                  value={`${discoverySelected.lat.toFixed(5)}, ${discoverySelected.lng.toFixed(5)}`}
+                />
+                <LabelValue label={t('discover.reports')} value={String(discoverySelected.reportCount)} />
+                <LabelValue label={t('discover.verifiedLabel')} value={String(discoverySelected.verifiedReportCount)} />
+                <LabelValue label={t('discover.pendingLabel')} value={String(discoverySelected.pending)} />
+              </View>
+              <Pressable testID="discover-scout" onPress={handleScoutTarget} style={styles.sheetPrimary}>
+                <Text style={styles.sheetPrimaryText}>
+                  {scoutTarget?.address === discoverySelected.address
+                    ? t('discover.backToOwn')
+                    : t('discover.scoutFarm')}
+                </Text>
+              </Pressable>
+              <Pressable
+                testID="discover-close"
+                onPress={() => setDiscoverySelected(null)}
+                style={styles.sheetSecondary}
+              >
+                <Text style={styles.sheetSecondaryText}>{t('scout.photoClose')}</Text>
+              </Pressable>
+            </Pressable>
+          </Pressable>
+        </Modal>
+      )}
 
       {/* Destructive and device-local: ConfirmModal gates the tap, and its
           lead is honest about what deletion can and cannot reach. */}
@@ -1088,5 +1281,120 @@ const makeStyles = (colors: Colors) =>
       color: colors.amber,
       fontSize: fontSizes.md,
       fontWeight: fontWeights.semibold,
+    },
+
+    /* ── Cross-farm discovery (Discover card) ────────────────── */
+    discoverLead: {
+      color: colors.textMuted,
+      fontSize: fontSizes.sm,
+      marginTop: spacing.xs,
+      marginBottom: spacing.sm,
+    },
+    discoverCard: {
+      backgroundColor: colors.surfaceAlt,
+      borderRadius: radii.lg,
+      borderWidth: 1,
+      borderColor: colors.border,
+      padding: spacing.md + 2,
+      gap: 2,
+    },
+    // The armed target row wears the amber hairline, like an open log row.
+    discoverCardTarget: {
+      borderColor: `${colors.amber}80`,
+    },
+    discoverTop: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      justifyContent: 'space-between',
+      gap: spacing.sm,
+    },
+    discoverName: {
+      flex: 1,
+      color: colors.textPrimary,
+      fontSize: fontSizes.md,
+      fontWeight: fontWeights.semibold,
+    },
+    discoverMeta: {
+      color: colors.textMuted,
+      fontSize: fontSizes.sm,
+    },
+    discoverPending: {
+      color: colors.amber,
+      fontSize: fontSizes.xs,
+    },
+
+    /* ── Scout target badge (above the folded action stack) ──── */
+    targetBadge: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: spacing.sm,
+      maxWidth: 260,
+      backgroundColor: colors.surfaceAlt,
+      borderWidth: 1,
+      borderColor: `${colors.amber}80`,
+      borderRadius: radii.full,
+      paddingVertical: spacing.sm,
+      paddingHorizontal: spacing.md,
+    },
+    targetBadgeText: {
+      flexShrink: 1,
+      color: colors.textPrimary,
+      fontSize: fontSizes.sm,
+      fontWeight: fontWeights.semibold,
+    },
+    targetBadgeClose: {
+      color: colors.textMuted,
+      fontSize: fontSizes.sm,
+    },
+
+    /* ── Discover sheet ──────────────────────────────────────── */
+    sheetBackdrop: {
+      flex: 1,
+      backgroundColor: 'rgba(0,0,0,0.55)',
+      justifyContent: 'flex-end',
+    },
+    sheet: {
+      backgroundColor: colors.surface,
+      borderTopLeftRadius: radii.xl,
+      borderTopRightRadius: radii.xl,
+      borderTopWidth: 1,
+      borderColor: colors.border,
+      paddingHorizontal: spacing.xl,
+      paddingBottom: spacing.xl,
+      gap: spacing.md,
+    },
+    sheetHandle: {
+      alignSelf: 'center',
+      width: 40,
+      height: 4,
+      borderRadius: 2,
+      backgroundColor: colors.borderMid,
+    },
+    sheetTitle: {
+      color: colors.textPrimary,
+      fontSize: fontSizes.xl,
+      fontWeight: fontWeights.bold,
+    },
+    sheetRows: {
+      gap: spacing.xs,
+    },
+    sheetPrimary: {
+      backgroundColor: colors.amber,
+      borderRadius: radii.full,
+      paddingVertical: 13,
+      alignItems: 'center',
+    },
+    sheetPrimaryText: {
+      color: colors.surface,
+      fontSize: fontSizes.md,
+      fontWeight: fontWeights.bold,
+    },
+    sheetSecondary: {
+      alignItems: 'center',
+      paddingVertical: spacing.sm,
+    },
+    sheetSecondaryText: {
+      color: colors.textMuted,
+      fontSize: fontSizes.md,
     },
   })

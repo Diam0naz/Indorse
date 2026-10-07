@@ -44,6 +44,7 @@ import emailVerifyHandler from '../api/email/verify'
 import adminStatusHandler from '../api/admin/status'
 import adminAllowlistHandler from '../api/admin/allowlist'
 import fundsTierHandler from '../api/funds-tier'
+import directoryHandler from '../api/directory'
 
 type HandlerReq = Parameters<typeof classifyHandler>[0]
 type HandlerRes = Parameters<typeof classifyHandler>[1]
@@ -61,6 +62,7 @@ const routes: Record<string, (req: HandlerReq, res: HandlerRes) => Promise<void>
   '/api/admin/status': adminStatusHandler,
   '/api/admin/allowlist': adminAllowlistHandler,
   '/api/funds-tier': fundsTierHandler,
+  '/api/directory': directoryHandler,
 }
 
 /** Minimal `KEY=value` loader — no dependency, no override of real env. */

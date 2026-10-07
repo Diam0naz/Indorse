@@ -192,11 +192,35 @@ describe('camera overlay — submit honesty', () => {
     expect(event.anchor?.uri).toBe(event.notes)
     expect(event.anchor?.aiLabel).toBe('unclassified')
     expect(event.anchor?.photoUris).toEqual([]) // simulated shots have no files
+    // No scout target was set, so the payload names no farm: the flush
+    // will anchor it to whatever farm is featured when the wallet returns.
+    expect(event.anchor).not.toHaveProperty('farmAddress')
 
     // …placeholders out: no verdict → honest fields, no invented crop.
     expect(event.diagnosis).toBe('unclassified')
     expect(event.severity).toBe('none')
     expect(event.confidence).toBe(0)
     expect(event.crop).toBe('—')
+  })
+
+  it('stamps a known scout target on the queued payload so the flush finds it', async () => {
+    const onSubmit = vi.fn()
+    // Wallet down (no `farmAddress` → the capture queues locally) but the
+    // scout is standing in front of a specific foreign farm.
+    const screen = await renderOverlay({
+      farmName: 'Rowan Ridge',
+      queuedFarmAddress: 'DiscoverFarm1111111111111111111111111111111',
+      onSubmit,
+    })
+
+    await captureShot(screen, '1 / 5 shots')
+    await fireEvent.press(screen.getByLabelText('Analyze crop'))
+    await screen.findByText('1 photo captured', {}, LOAD)
+    await fireEvent.press(screen.getByText('Submit to Chain'))
+    await waitFor(() => expect(onSubmit).toHaveBeenCalledTimes(1))
+
+    const event = onSubmit.mock.calls[0][0] as ScoutEvent
+    expect(event.field).toBe('Rowan Ridge')
+    expect(event.anchor?.farmAddress).toBe('DiscoverFarm1111111111111111111111111111111')
   })
 })

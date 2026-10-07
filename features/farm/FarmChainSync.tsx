@@ -20,12 +20,13 @@
  * into the context. Renders nothing; it is a side-effect leaf.
  */
 
-import { useEffect } from 'react'
+import { useEffect, useRef } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import { useFarmRegistry } from '@/components/farm-registry-provider'
 import { fromE6 } from '@/lib/format'
 import { useMobileWalletSetup } from '@/features/wallet/useMobileWalletSetup'
 import { farmCounterPda, farmPda, fetchAccount, useProgramRpc, useRpcUrl } from '@/lib/program'
+import { directoryEndpoint, publishFarm } from './directory'
 import type { Farm, FarmCounter } from './types'
 
 interface ChainFarmEntry {
@@ -76,6 +77,29 @@ export function FarmChainSync() {
     if (!entries?.length) return
     for (const entry of entries) upsertChainFarm(entry)
   }, [query.data, upsertChainFarm])
+
+  // Publish the roster to the farm directory so other scouts can find it
+  // (cross-farm discovery). Each address publishes once per session; a
+  // failure drops it from the done-set so the next sync retries. The server
+  // re-reads every address against the chain before storing it, so this can
+  // only ever share farms that really exist — and with no origin configured
+  // it is a no-op, like every other single-URL feature.
+  const publishedRef = useRef<Set<string>>(new Set())
+
+  useEffect(() => {
+    const entries = query.data
+    if (!entries?.length) return
+    const endpoint = directoryEndpoint()
+    if (!endpoint) return
+    for (const entry of entries) {
+      if (publishedRef.current.has(entry.address)) continue
+      publishedRef.current.add(entry.address)
+      // Fire-and-forget: a dead directory never blocks the registry sync.
+      publishFarm(endpoint, entry.address).catch(() => {
+        publishedRef.current.delete(entry.address)
+      })
+    }
+  }, [query.data])
 
   return null
 }

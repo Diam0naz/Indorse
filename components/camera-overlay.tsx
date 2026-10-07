@@ -77,6 +77,14 @@ interface CameraOverlayProps {
    * Null renders an honest "Unregistered area" instead of a seeded name.
    */
   farmName?: string | null
+  /**
+   * Farm identity to stamp on QUEUED (local) captures — the cross-farm
+   * scout target. A capture taken while the wallet is down still anchors
+   * to the farm it was taken at, instead of whatever farm happens to be
+   * featured when the outbox next flushes. Absent on ordinary captures,
+   * which keep the old "anchor to the featured farm" behaviour.
+   */
+  queuedFarmAddress?: string | null
 }
 
 /** Where the AI chip stands: probed on open, never guessed. */
@@ -115,7 +123,7 @@ interface CapturedPhoto {
 
 const delay = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms))
 
-export function CameraOverlay({ onClose, onSubmit, farmAddress, farmName }: CameraOverlayProps) {
+export function CameraOverlay({ onClose, onSubmit, farmAddress, farmName, queuedFarmAddress }: CameraOverlayProps) {
   const [stage, setStage] = useState<Stage>('capture')
   const [shots, setShots] = useState<CapturedPhoto[]>([])
   // Endpoint state is decided at construction (configured or not); the effect
@@ -349,6 +357,9 @@ export function CameraOverlay({ onClose, onSubmit, farmAddress, farmName }: Came
           aiLabel,
           // Real shot files only — best-effort evidence to re-derive the hash.
           photoUris,
+          // The scout target, when one is set: this capture anchors to the
+          // farm it was taken at, not to whatever farm is featured later.
+          ...(queuedFarmAddress ? { farmAddress: queuedFarmAddress } : {}),
         },
       })
       setStage('success')
