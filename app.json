@@ -12,6 +12,7 @@
       "bundleIdentifier": "com.anonymous.indorse"
     },
     "android": {
+      "versionCode": 1,
       "adaptiveIcon": {
         "backgroundColor": "#0E0D0B",
         "foregroundImage": "./assets/images/android-icon-foreground.png",

@@ -37,6 +37,11 @@ yarn-error.*
 .env*.local
 .env
 
+# EAS submit credentials — the Play service account key is a machine identity,
+# never committed (eas.json points submit.production at it)
+google-service-account.json
+*.keystore
+
 # typescript
 *.tsbuildinfo
 

@@ -14,7 +14,7 @@ Android device or emulator with a wallet app (e.g. Phantom, Solflare) installed.
 
 Snapshot as of **2026-10-07** — all four quality gates green
 (`tsc --noEmit`, `prettier --check .`, `expo lint`, `vitest run`):
-**741 tests passing · 1 skipped (the opt-in smoke test) across 85 files**
+**744 tests passing · 1 skipped (the opt-in smoke test) across 86 files**
 (`prettier --check .` is fully clean — `api/admin.test.ts` included).
 
 | Area                | State   | Notes                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                    |
@@ -160,7 +160,7 @@ Every change lands only with all four gates green, run in this order:
 | Types  | `npx tsc --noEmit`       | missing i18n keys (es/fr are typed `Record<MessageKey, string>`), hook/type drift |
 | Format | `npx prettier --check .` | the whole tree — app, tests, `api/`, even `deck/` HTML and Markdown               |
 | Lint   | `npx expo lint`          | React hooks rules, dead code                                                      |
-| Tests  | `npx vitest run`         | behaviour — 85 files, 741 passing + 1 skipped (the opt-in smoke test)             |
+| Tests  | `npx vitest run`         | behaviour — 86 files, 744 passing + 1 skipped (the opt-in smoke test)             |
 
 `npm run ci` chains the same checks and finishes with an Android prebuild, so
 it also catches anything Metro refuses to bundle.
@@ -205,6 +205,45 @@ above and verify `POST /api/siws/nonce → 200` **before** debugging deeper.
 `anchor build` → `npm run idl:sync` → `npm run client:generate` → deploy (devnet,
 or `solana program-v4` on a local validator — see _Running Anchor tests_) →
 optional live round-trip with `SMOKE_RPC=… npx vitest run test/smoke.test.ts`.
+
+### Release builds (EAS)
+
+`eas.json` defines three Android profiles (the file is validated against
+`@expo/eas-json`, which rejects unknown keys and out-of-range values):
+
+| Profile       | Output               | Distribution | Use                   |
+| ------------- | -------------------- | ------------ | --------------------- |
+| `development` | APK + dev client     | internal     | sideloaded dev builds |
+| `preview`     | APK                  | internal     | tester shares         |
+| `production`  | AAB, `autoIncrement` | store        | Play submission       |
+
+```bash
+npx eas-cli login
+npx eas-cli init               # writes extra.eas.projectId into app.json
+npx eas-cli build -p android --profile preview
+npx eas-cli build -p android --profile production
+npx eas-cli submit -p android --profile production   # needs google-service-account.json
+```
+
+**Build-time env.** `EXPO_PUBLIC_*` is inlined by Metro at bundle time, so it
+has to exist _in the build environment_ — `.env` is gitignored and EAS never
+sees it. A build without them still compiles, installs and runs: `getApiOrigin()`
+returns `null` and the AI / assistant / funds-tier features disable themselves
+rather than guess an origin. Supply what you need via the profile's `env` block
+or EAS environment variables:
+
+- `EXPO_PUBLIC_AI_CLASSIFY_URL` — the one URL everything else derives its origin from
+- `EXPO_PUBLIC_AI_GRADE_URL`, `EXPO_PUBLIC_AI_ASSISTANT_URL`
+- `EXPO_PUBLIC_FUND_TIER_URL` (unset = the tier gate is off, by design)
+- `EXPO_PUBLIC_API_FALLBACKS` (optional — the liveness-probe candidate list)
+
+`EXPO_PUBLIC_FORCE_SEEKER` is pinned to `"false"` in all three profiles: it is a
+dev flag that must never ship enabled. This repo has no deployed API origin yet
+(the proxy runs via `npm run api:dev`), so a release build ships with the AI
+features off until one exists.
+
+The submit profile points at `./google-service-account.json`, which is
+gitignored like every other key.
 
 ### Rules the codebase enforces
 
@@ -781,11 +820,13 @@ indorse/
 ├── programs/
 │   └── indorse_program/     # Anchor workspace (Rust program + integration tests + init-config/role-keys scripts)
 │
-├── *.test.tsx / **/*.test.ts  # 85 suites — see Build process → Test strategy
+├── *.test.tsx / **/*.test.ts  # 86 suites — see Build process → Test strategy
 ├── test/setup-mocks.ts       # Shared test mocks (icon set, expo-crypto digest)
 ├── test/bundle-guard.test.ts # Fails if any test file lands under app/ (Metro would bundle it)
+├── test/eas-guard.test.ts    # Fails if a build profile drops the FORCE_SEEKER pin or swaps AAB/APK
 ├── test/smoke.test.ts        # Opt-in live-RPC round trip (SMOKE_RPC)
 ├── vitest.config.mts         # Vitest config (verbose reporter, vitest-native)
+├── eas.json                  # EAS build profiles — see Build process → Release builds (EAS)
 └── package.json
 ```
 
