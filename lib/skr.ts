@@ -1,9 +1,10 @@
 /**
  * lib/skr.ts — .skr domain resolution
  *
- * Reverse-resolves a Solana address to its first-sorting `.skr` AllDomains
- * (ANS) name.  Resolution always targets **mainnet**, regardless of the
- * cluster the rest of the app is configured against.
+ * Resolves `.skr` AllDomains (ANS) names in both directions: an address to the
+ * first-sorting name it holds (display), and a name a human typed to the wallet
+ * that holds it (forms).  Resolution always targets **mainnet**, regardless of
+ * the cluster the rest of the app is configured against.
  *
  * The implementation is copied from the seeker-domains skill reference
  * (references/kit-resolver.md).  It uses only Kit codecs, @noble/hashes and
@@ -13,6 +14,9 @@
  * Public surface:
  *   resolveSkrNames(rpc, address)   → string[] (sorted, empty when none)
  *   useSkrName(address?)            → string | null (TanStack Query, staleTime 1 h)
+ *   classifyAddressInput(value)     → 'address' | 'domain' | 'invalid' (no network)
+ *   resolveAddressInput(rpc, value) → AddressResolution (forward: name → wallet)
+ *   resolveAddressFields(fields)    → { values, errors } (a whole form at once)
  *
  * Security note: a reverse-resolved name is the first-sorting name an address
  * _happens to hold_, and anyone can transfer a .skr name to any wallet without
@@ -220,6 +224,126 @@ export function normalizeSkrName(input: string): string | null {
     .toLowerCase()
     .replace(/\.skr$/, '')
   return /^[a-z0-9-]{1,63}$/.test(label) ? label : null
+}
+
+// ── Forward resolution — what a form field actually holds ─────────────────
+
+/**
+ * What a typed form value turned out to be.
+ *
+ * The address test runs first because it is exact: `toAddress` validates
+ * base58 *and* the 32-byte length, so a pubkey settles without a lookup. The
+ * name branch then requires the `.skr` suffix before it consults
+ * `normalizeSkrName`.
+ *
+ * The suffix is not redundant with `normalizeSkrName`, which happily accepts a
+ * bare label — it is what keeps the error honest. The common mistake in these
+ * fields is a **malformed pubkey**, and a corrupted base58 string still
+ * lowercases into a legal label: without the suffix it would cost a mainnet
+ * lookup and come back "No wallet holds 8xKp2….skr", which is nonsense for a
+ * paste that was never a name. With it, the same typo is caught locally as
+ * `invalid`. The placeholders say "or name.skr", so the suffix is what the
+ * field asks for anyway — and `normalizeSkrName` still does the shape
+ * validation, so there is exactly one length/charset rule in the codebase.
+ */
+export type AddressInputKind = 'address' | 'domain' | 'invalid'
+
+/** Classify a raw form value without touching the network. */
+export function classifyAddressInput(value: string): AddressInputKind {
+  const trimmed = (value ?? '').trim()
+  if (!trimmed) return 'invalid'
+  try {
+    toAddress(trimmed)
+    return 'address'
+  } catch {
+    return /\.skr$/i.test(trimmed) && normalizeSkrName(trimmed) ? 'domain' : 'invalid'
+  }
+}
+
+/**
+ * Outcome of resolving one typed value to a pubkey.
+ *
+ * `unregistered` is distinct from `invalid` on purpose: a well-shaped name that
+ * nobody holds and a value that names nothing at all deserve different words,
+ * and an RPC failure must never be reported as either — it rejects, so the
+ * caller can say "couldn't reach mainnet" instead of "not registered".
+ */
+export type AddressResolution =
+  | { kind: 'address'; address: Address }
+  | { kind: 'domain'; domain: string; address: Address }
+  | { kind: 'unregistered'; domain: string }
+  | { kind: 'invalid' }
+
+/**
+ * Forward lookup for a form field: an address passes straight through, a
+ * `.skr` name resolves to the wallet that holds it.
+ *
+ * Same rule as the reverse direction — resolution targets **mainnet**
+ * whatever cluster the app is on, because that is where `.skr` lives.
+ */
+export async function resolveAddressInput(rpc: Rpc, value: string): Promise<AddressResolution> {
+  const kind = classifyAddressInput(value)
+  if (kind === 'address') return { kind, address: toAddress(value.trim()) }
+  if (kind === 'invalid') return { kind }
+
+  const label = normalizeSkrName(value.trim()) as string
+  const domain = `${label}${TLD}`
+  const address = await resolveSkrDomain(rpc, value)
+  return address ? { kind, domain, address } : { kind: 'unregistered', domain }
+}
+
+/**
+ * The outcome of resolving a whole address-shaped form.
+ *
+ * A union rather than a `{ values, errors }` pair so a caller cannot read
+ * `values` after a field failed — the map is genuinely partial then, and
+ * `Record<K, string>` would be lying about it.
+ */
+export type ResolvedFields<K extends string> =
+  { ok: true; values: Record<K, string> } | { ok: false; errors: Partial<Record<K, string>> }
+
+/**
+ * Resolve a whole address-shaped form in one pass, on the module's mainnet
+ * client.
+ *
+ * Runs the fields concurrently — they are independent lookups and the console
+ * has up to three at once. An RPC failure lands on the field that asked, so
+ * one flaky round trip never masquerades as an unregistered name.
+ */
+export async function resolveAddressFields<K extends string>(
+  fields: Record<K, string>,
+  rpc: Rpc = _rpc,
+): Promise<ResolvedFields<K>> {
+  const keys = Object.keys(fields) as K[]
+  const results = await Promise.all(
+    keys.map(async (key): Promise<{ key: K; value?: string; error?: string }> => {
+      const raw = fields[key]
+      const trimmed = (raw ?? '').trim()
+      if (!trimmed) return { key, error: 'Address is required' }
+      try {
+        const resolution = await resolveAddressInput(rpc, raw)
+        switch (resolution.kind) {
+          case 'address':
+          case 'domain':
+            return { key, value: resolution.address }
+          case 'unregistered':
+            return { key, error: `No wallet holds ${resolution.domain}` }
+          default:
+            return { key, error: 'Not a valid address or .skr name' }
+        }
+      } catch {
+        return { key, error: `Could not read ${trimmed} — mainnet unreachable` }
+      }
+    }),
+  )
+
+  const errors: Partial<Record<K, string>> = {}
+  for (const result of results) if (result.error) errors[result.key] = result.error
+  if (Object.keys(errors).length > 0) return { ok: false, errors }
+
+  const values = {} as Record<K, string>
+  for (const result of results) values[result.key] = result.value as string
+  return { ok: true, values }
 }
 
 // ── React hook ────────────────────────────────────────────────────────────

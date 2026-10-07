@@ -725,9 +725,9 @@ export const fr: Record<MessageKey, string> = {
   'admin.roleAdminLabel': 'Admin',
   'admin.roleVerifierLabel': 'Vérificateur (obsolète)',
   'admin.roleOracleLabel': 'Oracle (obsolète)',
-  'admin.phAdmin': 'Clé publique admin',
-  'admin.phVerifier': 'Clé du vérificateur (obsolète)',
-  'admin.phOracle': 'Clé de l’oracle (obsolète)',
+  'admin.phAdmin': 'Clé publique admin ou nom.skr',
+  'admin.phVerifier': 'Clé du vérificateur ou nom.skr (obsolète)',
+  'admin.phOracle': 'Clé de l’oracle ou nom.skr (obsolète)',
   'admin.rotateRoles': 'Faire tourner les rôles',
   'admin.confirmSetRoles': 'Faire tourner les trois rôles ?',
   'admin.confirmSetRolesDesc':
@@ -776,7 +776,7 @@ export const fr: Record<MessageKey, string> = {
   'admin.confirmRemoveReader': 'Retirer ce siège de lecteur ?',
   'admin.confirmRemoveReaderDesc':
     'remove_oracle révoque le siège. Les lectures déjà publiées restent dans le décompte.',
-  'admin.phReader': 'Clé publique du lecteur',
+  'admin.phReader': 'Clé publique du lecteur ou nom.skr',
   'admin.addReader': 'Ajouter un lecteur',
   'admin.confirmAddReader': 'Attribuer ce siège de lecteur ?',
   'admin.confirmAddReaderDesc':
@@ -828,7 +828,7 @@ export const fr: Record<MessageKey, string> = {
   'admin.allowlistSourceRuntime': 'remplacement à l’exécution',
   'admin.emptyAllowlist': 'La liste est vide — la connexion échoue en mode fermé.',
   'admin.noStatus': 'Touchez actualiser pour charger l’état de l’API.',
-  'admin.phEntry': 'Adresse du portefeuille',
+  'admin.phEntry': 'Adresse du portefeuille ou nom.skr',
   'admin.addEntry': 'Ajouter une entrée',
   'admin.confirmAddEntry': 'Ajouter cette entrée à la liste ?',
   'admin.confirmAddEntryDesc': 'Le portefeuille devient éligible à la connexion via l’API.',

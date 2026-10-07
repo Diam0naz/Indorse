@@ -70,7 +70,7 @@ import {
 import { formatShortDate, formatUsdc, fromE6, shortenAddress, toE6 } from '@/lib/format'
 import { useT } from '@/lib/i18n'
 import { ataPda, insuranceVaultPda, treasuryPda } from '@/lib/program'
-import { addressValidationError } from '@/lib/validation'
+import { resolveAddressFields } from '@/lib/skr'
 
 /* ── Local form state ──────────────────────────────────────────────────────── */
 
@@ -187,6 +187,10 @@ export default function AdminSettingsScreen() {
   const [lastResult, setLastResult] = useState<{ ok: boolean; text: string } | null>(null)
   const [status, setStatus] = useState<AdminStatus | null>(null)
   const [statusError, setStatusError] = useState<string | null>(null)
+  // Address fields take a `.skr` name as well as a pubkey, and the forward
+  // lookup is a mainnet round trip — this gates the buttons that ask for one so
+  // a double tap cannot fire two resolutions (or two confirm modals).
+  const [resolving, setResolving] = useState(false)
   // Snapshot at mount (the repo's pattern — farms.tsx / EscrowCard): season
   // ends are day-scale, so a mount-time clock is as good as a live one.
   const [nowSec] = useState(() => Math.floor(Date.now() / 1000))
@@ -242,16 +246,34 @@ export default function AdminSettingsScreen() {
 
   /* ── Form submit helpers ─────────────────────────────────────────────────── */
 
-  const submitRoles = () => {
-    const input = {
+  /**
+   * The three role fields take a pubkey **or** a `.skr` name — resolution runs
+   * first so the validator and the instruction both see an address, and the
+   * field is rewritten with what actually landed on chain. An untouched field
+   * prefills from `config`, which is already an address, so the common case
+   * never leaves the device.
+   */
+  const submitRoles = async () => {
+    const raw = {
       admin: displayValue('admin'),
       verifier: displayValue('verifier'),
       oracle: displayValue('oracle'),
     }
-    const found = validateSetRoles(input)
+    setResolving(true)
+    const resolved = await resolveAddressFields(raw)
+    setResolving(false)
+    if (!resolved.ok) {
+      setErrors(resolved.errors)
+      return
+    }
+    const { values } = resolved
+    setField('admin', values.admin)
+    setField('verifier', values.verifier)
+    setField('oracle', values.oracle)
+    const found = validateSetRoles(values)
     setErrors(found ? { admin: found.admin, verifier: found.verifier, oracle: found.oracle } : {})
     if (found) return
-    ask(t('admin.confirmSetRoles'), t('admin.confirmSetRolesDesc'), 'set_roles', () => setRoles.mutateAsync(input))
+    ask(t('admin.confirmSetRoles'), t('admin.confirmSetRolesDesc'), 'set_roles', () => setRoles.mutateAsync(values))
   }
 
   const submitWithdraw = () => {
@@ -303,13 +325,22 @@ export default function AdminSettingsScreen() {
     )
   }
 
-  const submitReader = () => {
-    const input = { member: form.reader }
-    const found = validateOracleMember(input)
+  /** A reader seat takes a pubkey or a `.skr` name; see `submitRoles`. */
+  const submitReader = async () => {
+    setResolving(true)
+    const resolved = await resolveAddressFields({ member: form.reader })
+    setResolving(false)
+    if (!resolved.ok) {
+      setErrors({ reader: resolved.errors.member })
+      return
+    }
+    const { values } = resolved
+    setField('reader', values.member)
+    const found = validateOracleMember(values)
     setErrors(found ? { reader: found.member } : {})
     if (found) return
     ask(t('admin.confirmAddReader'), t('admin.confirmAddReaderDesc'), null, async () => {
-      await addOracle.mutateAsync(input)
+      await addOracle.mutateAsync(values)
       setField('reader', '')
     })
   }
@@ -387,13 +418,28 @@ export default function AdminSettingsScreen() {
     }
   }
 
-  const submitEntry = () => {
+  /**
+   * The allowlist entry takes a pubkey or a `.skr` name. An empty field stays a
+   * silent no-op — it has never been a validation error here, and nothing
+   * should start failing closed on a blank row.
+   */
+  const submitEntry = async () => {
     const entry = form.entry.trim()
-    const problem = addressValidationError(entry)
-    setErrors(entry ? { entry: problem } : {})
-    if (problem) return
+    if (!entry) {
+      setErrors({})
+      return
+    }
+    setResolving(true)
+    const resolved = await resolveAddressFields({ entry })
+    setResolving(false)
+    if (!resolved.ok) {
+      setErrors({ entry: resolved.errors.entry })
+      return
+    }
+    setErrors({})
+    setField('entry', resolved.values.entry)
     ask(t('admin.confirmAddEntry'), t('admin.confirmAddEntryDesc'), null, async () => {
-      await applyAllowlist({ add: [entry] })
+      await applyAllowlist({ add: [resolved.values.entry] })
       setField('entry', '')
     })
   }
@@ -493,7 +539,7 @@ export default function AdminSettingsScreen() {
           {fieldError('verifier')}
           <TextInput {...inputProps('oracle', t('admin.phOracle'))} />
           {fieldError('oracle')}
-          <SettingsButton label={t('admin.rotateRoles')} tone="secondary" onPress={submitRoles} />
+          <SettingsButton label={t('admin.rotateRoles')} tone="secondary" onPress={submitRoles} busy={resolving} />
         </View>
       </SettingsGroup>
 
@@ -610,7 +656,7 @@ export default function AdminSettingsScreen() {
             <View style={styles.formBox}>
               <TextInput {...inputProps('reader', t('admin.phReader'))} />
               {fieldError('reader')}
-              <SettingsButton label={t('admin.addReader')} tone="secondary" onPress={submitReader} />
+              <SettingsButton label={t('admin.addReader')} tone="secondary" onPress={submitReader} busy={resolving} />
             </View>
 
             {/* ── Post a season reading ────────────────────────────────── */}
@@ -754,7 +800,7 @@ export default function AdminSettingsScreen() {
                 label={t('admin.addEntry')}
                 tone="secondary"
                 onPress={submitEntry}
-                busy={allowlist.isPending}
+                busy={resolving || allowlist.isPending}
               />
             </>
           ) : (

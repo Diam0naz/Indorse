@@ -206,12 +206,17 @@ system-prompt assembly).
    never leaves the wallet app.
 2. **Seed Vault badge** (`components/seed-vault-badge.tsx`) — "Seed Vault
    secured" chip on capture screens when running on a Seeker.
-3. **.skr domains — reverse resolution** (`lib/skr.ts`) — address →
-   first-sorting `.skr` name shown in the header identity beside the
-   truncated address; always resolves against mainnet, Kit codecs only so it
-   runs under Hermes. Carries the documented caveat (a name can be
+3. **.skr domains — both directions** (`lib/skr.ts`) — _reverse_:
+   address → first-sorting `.skr` name shown in the header identity beside the
+   truncated address. _Forward_: `classifyAddressInput` / `resolveAddressInput`
+   / `resolveAddressFields` read a typed field as either a pubkey or a
+   `name.skr`, wired into the operator console's address inputs (set_roles,
+   add_oracle reader, allowlist entry) so an operator types `ops.skr` instead
+   of pasted base58. Always resolves against mainnet, Kit codecs only so it
+   runs under Hermes. Reverse carries the documented caveat (a name can be
    transferred to any wallet unasked — display beside the address, never
-   instead of it).
+   instead of it); forward never substitutes, it only returns an address the
+   chain says owns the name.
 4. **Seeker device detection** (`lib/seeker.ts`) — `Platform.constants.Model
 === "Seeker"`, explicitly presentation-only: drives the Seeker-exclusive
    theme and badge, never an entitlement. `EXPO_PUBLIC_FORCE_SEEKER=true`
@@ -243,16 +248,17 @@ system-prompt assembly).
    consumes it beyond the two gates: one-claim-per-device anti-Sybil,
    gated rewards, early-access onboarding, and the still-reserved tier2
    "verified operators" all become possible from the same verdict.
-2. **Forward .skr resolution — name → address** (`seeker-domains`) — the app
-   resolves only the reverse direction today. Forward resolution plus input
-   validation (`normalizeSkrName` already normalizes and validates shape)
-   would let payout flows — escrow release recipient, `withdraw_treasury`
-   destination — accept `farmer.skr` instead of pasted base58.
-3. **Seeker Connect for web** (`seeker-connect`) — only relevant if the web
+2. **Seeker Connect for web** (`seeker-connect`) — only relevant if the web
    surface ships (`npm run web` exists): it registers the "Seeker Connect"
    Wallet Standard wallet inside the Seeker's browser
    (`seeker-connect-button`, Nostr relay association) — the web counterpart
    of MWA. The native app stays on MWA.
+
+Note on what forward `.skr` did **not** unlock: every payout destination in
+the program is pinned (`reward_report` pays `report.reporter`, escrow
+releases to the policy farmer, `withdraw_treasury` to `config.admin`), so
+there is no free-text recipient field to accept `farmer.skr`. The operator
+console was the only place a human types a pubkey.
 
 ---
 
