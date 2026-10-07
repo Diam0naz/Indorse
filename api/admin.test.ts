@@ -133,6 +133,7 @@ afterEach(() => {
   clearAdminCache()
   resetAllowlist()
   delete process.env.SGT_DEV_ALLOWLIST
+  delete process.env.OPERATOR_ALLOWLIST
   delete process.env.RESEND_API_KEY
   delete process.env.GEMINI_API_KEY
 })
@@ -253,7 +254,7 @@ describe('POST /api/admin/allowlist', () => {
 
     const res = await post(allowlistHandler, { ...(await signer.prove()), add: [newcomer] })
     expect(res.statusCode).toBe(200)
-    expect(res.payload).toEqual({ entries: [envEntry, newcomer], source: 'runtime' })
+    expect(res.payload).toEqual({ entries: [envEntry, newcomer], source: 'runtime', list: 'dev' })
 
     // The status route now reports the override, not the env list.
     const status = await post(statusHandler, await signer.prove())
@@ -261,7 +262,7 @@ describe('POST /api/admin/allowlist', () => {
 
     // …and removal drops back to the env base.
     const removed = await post(allowlistHandler, { ...(await signer.prove()), remove: [newcomer] })
-    expect(removed.payload).toEqual({ entries: [envEntry], source: 'runtime' })
+    expect(removed.payload).toEqual({ entries: [envEntry], source: 'runtime', list: 'dev' })
   })
 
   it('lets a freshly added wallet sign in through /api/siws/verify', async () => {
@@ -289,10 +290,63 @@ describe('POST /api/admin/allowlist', () => {
 
     // …until the admin removes it.
     const removed = await post(allowlistHandler, { ...(await admin.prove()), remove: ['*'] })
-    expect(removed.payload).toEqual({ entries: [], source: 'runtime' })
+    expect(removed.payload).toEqual({ entries: [], source: 'runtime', list: 'dev' })
     expect((await post(verifyHandler, await passerby.prove())).payload).toMatchObject({
       verified: false,
       reason: 'not-allowlisted',
     })
+  })
+})
+
+/* ── POST /api/admin/allowlist — list: 'operator' ────────────────────────── */
+
+describe('POST /api/admin/allowlist — the operator list', () => {
+  it('updates the operator list and says which one it answered', async () => {
+    const admin = makeSigner()
+    const envEntry = freshAddress()
+    const newcomer = freshAddress()
+    stubConfigRpc({ admin: admin.address })
+    process.env.OPERATOR_ALLOWLIST = envEntry
+
+    const res = await post(allowlistHandler, { ...(await admin.prove()), list: 'operator', add: [newcomer] })
+    expect(res.statusCode).toBe(200)
+    expect(res.payload).toEqual({ entries: [envEntry, newcomer], source: 'runtime', list: 'operator' })
+
+    // Status reports both lists, each with its own layer.
+    const status = await post(statusHandler, await admin.prove())
+    expect(status.payload).toMatchObject({
+      operatorAllowlist: { entries: [envEntry, newcomer], source: 'runtime' },
+      allowlist: { entries: [], source: 'env' },
+    })
+
+    // …and removal falls back to the operator env base, not the dev one.
+    const removed = await post(allowlistHandler, { ...(await admin.prove()), list: 'operator', remove: [newcomer] })
+    expect(removed.payload).toEqual({ entries: [envEntry], source: 'runtime', list: 'operator' })
+  })
+
+  it('routes to the operator list only when asked — the dev list is the default', async () => {
+    const admin = makeSigner()
+    const devEntry = freshAddress()
+    stubConfigRpc({ admin: admin.address })
+
+    const res = await post(allowlistHandler, { ...(await admin.prove()), add: [devEntry] })
+
+    expect(res.payload).toMatchObject({ list: 'dev' })
+    const status = await post(statusHandler, await admin.prove())
+    expect(status.payload).toMatchObject({
+      allowlist: { entries: [devEntry], source: 'runtime' },
+      // Nothing landed on the operator list.
+      operatorAllowlist: { entries: [], source: 'env' },
+    })
+  })
+
+  it('rejects an unknown list name rather than silently editing the dev one', async () => {
+    const admin = makeSigner()
+    stubConfigRpc({ admin: admin.address })
+
+    const res = await post(allowlistHandler, { ...(await admin.prove()), list: 'everyone', add: [freshAddress()] })
+
+    expect(res.statusCode).toBe(400)
+    expect(res.payload).toMatchObject({ error: expect.stringContaining("list must be 'dev' or 'operator'") })
   })
 })

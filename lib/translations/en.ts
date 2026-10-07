@@ -814,6 +814,10 @@ export const en = {
   'admin.allowlistSourceEnv': 'from env',
   'admin.allowlistSourceRuntime': 'runtime override',
   'admin.emptyAllowlist': 'Allowlist is empty — sign-in fails closed.',
+  'admin.operatorAllowlist': 'Operator allowlist: {count} entries',
+  'admin.operatorIntro':
+    'Separate from sign-in: a listed wallet reaches the $250 policy tier instead of the $100 base.',
+  'admin.emptyOperatorAllowlist': 'Operator allowlist is empty — every wallet stays at the $100 base tier.',
   'admin.noStatus': 'Tap refresh to load API status.',
   'admin.phEntry': 'Wallet address or name.skr',
   'admin.addEntry': 'Add entry',

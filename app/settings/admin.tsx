@@ -87,6 +87,8 @@ interface FormState {
   initBond: string
   initOk: string
   entry: string
+  /** The operator allowlist's own row — a separate list, so a separate field. */
+  operatorEntry: string
   /** Season rainfall total in millimetres, as shown on every weather screen. */
   reading: string
 }
@@ -103,6 +105,7 @@ const EMPTY_FORM: FormState = {
   initBond: '',
   initOk: '',
   entry: '',
+  operatorEntry: '',
   reading: '',
 }
 
@@ -407,11 +410,20 @@ export default function AdminSettingsScreen() {
     }
   }
 
+  /**
+   * Applies an op to whichever list the caller named (`dev` by default) and
+   * patches that list's slice of the cached status — patching only the list
+   * that actually changed keeps the other one's `source` honest.
+   */
   const applyAllowlist = async (op: AllowlistUpdate) => {
     setStatusError(null)
     try {
       const result = await allowlist.mutateAsync(op)
-      setStatus((s) => (s ? { ...s, allowlist: { entries: result.entries, source: result.source } } : s))
+      setStatus((s) => {
+        if (!s) return s
+        const next = { entries: result.entries, source: result.source }
+        return op.list === 'operator' ? { ...s, operatorAllowlist: next } : { ...s, allowlist: next }
+      })
       setLastResult({ ok: true, text: t('admin.txOk') })
     } catch (e) {
       setLastResult({ ok: false, text: errMsg(e) })
@@ -441,6 +453,35 @@ export default function AdminSettingsScreen() {
     ask(t('admin.confirmAddEntry'), t('admin.confirmAddEntryDesc'), null, async () => {
       await applyAllowlist({ add: [resolved.values.entry] })
       setField('entry', '')
+    })
+  }
+
+  /**
+   * Same resolve-then-confirm dance as `submitEntry`, but for the operator
+   * allowlist. Kept separate rather than parameterised: `resolveAddressFields`
+   * is generic over its key, and a union of two field names would widen it to
+   * `string`, losing the per-field `values`/`errors` types that make this
+   * function honest. The list is named at the one place it matters — the call.
+   */
+  const submitOperatorEntry = async () => {
+    const entry = form.operatorEntry.trim()
+    if (!entry) {
+      setErrors({})
+      return
+    }
+    setResolving(true)
+    const resolved = await resolveAddressFields({ operatorEntry: entry })
+    setResolving(false)
+    if (!resolved.ok) {
+      setErrors({ operatorEntry: resolved.errors.operatorEntry })
+      return
+    }
+    setErrors({})
+    const value = resolved.values.operatorEntry ?? entry
+    setField('operatorEntry', value)
+    ask(t('admin.confirmAddEntry'), t('admin.confirmAddEntryDesc'), null, async () => {
+      await applyAllowlist({ list: 'operator', add: [value] })
+      setField('operatorEntry', '')
     })
   }
 
@@ -800,6 +841,43 @@ export default function AdminSettingsScreen() {
                 label={t('admin.addEntry')}
                 tone="secondary"
                 onPress={submitEntry}
+                busy={resolving || allowlist.isPending}
+              />
+
+              {/* ── Operator allowlist — funds-tier tier2 ────────────── */}
+              <SettingsNote>
+                {t('admin.operatorAllowlist', { count: status.operatorAllowlist.entries.length })} ·{' '}
+                {status.operatorAllowlist.source === 'runtime'
+                  ? t('admin.allowlistSourceRuntime')
+                  : t('admin.allowlistSourceEnv')}
+              </SettingsNote>
+              <SettingsNote>{t('admin.operatorIntro')}</SettingsNote>
+              {status.operatorAllowlist.entries.length === 0 ? (
+                <SettingsNote>{t('admin.emptyOperatorAllowlist')}</SettingsNote>
+              ) : (
+                status.operatorAllowlist.entries.map((operator) => (
+                  <SettingRow key={operator} title={shortenAddress(operator, 6)} last>
+                    <Pressable
+                      style={styles.chipDanger}
+                      accessibilityRole="button"
+                      accessibilityLabel={t('admin.remove')}
+                      onPress={() =>
+                        ask(t('admin.confirmRemoveEntry'), t('admin.confirmRemoveEntryDesc'), null, async () => {
+                          await applyAllowlist({ list: 'operator', remove: [operator] })
+                        })
+                      }
+                    >
+                      <Text style={styles.chipDangerText}>{t('admin.remove')}</Text>
+                    </Pressable>
+                  </SettingRow>
+                ))
+              )}
+              <TextInput {...inputProps('operatorEntry', t('admin.phEntry'))} />
+              {fieldError('operatorEntry')}
+              <SettingsButton
+                label={t('admin.addEntry')}
+                tone="secondary"
+                onPress={submitOperatorEntry}
                 busy={resolving || allowlist.isPending}
               />
             </>

@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import handler, { FUND_TIERS, createFundsTierHandler, tierForSeeker } from '@/api/funds-tier'
+import handler, { FUND_TIERS, createFundsTierHandler, tierFor } from '@/api/funds-tier'
+import { resetAllowlist, updateAllowlist, isEligible } from '@/api/_lib/allowlist'
 import type { SgtChecker } from '@/api/_lib/sgt'
 
 function mockRes() {
@@ -70,10 +71,13 @@ describe('POST /api/funds-tier', () => {
     expect(res.payload).toMatchObject({ allowed: false, tier: 'tier1', limitUsdc: 100 })
   })
 
-  it('the ladder itself is $100 / $250 / $500 with tier2 reserved', () => {
+  it('the ladder itself is $100 / $250 / $500, tier2 open to listed operators', () => {
     expect(FUND_TIERS.map((tier) => tier.limitUsdc)).toEqual([100, 250, 500])
-    expect(tierForSeeker(false).id).toBe('tier1')
-    expect(tierForSeeker(true).id).toBe('tier3')
+    expect(tierFor({}).id).toBe('tier1')
+    expect(tierFor({ operator: true }).id).toBe('tier2')
+    expect(tierFor({ seeker: true }).id).toBe('tier3')
+    // The two claims are independent and combine to the higher ceiling.
+    expect(tierFor({ seeker: true, operator: true }).id).toBe('tier3')
   })
 })
 
@@ -167,5 +171,129 @@ describe('POST /api/funds-tier — server-side SGT verification (SGT_RPC_URL con
 
     expect(res.payload).toMatchObject({ allowed: true, tier: 'tier3', seeker: true, trust: 'client-asserted-dev' })
     expect(checkSgt).not.toHaveBeenCalled()
+  })
+})
+
+/* ── tier2 — the operator allowlist ──────────────────────────────────────── */
+
+describe('POST /api/funds-tier — tier2 via OPERATOR_ALLOWLIST', () => {
+  /** A listed wallet and one that is not — both real base58 addresses. */
+  const OPERATOR = '9WzDXwBbmkg8ZTbNMqUxvQRAyrZzDsGYdLVL9zYtAWWM'
+  const STRANGER = 'GVenujqgMJZCvYPKqMmPiAXQp7o3mwQbXw1nSBu3U5Ht'
+  const SGT_MINT = 'GT22s89nU4iWFkNXj1Bw6uYhJJWDRPpShHt4Bk8f99Te'
+
+  beforeEach(() => {
+    resetAllowlist()
+  })
+
+  afterEach(() => {
+    delete process.env.OPERATOR_ALLOWLIST
+    delete process.env.SGT_DEV_ALLOWLIST
+    delete process.env.SGT_RPC_URL
+    resetAllowlist()
+  })
+
+  async function postWith(checkSgt: SgtChecker, body: unknown) {
+    const res = mockRes()
+    await createFundsTierHandler({ checkSgt })({ method: 'POST', body }, res)
+    return res
+  }
+
+  it('lifts a listed wallet to the $250 ceiling', async () => {
+    process.env.OPERATOR_ALLOWLIST = OPERATOR
+
+    const res = await post({ amountUsdc: 250, wallet: OPERATOR })
+
+    expect(res.statusCode).toBe(200)
+    expect(res.payload).toMatchObject({
+      allowed: true,
+      tier: 'tier2',
+      limitUsdc: 250,
+      seeker: false,
+      operator: true,
+      // Provenance stays about the seeker claim, which nobody made here.
+      trust: 'not-seeker',
+    })
+  })
+
+  it('leaves an unlisted wallet at the base tier', async () => {
+    process.env.OPERATOR_ALLOWLIST = OPERATOR
+
+    const res = await post({ amountUsdc: 250, wallet: STRANGER })
+
+    expect(res.payload).toMatchObject({ allowed: false, tier: 'tier1', limitUsdc: 100, operator: false })
+  })
+
+  it('denies everything while the list is empty — fail closed', async () => {
+    const res = await post({ amountUsdc: 150, wallet: OPERATOR })
+
+    expect(res.payload).toMatchObject({ allowed: false, tier: 'tier1', operator: false })
+  })
+
+  it('honours no wildcard — OPERATOR_ALLOWLIST="*" grants nobody', async () => {
+    // The dev list treats '*' as allow-everything; this one must not, or a
+    // mistyped env would hand the $250 ceiling to every wallet in the world.
+    process.env.OPERATOR_ALLOWLIST = '*'
+
+    const res = await post({ amountUsdc: 250, wallet: OPERATOR })
+
+    expect(res.payload).toMatchObject({ allowed: false, tier: 'tier1', operator: false })
+  })
+
+  it('applies the admin console runtime override without touching the dev list', async () => {
+    process.env.OPERATOR_ALLOWLIST = STRANGER
+    process.env.SGT_DEV_ALLOWLIST = STRANGER
+    const updated = updateAllowlist('operator', { add: [OPERATOR] })
+
+    expect(updated.ok && updated.entries).toEqual([STRANGER, OPERATOR])
+
+    const res = await post({ amountUsdc: 250, wallet: OPERATOR })
+    expect(res.payload).toMatchObject({ tier: 'tier2', operator: true })
+
+    // The override is per-list: the dev sign-in list still reads its own env
+    // base, so granting tier2 here did not quietly grant sign-in too.
+    expect(isEligible(OPERATOR)).toBe(false)
+    expect(isEligible(STRANGER)).toBe(true)
+
+    // Dropping the override (what a process restart does) falls back to env.
+    resetAllowlist()
+    const afterReset = await post({ amountUsdc: 250, wallet: OPERATOR })
+    expect(afterReset.payload).toMatchObject({ tier: 'tier1', operator: false })
+  })
+
+  it('lets a verified Seeker keep $500 above an operator ceiling', async () => {
+    process.env.OPERATOR_ALLOWLIST = OPERATOR
+    process.env.SGT_RPC_URL = 'https://mainnet.example.invalid'
+    const checkSgt = vi.fn<SgtChecker>(async () => ({ hasSGT: true, mintAddress: SGT_MINT }))
+
+    const res = await postWith(checkSgt, { amountUsdc: 500, wallet: OPERATOR, seeker: true })
+
+    expect(res.payload).toMatchObject({
+      allowed: true,
+      tier: 'tier3',
+      limitUsdc: 500,
+      seeker: true,
+      operator: true,
+      trust: 'sgt-verified',
+      mintAddress: SGT_MINT,
+    })
+  })
+
+  it('keeps tier2 when the Seeker claim is rejected — the two are independent', async () => {
+    process.env.OPERATOR_ALLOWLIST = OPERATOR
+    process.env.SGT_RPC_URL = 'https://mainnet.example.invalid'
+    const checkSgt = vi.fn<SgtChecker>(async () => ({ hasSGT: false, mintAddress: null }))
+
+    const res = await postWith(checkSgt, { amountUsdc: 250, wallet: OPERATOR, seeker: true })
+
+    // Without the allowlist this wallet would be back at $100.
+    expect(res.payload).toMatchObject({
+      allowed: true,
+      tier: 'tier2',
+      limitUsdc: 250,
+      seeker: false,
+      operator: true,
+      trust: 'seeker-rejected',
+    })
   })
 })

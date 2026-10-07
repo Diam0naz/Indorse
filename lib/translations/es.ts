@@ -821,6 +821,11 @@ export const es: Record<MessageKey, string> = {
   'admin.allowlistSourceEnv': 'desde variables de entorno',
   'admin.allowlistSourceRuntime': 'anulación en ejecución',
   'admin.emptyAllowlist': 'La lista está vacía — el inicio de sesión falla en modo cerrado.',
+  'admin.operatorAllowlist': 'Lista de operadores: {count} entradas',
+  'admin.operatorIntro':
+    'Separada de la de acceso: una cartera incluida alcanza la franja de 250 $ en lugar de la base de 100 $.',
+  'admin.emptyOperatorAllowlist':
+    'La lista de operadores está vacía — toda cartera se queda en la franja base de 100 $.',
   'admin.noStatus': 'Toca actualizar para cargar el estado de la API.',
   'admin.phEntry': 'Dirección de la billetera o nombre.skr',
   'admin.addEntry': 'Añadir entrada',

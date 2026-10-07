@@ -19,23 +19,35 @@ import { useMutation } from '@tanstack/react-query'
 import { getApiOrigin } from '@/lib/api-origin'
 import { useMobileWalletSetup } from '@/features/wallet/useMobileWalletSetup'
 
+/**
+ * Which allowlist an operation targets. Mirrors `_lib/allowlist.ts`'s
+ * `AllowlistName` — app code never imports from `api/`.
+ */
+export type AllowlistName = 'dev' | 'operator'
+
 /** `POST /api/admin/status` response. */
 export interface AdminStatus {
   config: { admin: string; verifier: string; oracle: string }
+  /** The dev sign-in list — kept under its historic key. */
   allowlist: { entries: string[]; source: 'env' | 'runtime' }
+  /** Funds-tier tier2 ("verified operators"). */
+  operatorAllowlist: { entries: string[]; source: 'env' | 'runtime' }
   /** Feature flags — which provider backends are configured server-side. */
   api: { email: boolean; sas: boolean; ai: boolean }
 }
 
-/** `POST /api/admin/allowlist` request — set operations on the dev allowlist. */
+/** `POST /api/admin/allowlist` request — set operations on one list. */
 export interface AllowlistUpdate {
   add?: string[]
   remove?: string[]
+  /** Omitted = `'dev'`, so a caller written before the operator list still works. */
+  list?: AllowlistName
 }
 
 export interface AllowlistResult {
   entries: string[]
   source: 'env' | 'runtime'
+  list?: AllowlistName
 }
 
 type WalletLike = {
@@ -90,7 +102,7 @@ export function useAdminStatus() {
   })
 }
 
-/** Applies set operations to the runtime dev allowlist. */
+/** Applies set operations to one runtime allowlist (`list` selects which). */
 export function useAllowlistUpdate() {
   const { wallet, address } = useMobileWalletSetup()
   return useMutation<AllowlistResult, Error, AllowlistUpdate>({

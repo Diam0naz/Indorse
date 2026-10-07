@@ -28,6 +28,7 @@ import { USDC_DEVNET, USDC_MAINNET } from '@/constants/tokens'
 import { getCreatePolicyInstruction } from '@/lib/generated/indorse'
 import { ataPda, buildCreateAtaInstruction, insuranceVaultPda, policyPda, toAddress, treasuryPda } from '@/lib/program'
 import { checkFundTier } from '@/lib/funds-tier'
+import { isSeekerDevice } from '@/lib/seeker'
 import { usdcToLamports } from '@/lib/format'
 import { validateCreatePolicy } from './types'
 import type { CreatePolicyInput } from './types'
@@ -48,11 +49,24 @@ export function useCreatePolicy() {
       const verdict = await checkFundTier({
         amountUsdc: input.coverageUsdc,
         wallet: address,
-        seeker: process.env.EXPO_PUBLIC_FORCE_SEEKER === 'true',
+        // Ask, don't assert: `isSeekerDevice()` is presentation-grade and
+        // spoofable, but this is a *request* the server verifies through its
+        // SGT check — the claim is only ever a prompt for that verdict.
+        // Gating this on `seekerForced()` instead (as it was) meant a shipped
+        // build, where FORCE_SEEKER is unset, could never claim seeker at all,
+        // so tier3 and its server-side verification were unreachable in
+        // production. Dev behaviour is identical: the forced flag short-
+        // circuits inside `isSeekerDevice()` too.
+        seeker: isSeekerDevice(),
       })
       if (!verdict.allowed) {
         throw new Error(
-          `Cover of $${input.coverageUsdc} exceeds this device's $${verdict.limitUsdc} tier limit (${verdict.tier ?? 'unknown'}).`,
+          `Cover of $${input.coverageUsdc} exceeds this device's $${verdict.limitUsdc} tier limit (${verdict.tier ?? 'unknown'}).` +
+            // Say why the ceiling is where it is — a denied Seeker who never
+            // learns their claim failed will simply assume the app is broken.
+            (verdict.trust === 'seeker-rejected'
+              ? " This device's Seeker claim did not verify against the SGT check."
+              : ''),
         )
       }
 

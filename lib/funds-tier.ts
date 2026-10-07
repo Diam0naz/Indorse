@@ -8,7 +8,7 @@
  * this device's tier. Nothing over-limit is ever built, simulated or sent.
  *
  *   tier1  $100   base tier
- *   tier2  $250   reserved — verified operators (next up)
+ *   tier2  $250   verified operators — the server's `OPERATOR_ALLOWLIST`
  *   tier3  $500   Seeker devices
  *
  * Configuration:
@@ -18,14 +18,41 @@
  *                             unset → dev default is open with
  *                                      reason 'tier-gate-not-configured'
  *
- * `seeker` is client-asserted (EXPO_PUBLIC_FORCE_SEEKER is a dev flag);
- * the server decides how far to trust it and says which gate ran via
- * `trust`: 'sgt-verified' when the shared SGT check passes (mainnet,
- * `SGT_RPC_URL`), 'seeker-rejected' when it fails (downgraded to tier1),
- * or 'client-asserted-dev' when the check is not configured.
+ * `seeker` is a *request*, not a fact: the client asks, the server verifies
+ * (shared `_lib/sgt` check when `SGT_RPC_URL` is set) and answers with the
+ * whole verdict. `operator` is never sent by the client at all — it comes
+ * back only, because tier2 is a server-side entitlement. The response keeps
+ * every label the server sent (`trust`, `mintAddress`, `operator`) rather
+ * than only what the pre-submit check needs, so a caller can tell a verified
+ * Seeker from a dev-asserted one.
+ *
+ *   trust: 'sgt-verified'       SGT check passed (mainnet)
+ *          'seeker-rejected'    SGT check failed — dropped to base/operator
+ *          'client-asserted-dev'  check not configured (dev / tests)
+ *          'not-seeker'         no claim made
  */
 
 export type FundTierId = 'tier1' | 'tier2' | 'tier3'
+
+/**
+ * Which gate judged the `seeker` claim. Mirrors `api/funds-tier.ts`'s
+ * `FundsTierTrust` — app code never imports from `api/` (the functions are
+ * bundled separately), so the union is restated here the same way
+ * `features/admin/adminApi.ts` restates its route shapes.
+ */
+export type FundTierTrust = 'not-seeker' | 'client-asserted-dev' | 'sgt-verified' | 'seeker-rejected'
+
+/** Runtime guard for a label that came off the wire. */
+const FUND_TIER_TRUSTS: readonly FundTierTrust[] = [
+  'not-seeker',
+  'client-asserted-dev',
+  'sgt-verified',
+  'seeker-rejected',
+]
+
+function isFundTierTrust(value: unknown): value is FundTierTrust {
+  return FUND_TIER_TRUSTS.includes(value as FundTierTrust)
+}
 
 export interface FundTierVerdict {
   allowed: boolean
@@ -35,6 +62,22 @@ export interface FundTierVerdict {
   limitUsdc: number
   reason: string
   seeker: boolean
+  /**
+   * How the `seeker` claim was judged. Absent when the gate is not
+   * configured (no server to ask) and when the server sent a label this
+   * build does not recognise — only well-formed output is forwarded, so a
+   * future or corrupt value never reaches a screen as if it meant something.
+   */
+  trust?: FundTierTrust
+  /** Device identity the SGT check returned; the key anti-Sybil logic uses. */
+  mintAddress?: string | null
+  /**
+   * The server put this wallet on its operator allowlist (tier2). Never sent
+   * by the client — it is an entitlement, so it only ever arrives from the
+   * server, and is absent when the gate is off rather than defaulting to
+   * `false` (which would claim "checked and not an operator").
+   */
+  operator?: boolean
 }
 
 export interface CheckFundTierInput {
@@ -95,12 +138,21 @@ export async function checkFundTier(
     if (typeof body.allowed !== 'boolean') {
       throw new Error('tier gate returned a malformed verdict')
     }
+    // Everything past `allowed` is forwarded only when it is well-formed:
+    // these labels end up on screen, so an unrecognised one is dropped
+    // rather than coerced into something plausible.
+    const trust = isFundTierTrust(body.trust) ? body.trust : undefined
+    const mintAddress = typeof body.mintAddress === 'string' ? body.mintAddress : undefined
+    const operator = typeof body.operator === 'boolean' ? body.operator : undefined
     return {
       allowed: body.allowed,
       tier: body.tier ?? null,
       limitUsdc: typeof body.limitUsdc === 'number' ? body.limitUsdc : 0,
       reason: typeof body.reason === 'string' ? body.reason : 'unknown',
       seeker: body.seeker === true,
+      ...(trust ? { trust } : {}),
+      ...(mintAddress !== undefined ? { mintAddress } : {}),
+      ...(operator !== undefined ? { operator } : {}),
     }
   } catch (error) {
     if (error instanceof Error && error.message.startsWith('tier gate')) throw error

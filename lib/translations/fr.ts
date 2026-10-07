@@ -827,6 +827,11 @@ export const fr: Record<MessageKey, string> = {
   'admin.allowlistSourceEnv': 'depuis les variables d’environnement',
   'admin.allowlistSourceRuntime': 'remplacement à l’exécution',
   'admin.emptyAllowlist': 'La liste est vide — la connexion échoue en mode fermé.',
+  'admin.operatorAllowlist': 'Liste des opérateurs : {count} entrées',
+  'admin.operatorIntro':
+    'Distincte de la connexion : un portefeuille inscrit atteint le palier de 250 $ au lieu du palier de base à 100 $.',
+  'admin.emptyOperatorAllowlist':
+    'La liste des opérateurs est vide — chaque portefeuille reste au palier de base de 100 $.',
   'admin.noStatus': 'Touchez actualiser pour charger l’état de l’API.',
   'admin.phEntry': 'Adresse du portefeuille ou nom.skr',
   'admin.addEntry': 'Ajouter une entrée',

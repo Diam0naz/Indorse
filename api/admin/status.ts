@@ -3,15 +3,20 @@
  *
  * The body carries a single-use SIWS proof (address/nonce/signature), which
  * this route verifies before reading the config PDA on-chain and requiring
- * the signer to be `config.admin`. The dev allowlist is NOT part of the gate
- * — protocol authority is decided by the chain, not the entitlement list.
+ * the signer to be `config.admin`.
  *
  *   POST /api/admin/status
  *   { address, nonce, signature: number[64], signedMessage: number[] }
  *   → 200 { config: { admin, verifier, oracle },
- *           allowlist: { entries, source },
+ *           allowlist: { entries, source },          ← the dev sign-in list
+ *           operatorAllowlist: { entries, source },  ← funds-tier tier2
  *           api: { email, sas, ai } }
  *   → 400 malformed · 401 bad proof · 403 not-admin/no-config · 502 RPC
+ *
+ * `allowlist` keeps its historic name (it was the only list when this route
+ * was written) rather than becoming `devAllowlist`, so nothing that reads it
+ * today has to move. Neither list is part of the gate — protocol authority
+ * is decided by the chain, not an entitlement list.
  *
  * `api` answers with booleans only — whether a backend is configured, never
  * a secret's value.
@@ -47,7 +52,8 @@ export default async function handler(req: ProxyRequest, res: ProxyResponse): Pr
       verifier: gate.config.verifier,
       oracle: gate.config.oracle,
     },
-    allowlist: { entries: allowlistEntries(), source: allowlistSource() },
+    allowlist: { entries: allowlistEntries('dev'), source: allowlistSource('dev') },
+    operatorAllowlist: { entries: allowlistEntries('operator'), source: allowlistSource('operator') },
     api: {
       email: Boolean(process.env.RESEND_API_KEY),
       sas: sasConfigFromEnv() !== null,
