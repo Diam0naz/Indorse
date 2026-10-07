@@ -111,7 +111,9 @@ function stubConfigRpc(config: { admin: string } | null | 'fail') {
       })
     if (request.method === 'getAccountInfo') {
       const value = config
-        ? rpcAccount(encodeAccount('Config', { admin: config.admin, verifier: VERIFIER_ROLE, oracle: ORACLE_ROLE, bump: 255 }))
+        ? rpcAccount(
+            encodeAccount('Config', { admin: config.admin, verifier: VERIFIER_ROLE, oracle: ORACLE_ROLE, bump: 255 }),
+          )
         : null
       return respond({ context: { slot: 1 }, value })
     }

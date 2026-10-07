@@ -1,5 +1,6 @@
-import { describe, expect, it } from 'vitest'
-import handler, { FUND_TIERS, tierForSeeker } from '@/api/funds-tier'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import handler, { FUND_TIERS, createFundsTierHandler, tierForSeeker } from '@/api/funds-tier'
+import type { SgtChecker } from '@/api/_lib/sgt'
 
 function mockRes() {
   const res = {
@@ -73,5 +74,98 @@ describe('POST /api/funds-tier', () => {
     expect(FUND_TIERS.map((tier) => tier.limitUsdc)).toEqual([100, 250, 500])
     expect(tierForSeeker(false).id).toBe('tier1')
     expect(tierForSeeker(true).id).toBe('tier3')
+  })
+})
+
+describe('POST /api/funds-tier — server-side SGT verification (SGT_RPC_URL configured)', () => {
+  /** A parseable mainnet-format address — the legacy tests' 'Fy2a' is not one. */
+  const WALLET = '9WzDXwBbmkg8ZTbNMqUxvQRAyrZzDsGYdLVL9zYtAWWM'
+  const SGT_MINT = 'GT22s89nU4iWFkNXj1Bw6uYhJJWDRPpShHt4Bk8f99Te'
+
+  beforeEach(() => {
+    process.env.SGT_RPC_URL = 'https://mainnet.example.invalid'
+  })
+
+  afterEach(() => {
+    delete process.env.SGT_RPC_URL
+  })
+
+  async function postWith(checkSgt: SgtChecker, body: unknown) {
+    const res = mockRes()
+    await createFundsTierHandler({ checkSgt })({ method: 'POST', body }, res)
+    return res
+  }
+
+  it('grants tier3 only to a wallet that passes the SGT check', async () => {
+    const checkSgt = vi.fn<SgtChecker>(async () => ({ hasSGT: true, mintAddress: SGT_MINT }))
+
+    const res = await postWith(checkSgt, { amountUsdc: 500, wallet: WALLET, seeker: true })
+
+    expect(res.statusCode).toBe(200)
+    expect(res.payload).toMatchObject({
+      allowed: true,
+      tier: 'tier3',
+      limitUsdc: 500,
+      seeker: true,
+      trust: 'sgt-verified',
+      mintAddress: SGT_MINT,
+    })
+    expect(checkSgt).toHaveBeenCalledWith(WALLET)
+  })
+
+  it('downgrades a claimed Seeker that fails the check to the base tier', async () => {
+    const checkSgt = vi.fn<SgtChecker>(async () => ({ hasSGT: false, mintAddress: null }))
+
+    const res = await postWith(checkSgt, { amountUsdc: 500, wallet: WALLET, seeker: true })
+
+    expect(res.statusCode).toBe(200)
+    expect(res.payload).toMatchObject({
+      allowed: false,
+      tier: 'tier1',
+      limitUsdc: 100,
+      seeker: false,
+      trust: 'seeker-rejected',
+      reason: 'amount-exceeds-tier-limit',
+    })
+    expect(res.payload).not.toHaveProperty('mintAddress')
+  })
+
+  it('answers 503 when the check fails — an outage grants nothing and denies nothing', async () => {
+    const checkSgt = vi.fn<SgtChecker>(async () => {
+      throw new Error('rpc down')
+    })
+
+    const res = await postWith(checkSgt, { amountUsdc: 500, wallet: WALLET, seeker: true })
+
+    expect(res.statusCode).toBe(503)
+    expect(res.payload).toEqual({ error: 'Seeker verification temporarily unavailable' })
+  })
+
+  it('rejects an unparseable wallet before the claim reaches the RPC', async () => {
+    const checkSgt = vi.fn<SgtChecker>(async () => ({ hasSGT: true, mintAddress: SGT_MINT }))
+
+    const res = await postWith(checkSgt, { amountUsdc: 500, wallet: 'Fy2a', seeker: true })
+
+    expect(res.statusCode).toBe(400)
+    expect(checkSgt).not.toHaveBeenCalled()
+  })
+
+  it('does not consult the check without a seeker claim', async () => {
+    const checkSgt = vi.fn<SgtChecker>(async () => ({ hasSGT: true, mintAddress: SGT_MINT }))
+
+    const res = await postWith(checkSgt, { amountUsdc: 500, wallet: WALLET })
+
+    expect(res.payload).toMatchObject({ tier: 'tier1', seeker: false, trust: 'not-seeker' })
+    expect(checkSgt).not.toHaveBeenCalled()
+  })
+
+  it('keeps the client-asserted label when the check is not configured', async () => {
+    delete process.env.SGT_RPC_URL
+    const checkSgt = vi.fn<SgtChecker>(async () => ({ hasSGT: false, mintAddress: null }))
+
+    const res = await postWith(checkSgt, { amountUsdc: 500, wallet: 'Fy2a', seeker: true })
+
+    expect(res.payload).toMatchObject({ allowed: true, tier: 'tier3', seeker: true, trust: 'client-asserted-dev' })
+    expect(checkSgt).not.toHaveBeenCalled()
   })
 })

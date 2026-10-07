@@ -14,33 +14,33 @@ commands at the bottom).
 
 ### Screens
 
-| Route                   | Screen     | What it does                                                                                                                       |
-| ----------------------- | ---------- | ---------------------------------------------------------------------------------------------------------------------------------- |
-| `/(tabs)/index`         | Scouting   | Summary tiles, per-field risk status, scouting log with expandable rows, docked "Scout Field" / "Register farm" action stack       |
-| `/(tabs)/farms`         | Provenance | Farm PDA + account, provenance score (verified/total reports), active escrow and its escrowed batch                                |
-| `/(tabs)/reports`       | Weather    | Parametric weather policy: cover details, live oracle rainfall vs trigger threshold, season chart, policy strip                    |
-| `/(tabs)/rewards`       | Profile    | Operator identity, SOL/USDC balances, farm details, recent on-chain activity, settings list (admin entry only for `config.admin`)  |
-| `/onboarding`, `/setup` | —          | 3-slide intro + wallet connect; profile-driven setup wizard                                                                        |
-| `settings/*`            | Settings   | account · **admin** (on-chain console) · export (CSV) · language (en/es/fr) · network (cluster) · notifications · security · theme |
+| Route                   | Screen     | What it does                                                                                                                                                                 |
+| ----------------------- | ---------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `/(tabs)/index`         | Scouting   | Summary tiles, per-field risk status, **Discover card (other farms → scout target)**, scouting log with expandable rows, docked "Scout Field" / "Register farm" action stack |
+| `/(tabs)/farms`         | Provenance | Farm PDA + account, provenance score (verified/total reports), active escrow and its escrowed batch                                                                          |
+| `/(tabs)/reports`       | Weather    | Parametric weather policy: cover details, live oracle rainfall vs trigger threshold, season chart, policy strip                                                              |
+| `/(tabs)/rewards`       | Profile    | Operator identity, SOL/USDC balances, farm details, recent on-chain activity, settings list (admin entry only for `config.admin`)                                            |
+| `/onboarding`, `/setup` | —          | 3-slide intro + wallet connect; profile-driven setup wizard                                                                                                                  |
+| `settings/*`            | Settings   | account · **admin** (on-chain console) · export (CSV) · language (en/es/fr) · network (cluster) · notifications · security · theme                                           |
 
 `app/index.tsx` dispatches: new user → `/onboarding`, returning user → `/(tabs)`.
 
 ### Feature modules (`features/`)
 
-| Module      | Service                                                                                                                                            |
-| ----------- | -------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `admin`     | Config.admin console: queries for roles/treasury/seats, 10 action hooks, typed-confirmation validation                                             |
-| `ai`        | Photo-classify client — up to 5 images per call, verdict schema capped to on-chain `aiLabel` limits — plus the dual-model harvest **grade** client |
-| `assistant` | "Ask indorse" client + floating help chip — per-screen first question, app-context payload (route/farm/policy)                                     |
-| `email`     | OTP request/verify hooks for account registration and recovery                                                                                     |
-| `escrow`    | Escrow create/release/cancel hooks and queries                                                                                                     |
-| `farm`      | Farm registry (local + chain sync), register flow, farm queries, **season derivation** from geolocation                                            |
-| `harvest`   | Harvest batch submission and queries                                                                                                               |
-| `insurance` | Policy create/revoke/settle hooks, roster of policies for the Weather screen                                                                       |
-| `profile`   | Onboarding profile state                                                                                                                           |
-| `reports`   | Scout report queries and reward flows                                                                                                              |
-| `scout`     | Camera capture flow, diagnosis results, scout log, evidence storage (content-addressed copies of captured shots in app storage)                    |
-| `wallet`    | MWA setup, balance queries, `useWalletMutation` tx helper, SIWS device verification, funds-tier client                                             |
+| Module      | Service                                                                                                                                                                               |
+| ----------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `admin`     | Config.admin console: queries for roles/treasury/seats, 10 action hooks, typed-confirmation validation                                                                                |
+| `ai`        | Photo-classify client — up to 5 images per call, verdict schema capped to on-chain `aiLabel` limits — plus the dual-model harvest **grade** client                                    |
+| `assistant` | "Ask indorse" client + floating help chip — per-screen first question, app-context payload (route/farm/policy)                                                                        |
+| `email`     | OTP request/verify hooks for account registration and recovery                                                                                                                        |
+| `escrow`    | Escrow create/release/cancel hooks and queries                                                                                                                                        |
+| `farm`      | Farm registry (local + chain sync), register flow, farm queries, **directory client** (publish-on-sync + the Discover card's pure derivation), **season derivation** from geolocation |
+| `harvest`   | Harvest batch submission and queries                                                                                                                                                  |
+| `insurance` | Policy create/revoke/settle hooks, roster of policies for the Weather screen                                                                                                          |
+| `profile`   | Onboarding profile state                                                                                                                                                              |
+| `reports`   | Scout report queries and reward flows                                                                                                                                                 |
+| `scout`     | Camera capture flow, diagnosis results, scout log, evidence storage (content-addressed copies of captured shots in app storage)                                                       |
+| `wallet`    | MWA setup, balance queries, `useWalletMutation` tx helper, SIWS device verification, funds-tier client                                                                                |
 
 ### App-level services
 
@@ -62,6 +62,13 @@ pathogenName}` (plant identity + causal agent are app-layer display, the
   rainfall vs trigger threshold, season chart (all real chain reads).
 - **Scouting & provenance** — reports land on-chain; provenance score is
   verified/total per farm.
+- **Cross-farm discovery** — a `Discover` card on the Scouting tab lists
+  other farms from the directory (distance, verified/total, pending
+  verification); its sheet arms a **scout target**, and new captures anchor
+  to that farm — stamped into the outbox payload at capture time, so even
+  wallet-down queues land where they were taken. The featured farm keeps
+  owning everything else (log reads, fields, tiles). See
+  `docs/discovery.md` for the full spec.
 - **Evidence storage** — every captured shot is copied into app storage at
   submit (`evidence/<sha256-of-bytes>.jpg`, content-addressed so a file
   re-hashes to the digest the row recorded); files follow their rows (FIFO
@@ -134,15 +141,20 @@ assistant routes have their own URLs (`EXPO_PUBLIC_AI_GRADE_URL`,
 | `POST /api/grade`           | Dual-model harvest grade — Gemini `flash-lite` first opinion + Groq `gpt-oss-120b` second on the batch record (no photo). Agree → averaged confidence; disagree → higher-confidence grade, **minimum** confidence, flag bit 0 (human verifier); one fail → `single` (flagged < 0.5); both fail → 502                                                                                                                                                     |
 | `POST /api/assistant`       | "Ask indorse" grounded guide — Groq `gpt-oss-120b` at **temperature 0** over the hand-written `api/_lib/knowledge.ts` doc + app context (route/farm/policy, allowlisted & clipped). Explain-only system rules incl. "never fill a gap", 1000-char message cap, per-IP rate limit (30/min → 429), an upstream Groq 429 passed through as 429 rather than 502, reply markdown stripped. Regression-guarded by `scripts/assistant-eval.ts` (trap questions) |
 | `POST /api/siws/nonce`      | Sign-In-With-Solana: server issues the whole payload, stored single-use under a nonce (5 min TTL)                                                                                                                                                                                                                                                                                                                                                        |
-| `POST /api/siws/verify`     | Consumes the nonce, ed25519-verifies with the key **derived from the address**, then `isEligible()` gate (`SGT_DEV_ALLOWLIST`, fails closed)                                                                                                                                                                                                                                                                                                             |
+| `POST /api/siws/verify`     | Consumes the nonce, ed25519-verifies with the key **derived from the address**, then `isEligible()` gate (`SGT_DEV_ALLOWLIST`, fails closed) → on a miss, the server-side **SGT mainnet check** when `SGT_RPC_URL` is set (`method: 'sgt'` + `mintAddress` on a pass, `reason: 'no-sgt'` on a miss; **503** when the RPC is unreachable)                                                                                                                 |
 | `POST /api/email/start`     | Emails a 6-digit OTP via Resend (`RESEND_API_KEY`, optional `EMAIL_FROM`); salted SHA-256 keys in the OTP store; HTML body themed to the app's Warm Charcoal palette (hexes test-locked against `darkTokens`)                                                                                                                                                                                                                                            |
 | `POST /api/email/verify`    | Checks the code — drives registration/recovery email binding                                                                                                                                                                                                                                                                                                                                                                                             |
 | `POST /api/admin/status`    | SIWS proof **and** server-side `config.admin` re-check: roles, allowlist + source, email/SAS/AI flags                                                                                                                                                                                                                                                                                                                                                    |
 | `POST /api/admin/allowlist` | Runtime allowlist override layered over env (env stays the fail-closed default)                                                                                                                                                                                                                                                                                                                                                                          |
-| `POST /api/funds-tier`      | Tier ceiling for policy funds ($100/$250/$500). The `seeker` claim is labelled `client-asserted-dev` today — **server-side SGT verification slots into this same handler**                                                                                                                                                                                                                                                                               |
+| `POST /api/funds-tier`      | Tier ceiling for policy funds ($100/$250/$500). The `seeker` claim is verified **server-side** through the shared SGT check when `SGT_RPC_URL` is set — pass → `trust: 'sgt-verified'` (+`mintAddress`), fail → downgraded to tier1 `trust: 'seeker-rejected'`, RPC error → 503; unconfigured (dev/tests) keeps the honest `client-asserted-dev` label                                                                                                   |
+| `GET/POST /api/directory`   | Farm directory for cross-farm discovery — `POST {farm}` publishes an address, which the server **re-reads on devnet before storing** (a publish can only list a real `Farm` account; 400/404/429 per-IP/502); `GET` returns snapshots and re-reads rows older than 60 s, keeping the stale row on RPC failure. In-memory: restarts self-heal as devices re-publish their roster                                                                          |
 
 Shared libraries (`api/_lib/`): `siws-auth` (verify core shared by
-`/siws/verify` and the admin routes) · `admin-auth` · `allowlist` · `sas` +
+`/siws/verify` and the admin routes) · `admin-auth` · `allowlist` ·
+`sgt` (shared **Seeker Genesis Token** check — all four mint properties
+must match, zero-balance accounts filtered first, verdict cached, RPC
+failures throw → 503 at the handlers; feeds both `/siws/verify` and
+`/funds-tier`) · `sas` +
 `sas-issuer` (**Solana Attestation Service** seam — on-chain proof that a
 wallet controls an email; only salted hashes ever reach a schema field) ·
 `otp-store` · `email` · `gemini` / `openai` / `proxy` / `prompt` ·
@@ -153,7 +165,8 @@ system-prompt assembly).
 
 - Server: `OPENAI_API_KEY` / `GEMINI_API_KEY` · `GROQ_API_KEY` (grading
   second opinion + the assistant; optional `GROQ_MODEL`) · `RESEND_API_KEY` (+`EMAIL_FROM`) ·
-  `SGT_DEV_ALLOWLIST`, `SIWS_DOMAIN`, `SIWS_URI` ·
+  `SGT_DEV_ALLOWLIST`, `SGT_RPC_URL` (enables the server-side SGT gate),
+  `SIWS_DOMAIN`, `SIWS_URI` ·
   `SAS_ISSUER_SECRET`, `SAS_CREDENTIAL_PDA`, `SAS_SCHEMA_PDA` (+`SAS_RPC_URL`, `SAS_EMAIL_PEPPER`)
 - App: `EXPO_PUBLIC_SOLANA_RPC_URL` · `EXPO_PUBLIC_AI_CLASSIFY_URL` (origin source) ·
   `EXPO_PUBLIC_FUND_TIER_URL` (tier gate on/off) · `EXPO_PUBLIC_FORCE_SEEKER` (dev-only preview)
@@ -207,21 +220,29 @@ system-prompt assembly).
 6. **SIWS device verification** — signed-message proof from the device
    wallet, verified server-side; verdict rendered as the device-verified
    mark in Settings → Wallet & Security.
-7. **Funds-tier tier3 = $500 for Seeker devices** — implemented, but the
-   seeker claim is client-asserted and labelled `client-asserted-dev`
-   (boundary is explicit; see below).
+7. **Server-side Seeker Genesis Token (SGT) verification**
+   (`api/_lib/sgt.ts`) — the headline item, implemented behind
+   `SGT_RPC_URL` (mainnet-only; unset keeps dev/test behaviour). One
+   shared module decides for both consumers: the SIWS allowlist miss
+   (`method: 'sgt'` / `reason: 'no-sgt'`) and the funds-tier `seeker`
+   claim. All four mint properties must match, zero-balance accounts are
+   filtered before the mint is read, frozen accounts are not rejected, and
+   an RPC outage answers **503** — never "no SGT". Verdicts are cached
+   briefly per wallet; the mint address (the device identity) is returned
+   for anti-Sybil recording.
+8. **Funds-tier tier3 = $500 for Seeker devices** — with the SGT gate on,
+   the claim is verified server-side (`trust: 'sgt-verified'`, else
+   downgraded to tier1 `seeker-rejected`); with it off, the claim stays
+   client-asserted and is labelled `client-asserted-dev` (boundary is
+   explicit).
 
 ### Relevant, available, not yet wired
 
-1. **Seeker Genesis Token (SGT) verification** — the headline item, and two
-   seams are already cut for it: `isEligible()` in the SIWS verify path
-   (`api/README.md` marks this roadmap #3/#5; `SGT_DEV_ALLOWLIST` is the
-   placeholder) and the `POST /api/funds-tier` handler (which the comments
-   name as the slot for server-side SGT verification, and which would make
-   tier2 "verified operators" real). SIWS message verification already
-   exists server-side, so this is a server-side ownership check plus gating
-   rules — natural uses: gated rewards, early-access onboarding,
-   one-claim-per-device.
+1. **Policy surfaces on top of the SGT verdict** — the check exists
+   server-side and returns the mint (device identity), but nothing yet
+   consumes it beyond the two gates: one-claim-per-device anti-Sybil,
+   gated rewards, early-access onboarding, and the still-reserved tier2
+   "verified operators" all become possible from the same verdict.
 2. **Forward .skr resolution — name → address** (`seeker-domains`) — the app
    resolves only the reverse direction today. Forward resolution plus input
    validation (`normalizeSkrName` already normalizes and validates shape)

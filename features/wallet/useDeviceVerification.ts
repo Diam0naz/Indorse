@@ -4,9 +4,10 @@
  * The server decides; this hook only collects the two proofs it asks for:
  * the server-issued SIWS payload (`signIn` on the connected wallet) and the
  * POST of `{ address, nonce, signature, signedMessage }`. The verdict comes
- * back from `api/siws/verify` — dev allowlist today, SGT on-mainnet check
- * server-side later — and is display-only: entitlement is never decided in
- * the app (a patched client can claim anything; see lib/seeker.ts).
+ * back from `api/siws/verify` — dev allowlist first, then the SGT
+ * on-mainnet check when the server has it configured — and is display-only:
+ * entitlement is never decided in the app (a patched client can claim
+ * anything; see lib/seeker.ts).
  *
  * The API origin is derived from `EXPO_PUBLIC_AI_CLASSIFY_URL` (see
  * lib/api-origin) so the POC keeps one URL to configure.

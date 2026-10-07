@@ -59,16 +59,19 @@ const { label, confidence } = await classifyPhoto({ images: [{ imageBase64 }] },
 ## Device verification (SIWS — roadmap #3/#5)
 
 Server-side device gate, POC shape. Sign-in-with-Solana proves the caller
-controls the wallet; eligibility is a server-side dev allowlist — the real
-"wallet holds an SGT" mainnet check slots in behind the same `isEligible`
-seam later. Nothing here moves funds (no on-chain payout).
+controls the wallet; eligibility is decided here — dev allowlist first,
+then, when `SGT_RPC_URL` is configured, the real "wallet holds an SGT"
+mainnet check (`api/_lib/sgt.ts`, shared with `POST /api/funds-tier`).
+Entitlement is never decided in the app, and nothing here moves funds
+(no on-chain payout).
 
 ```
 app ──▶ POST /api/siws/nonce   ──▶ server issues the whole payload, stores it under a nonce (5 min TTL)
     ──▶ wallet.signIn(payload) ──▶ one signature, bound to the address
     ──▶ POST /api/siws/verify  ──▶ single-use nonce · ed25519 verify (key derived from the address)
-                                        ──▶ allowlist check
-                                        ──▶ { verified, address, method | reason }
+                                        ──▶ allowlist check → miss falls through to…
+                                        ──▶ SGT mainnet check (when SGT_RPC_URL set)
+                                        ──▶ { verified, address, method | reason }  (503 on RPC outage)
 ```
 
 - **`api/siws/nonce.ts`**: fills every payload field (domain, uri, statement,
@@ -77,10 +80,14 @@ app ──▶ POST /api/siws/nonce   ──▶ server issues the whole payload, 
 - **`api/siws/verify.ts`**: shape checks → consume the nonce → `verifySignIn`
   against the **stored** payload with the public key **derived from the
   address** (a body-supplied key would let any keypair sign for any address)
-  → `isEligible()` gate.
+  → `isEligible()` gate → SGT check on an allowlist miss (`method: 'sgt'` +
+  `mintAddress`, or `reason: 'no-sgt'`; an RPC outage answers 503, never a
+  fake deny).
 - **Env**: `SGT_DEV_ALLOWLIST` — comma-separated base58 addresses; `*` allows
   any SIWS-verified wallet (**dev/demo only**); empty fails closed.
-  `SIWS_DOMAIN` / `SIWS_URI` pin what the signature binds to.
+  `SGT_RPC_URL` — mainnet endpoint; set enables the SGT gate behind an
+  allowlist miss (unset keeps legacy behaviour). `SIWS_DOMAIN` /
+  `SIWS_URI` pin what the signature binds to.
 
 The app side is `features/wallet/useDeviceVerification.ts`; the verdict is
 rendered as the device-verified mark in Settings → Wallet & Security.

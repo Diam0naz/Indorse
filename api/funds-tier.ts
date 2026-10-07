@@ -9,12 +9,23 @@
  *   tier2  $250   reserved — verified operators
  *   tier3  $500   Seeker devices (higher limit for Seeker users)
  *
- * The `seeker` claim is client-asserted in the POC (the app's dev flag);
- * the response labels it `client-asserted-dev` so nothing pretends it was
- * verified. Server-side SGT verification slots into this same handler.
+ * How the `seeker` claim is judged depends on configuration — the response
+ * `trust` label always states which happened:
+ *
+ *   SGT_RPC_URL set      server-side verification through the shared
+ *                        `_lib/sgt.ts` module (same check SIWS uses):
+ *                        pass  → tier3, `sgt-verified` + `mintAddress`
+ *                        fail  → downgraded to tier1, `seeker-rejected`
+ *                        error → 503, no verdict (an outage is not a deny)
+ *   SGT_RPC_URL unset    legacy dev path — the claim is the app's
+ *                        `EXPO_PUBLIC_FORCE_SEEKER` flag, labelled
+ *                        `client-asserted-dev` so nothing pretends it was
+ *                        verified. Development and tests stay mainnet-free.
  */
 
 import type { ProxyRequest, ProxyResponse } from './_lib/proxy'
+import { isValidAddress } from './_lib/address'
+import { sgtEnabled, verifySgt, type SgtChecker } from './_lib/sgt'
 
 export interface FundTierDefinition {
   id: 'tier1' | 'tier2' | 'tier3'
@@ -40,33 +51,75 @@ export interface FundsTierBody {
   seeker?: boolean
 }
 
-export default async function fundsTier(req: ProxyRequest, res: ProxyResponse): Promise<void> {
-  if (req.method !== 'POST') {
-    res.status(405).json({ error: 'Method not allowed' })
-    return
-  }
-  const body = (req.body ?? {}) as Partial<FundsTierBody>
-  if (typeof body.amountUsdc !== 'number' || !Number.isFinite(body.amountUsdc) || body.amountUsdc <= 0) {
-    res.status(400).json({ error: 'amountUsdc must be a positive number' })
-    return
-  }
-  if (typeof body.wallet !== 'string' || body.wallet.trim().length === 0) {
-    res.status(400).json({ error: 'wallet is required' })
-    return
-  }
+/** Provenance of the tier verdict — which gate produced it. */
+export type FundsTierTrust = 'not-seeker' | 'client-asserted-dev' | 'sgt-verified' | 'seeker-rejected'
 
-  const seeker = body.seeker === true
-  const tier = tierForSeeker(seeker)
-  const allowed = body.amountUsdc <= tier.limitUsdc
-
-  res.status(200).json({
-    allowed,
-    tier: tier.id,
-    limitUsdc: tier.limitUsdc,
-    amountUsdc: body.amountUsdc,
-    seeker,
-    reason: allowed ? 'within-tier' : 'amount-exceeds-tier-limit',
-    // Honest provenance of the Seeker claim — dev flag, not verified SGT.
-    trust: seeker ? 'client-asserted-dev' : 'not-seeker',
-  })
+export interface FundsTierHandlerDeps {
+  /** SGT verdict source — defaults to the shared `_lib/sgt` module (env-gated). */
+  checkSgt?: SgtChecker
 }
+
+export function createFundsTierHandler(deps: FundsTierHandlerDeps = {}) {
+  const checkSgt = deps.checkSgt ?? verifySgt
+
+  return async function fundsTier(req: ProxyRequest, res: ProxyResponse): Promise<void> {
+    if (req.method !== 'POST') {
+      res.status(405).json({ error: 'Method not allowed' })
+      return
+    }
+    const body = (req.body ?? {}) as Partial<FundsTierBody>
+    if (typeof body.amountUsdc !== 'number' || !Number.isFinite(body.amountUsdc) || body.amountUsdc <= 0) {
+      res.status(400).json({ error: 'amountUsdc must be a positive number' })
+      return
+    }
+    if (typeof body.wallet !== 'string' || body.wallet.trim().length === 0) {
+      res.status(400).json({ error: 'wallet is required' })
+      return
+    }
+
+    let seeker = body.seeker === true
+    let trust: FundsTierTrust = seeker ? 'client-asserted-dev' : 'not-seeker'
+    let mintAddress: string | null = null
+
+    if (seeker && sgtEnabled()) {
+      // The claim was made, so it gets verified — the response will say how.
+      const wallet = body.wallet.trim()
+      if (!isValidAddress(wallet)) {
+        res.status(400).json({ error: 'wallet is not a valid address' })
+        return
+      }
+      try {
+        const verdict = await checkSgt(wallet)
+        if (verdict.hasSGT) {
+          trust = 'sgt-verified'
+          mintAddress = verdict.mintAddress
+        } else {
+          // Verified and rejected: keep the base tier, drop the claim.
+          seeker = false
+          trust = 'seeker-rejected'
+        }
+      } catch {
+        // Loud failure: an outage must never downgrade anyone silently.
+        res.status(503).json({ error: 'Seeker verification temporarily unavailable' })
+        return
+      }
+    }
+
+    const tier = tierForSeeker(seeker)
+    const allowed = body.amountUsdc <= tier.limitUsdc
+
+    res.status(200).json({
+      allowed,
+      tier: tier.id,
+      limitUsdc: tier.limitUsdc,
+      amountUsdc: body.amountUsdc,
+      seeker,
+      reason: allowed ? 'within-tier' : 'amount-exceeds-tier-limit',
+      trust,
+      // The mint is the device identity anti-Sybil logic records.
+      ...(mintAddress ? { mintAddress } : {}),
+    })
+  }
+}
+
+export default createFundsTierHandler()

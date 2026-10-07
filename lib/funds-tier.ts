@@ -18,9 +18,11 @@
  *                             unset → dev default is open with
  *                                      reason 'tier-gate-not-configured'
  *
- * `seeker` is client-asserted today (EXPO_PUBLIC_FORCE_SEEKER is a dev
- * flag) — the server labels that claim `client-asserted-dev`; the real
- * claim becomes server-verified SGT in the same seam SIWS already uses.
+ * `seeker` is client-asserted (EXPO_PUBLIC_FORCE_SEEKER is a dev flag);
+ * the server decides how far to trust it and says which gate ran via
+ * `trust`: 'sgt-verified' when the shared SGT check passes (mainnet,
+ * `SGT_RPC_URL`), 'seeker-rejected' when it fails (downgraded to tier1),
+ * or 'client-asserted-dev' when the check is not configured.
  */
 
 export type FundTierId = 'tier1' | 'tier2' | 'tier3'

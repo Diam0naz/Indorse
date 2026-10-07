@@ -1,9 +1,10 @@
-import { afterEach, beforeEach, describe, expect, it } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { ed25519 } from '@noble/curves/ed25519.js'
 import { getBase58Decoder } from '@solana/kit'
 import { createSignInMessageText } from '@solana/wallet-standard-util'
 import nonceHandler from '@/api/siws/nonce'
-import verifyHandler from '@/api/siws/verify'
+import verifyHandler, { createVerifyHandler } from '@/api/siws/verify'
+import type { SgtChecker } from '@/api/_lib/sgt'
 import { SiwsNonceStore, type IssuedSiwsPayload } from '@/api/_lib/siws-store'
 
 function mockRes() {
@@ -254,6 +255,88 @@ describe('POST /api/siws/verify — allowlist gate', () => {
     const signer = makeSigner()
     const issued = await issue()
     expect((await post(signer.prove(issued))).payload).toMatchObject({ verified: true })
+  })
+})
+
+describe('POST /api/siws/verify — SGT gate (SGT_RPC_URL configured)', () => {
+  /** Stand-in mint address echoed in an `sgt` verdict. */
+  const SGT_MINT = 'GT22s89nU4iWFkNXj1Bw6uYhJJWDRPpShHt4Bk8f99Te'
+
+  beforeEach(() => {
+    process.env.SGT_RPC_URL = 'https://mainnet.example.invalid'
+    delete process.env.SGT_DEV_ALLOWLIST // allowlist misses → the SGT gate runs
+  })
+
+  afterEach(() => {
+    delete process.env.SGT_RPC_URL
+    delete process.env.SGT_DEV_ALLOWLIST
+  })
+
+  async function postWith(checkSgt: SgtChecker, body: unknown) {
+    const res = mockRes()
+    await createVerifyHandler({ checkSgt })({ method: 'POST', body }, res)
+    return res
+  }
+
+  it('verifies an allowlist miss through the SGT check', async () => {
+    const signer = makeSigner()
+    const issued = await issue()
+    const checkSgt = vi.fn<SgtChecker>(async () => ({ hasSGT: true, mintAddress: SGT_MINT }))
+
+    const res = await postWith(checkSgt, signer.prove(issued))
+
+    expect(res.statusCode).toBe(200)
+    expect(res.payload).toEqual({ verified: true, address: signer.address, method: 'sgt', mintAddress: SGT_MINT })
+    expect(checkSgt).toHaveBeenCalledWith(signer.address)
+  })
+
+  it('denies with reason no-sgt when the wallet holds no SGT', async () => {
+    const signer = makeSigner()
+    const issued = await issue()
+    const checkSgt = vi.fn<SgtChecker>(async () => ({ hasSGT: false, mintAddress: null }))
+
+    const res = await postWith(checkSgt, signer.prove(issued))
+
+    expect(res.statusCode).toBe(200)
+    expect(res.payload).toEqual({ verified: false, address: signer.address, reason: 'no-sgt' })
+  })
+
+  it('never consults the SGT check for an allowlisted address', async () => {
+    const signer = makeSigner()
+    process.env.SGT_DEV_ALLOWLIST = signer.address
+    const issued = await issue()
+    const checkSgt = vi.fn<SgtChecker>(async () => ({ hasSGT: false, mintAddress: null }))
+
+    const res = await postWith(checkSgt, signer.prove(issued))
+
+    expect(res.payload).toEqual({ verified: true, address: signer.address, method: 'allowlist' })
+    expect(checkSgt).not.toHaveBeenCalled()
+  })
+
+  it('answers 503 when the mainnet check fails — an outage is not "no SGT"', async () => {
+    const signer = makeSigner()
+    const issued = await issue()
+    const checkSgt = vi.fn<SgtChecker>(async () => {
+      throw new Error('rpc down')
+    })
+
+    const res = await postWith(checkSgt, signer.prove(issued))
+
+    expect(res.statusCode).toBe(503)
+    expect(res.payload).toEqual({ error: 'Verification temporarily unavailable.' })
+    expect(res.payload).not.toHaveProperty('verified')
+  })
+
+  it('keeps the legacy deny when SGT verification is not configured', async () => {
+    delete process.env.SGT_RPC_URL
+    const signer = makeSigner()
+    const issued = await issue()
+    const checkSgt = vi.fn<SgtChecker>(async () => ({ hasSGT: true, mintAddress: SGT_MINT }))
+
+    const res = await postWith(checkSgt, signer.prove(issued))
+
+    expect(res.payload).toEqual({ verified: false, address: signer.address, reason: 'not-allowlisted' })
+    expect(checkSgt).not.toHaveBeenCalled()
   })
 })
 
