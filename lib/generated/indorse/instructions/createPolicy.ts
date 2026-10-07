@@ -43,6 +43,7 @@ import {
   type WritableSignerAccount,
 } from '@solana/kit'
 import { getAccountMetaFactory, type ResolvedInstructionAccount } from '@solana/program-client-core'
+import { findTreasuryPda } from '../pdas'
 import { INDORSE_PROGRAM_PROGRAM_ADDRESS } from '../programs'
 
 export const CREATE_POLICY_DISCRIMINATOR: ReadonlyUint8Array = new Uint8Array([27, 81, 33, 27, 196, 103, 246, 53])
@@ -62,6 +63,8 @@ export type CreatePolicyInstruction<
   TAccountTokenProgram extends string | AccountMeta<string> = 'TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA',
   TAccountSystemProgram extends string | AccountMeta<string> = '11111111111111111111111111111111',
   TAccountRent extends string | AccountMeta<string> = 'SysvarRent111111111111111111111111111111111',
+  TAccountTreasury extends string | AccountMeta<string> = string,
+  TAccountTreasuryUsdc extends string | AccountMeta<string> = string,
   TRemainingAccounts extends readonly AccountMeta<string>[] = [],
 > = Instruction<TProgram> &
   InstructionWithData<ReadonlyUint8Array> &
@@ -78,6 +81,8 @@ export type CreatePolicyInstruction<
       TAccountTokenProgram extends string ? ReadonlyAccount<TAccountTokenProgram> : TAccountTokenProgram,
       TAccountSystemProgram extends string ? ReadonlyAccount<TAccountSystemProgram> : TAccountSystemProgram,
       TAccountRent extends string ? ReadonlyAccount<TAccountRent> : TAccountRent,
+      TAccountTreasury extends string ? ReadonlyAccount<TAccountTreasury> : TAccountTreasury,
+      TAccountTreasuryUsdc extends string ? WritableAccount<TAccountTreasuryUsdc> : TAccountTreasuryUsdc,
       ...TRemainingAccounts,
     ]
   >
@@ -135,7 +140,7 @@ export function getCreatePolicyInstructionDataCodec(): Codec<
   return combineCodec(getCreatePolicyInstructionDataEncoder(), getCreatePolicyInstructionDataDecoder())
 }
 
-export type CreatePolicyInput<
+export type CreatePolicyAsyncInput<
   TAccountFarmer extends string = string,
   TAccountFarm extends string = string,
   TAccountPolicy extends string = string,
@@ -145,6 +150,8 @@ export type CreatePolicyInput<
   TAccountTokenProgram extends string = string,
   TAccountSystemProgram extends string = string,
   TAccountRent extends string = string,
+  TAccountTreasury extends string = string,
+  TAccountTreasuryUsdc extends string = string,
 > = {
   farmer: TransactionSigner<TAccountFarmer>
   farm: Address<TAccountFarm>
@@ -155,6 +162,183 @@ export type CreatePolicyInput<
   tokenProgram?: Address<TAccountTokenProgram>
   systemProgram?: Address<TAccountSystemProgram>
   rent?: Address<TAccountRent>
+  /**
+   * Program-owned treasury — this instruction draws the coverage from it
+   * in the same signature, so a policy is funded the moment it exists.
+   * Deliberately appended AFTER the original account list: Anchor
+   * consumes declared accounts positionally, so clients built against
+   * the deployed (pre-funding) program still match — trailing accounts
+   * the old struct does not declare are simply ignored until redeploy.
+   * `[b"treasury"]` under this program — no state is read beyond it.
+   */
+  treasury?: Address<TAccountTreasury>
+  /**
+   * The treasury's canonical USDC ATA — the only account coverage may be
+   * drawn from, pinned by address the same way `settle_policy` pins its
+   * refund destination.
+   */
+  treasuryUsdc: Address<TAccountTreasuryUsdc>
+  crop: CreatePolicyInstructionDataArgs['crop']
+  coverageUsdc: CreatePolicyInstructionDataArgs['coverageUsdc']
+  premiumUsdc: CreatePolicyInstructionDataArgs['premiumUsdc']
+  triggerThresholdMm: CreatePolicyInstructionDataArgs['triggerThresholdMm']
+  seasonStart: CreatePolicyInstructionDataArgs['seasonStart']
+  seasonEnd: CreatePolicyInstructionDataArgs['seasonEnd']
+}
+
+export async function getCreatePolicyInstructionAsync<
+  TAccountFarmer extends string,
+  TAccountFarm extends string,
+  TAccountPolicy extends string,
+  TAccountInsuranceVault extends string,
+  TAccountFarmerUsdc extends string,
+  TAccountUsdcMint extends string,
+  TAccountTokenProgram extends string,
+  TAccountSystemProgram extends string,
+  TAccountRent extends string,
+  TAccountTreasury extends string,
+  TAccountTreasuryUsdc extends string,
+  TProgramAddress extends Address = typeof INDORSE_PROGRAM_PROGRAM_ADDRESS,
+>(
+  input: CreatePolicyAsyncInput<
+    TAccountFarmer,
+    TAccountFarm,
+    TAccountPolicy,
+    TAccountInsuranceVault,
+    TAccountFarmerUsdc,
+    TAccountUsdcMint,
+    TAccountTokenProgram,
+    TAccountSystemProgram,
+    TAccountRent,
+    TAccountTreasury,
+    TAccountTreasuryUsdc
+  >,
+  config?: { programAddress?: TProgramAddress },
+): Promise<
+  CreatePolicyInstruction<
+    TProgramAddress,
+    TAccountFarmer,
+    TAccountFarm,
+    TAccountPolicy,
+    TAccountInsuranceVault,
+    TAccountFarmerUsdc,
+    TAccountUsdcMint,
+    TAccountTokenProgram,
+    TAccountSystemProgram,
+    TAccountRent,
+    TAccountTreasury,
+    TAccountTreasuryUsdc
+  >
+> {
+  // Program address.
+  const programAddress = config?.programAddress ?? INDORSE_PROGRAM_PROGRAM_ADDRESS
+
+  // Original accounts.
+  const originalAccounts = {
+    farmer: { value: input.farmer ?? null, isWritable: true },
+    farm: { value: input.farm ?? null, isWritable: true },
+    policy: { value: input.policy ?? null, isWritable: true },
+    insuranceVault: { value: input.insuranceVault ?? null, isWritable: true },
+    farmerUsdc: { value: input.farmerUsdc ?? null, isWritable: true },
+    usdcMint: { value: input.usdcMint ?? null, isWritable: false },
+    tokenProgram: { value: input.tokenProgram ?? null, isWritable: false },
+    systemProgram: { value: input.systemProgram ?? null, isWritable: false },
+    rent: { value: input.rent ?? null, isWritable: false },
+    treasury: { value: input.treasury ?? null, isWritable: false },
+    treasuryUsdc: { value: input.treasuryUsdc ?? null, isWritable: true },
+  }
+  const accounts = originalAccounts as Record<keyof typeof originalAccounts, ResolvedInstructionAccount>
+
+  // Original args.
+  const args = { ...input }
+
+  // Resolve default values.
+  if (!accounts.tokenProgram.value) {
+    accounts.tokenProgram.value =
+      'TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA' as Address<'TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA'>
+  }
+  if (!accounts.systemProgram.value) {
+    accounts.systemProgram.value = '11111111111111111111111111111111' as Address<'11111111111111111111111111111111'>
+  }
+  if (!accounts.rent.value) {
+    accounts.rent.value =
+      'SysvarRent111111111111111111111111111111111' as Address<'SysvarRent111111111111111111111111111111111'>
+  }
+  if (!accounts.treasury.value) {
+    accounts.treasury.value = await findTreasuryPda({ programAddress })
+  }
+
+  const getAccountMeta = getAccountMetaFactory(programAddress, 'programId')
+  return Object.freeze({
+    accounts: [
+      getAccountMeta('farmer', accounts.farmer),
+      getAccountMeta('farm', accounts.farm),
+      getAccountMeta('policy', accounts.policy),
+      getAccountMeta('insuranceVault', accounts.insuranceVault),
+      getAccountMeta('farmerUsdc', accounts.farmerUsdc),
+      getAccountMeta('usdcMint', accounts.usdcMint),
+      getAccountMeta('tokenProgram', accounts.tokenProgram),
+      getAccountMeta('systemProgram', accounts.systemProgram),
+      getAccountMeta('rent', accounts.rent),
+      getAccountMeta('treasury', accounts.treasury),
+      getAccountMeta('treasuryUsdc', accounts.treasuryUsdc),
+    ],
+    data: getCreatePolicyInstructionDataEncoder().encode(args as CreatePolicyInstructionDataArgs),
+    programAddress,
+  } as CreatePolicyInstruction<
+    TProgramAddress,
+    TAccountFarmer,
+    TAccountFarm,
+    TAccountPolicy,
+    TAccountInsuranceVault,
+    TAccountFarmerUsdc,
+    TAccountUsdcMint,
+    TAccountTokenProgram,
+    TAccountSystemProgram,
+    TAccountRent,
+    TAccountTreasury,
+    TAccountTreasuryUsdc
+  >)
+}
+
+export type CreatePolicyInput<
+  TAccountFarmer extends string = string,
+  TAccountFarm extends string = string,
+  TAccountPolicy extends string = string,
+  TAccountInsuranceVault extends string = string,
+  TAccountFarmerUsdc extends string = string,
+  TAccountUsdcMint extends string = string,
+  TAccountTokenProgram extends string = string,
+  TAccountSystemProgram extends string = string,
+  TAccountRent extends string = string,
+  TAccountTreasury extends string = string,
+  TAccountTreasuryUsdc extends string = string,
+> = {
+  farmer: TransactionSigner<TAccountFarmer>
+  farm: Address<TAccountFarm>
+  policy: Address<TAccountPolicy>
+  insuranceVault: Address<TAccountInsuranceVault>
+  farmerUsdc: Address<TAccountFarmerUsdc>
+  usdcMint: Address<TAccountUsdcMint>
+  tokenProgram?: Address<TAccountTokenProgram>
+  systemProgram?: Address<TAccountSystemProgram>
+  rent?: Address<TAccountRent>
+  /**
+   * Program-owned treasury — this instruction draws the coverage from it
+   * in the same signature, so a policy is funded the moment it exists.
+   * Deliberately appended AFTER the original account list: Anchor
+   * consumes declared accounts positionally, so clients built against
+   * the deployed (pre-funding) program still match — trailing accounts
+   * the old struct does not declare are simply ignored until redeploy.
+   * `[b"treasury"]` under this program — no state is read beyond it.
+   */
+  treasury: Address<TAccountTreasury>
+  /**
+   * The treasury's canonical USDC ATA — the only account coverage may be
+   * drawn from, pinned by address the same way `settle_policy` pins its
+   * refund destination.
+   */
+  treasuryUsdc: Address<TAccountTreasuryUsdc>
   crop: CreatePolicyInstructionDataArgs['crop']
   coverageUsdc: CreatePolicyInstructionDataArgs['coverageUsdc']
   premiumUsdc: CreatePolicyInstructionDataArgs['premiumUsdc']
@@ -173,6 +357,8 @@ export function getCreatePolicyInstruction<
   TAccountTokenProgram extends string,
   TAccountSystemProgram extends string,
   TAccountRent extends string,
+  TAccountTreasury extends string,
+  TAccountTreasuryUsdc extends string,
   TProgramAddress extends Address = typeof INDORSE_PROGRAM_PROGRAM_ADDRESS,
 >(
   input: CreatePolicyInput<
@@ -184,7 +370,9 @@ export function getCreatePolicyInstruction<
     TAccountUsdcMint,
     TAccountTokenProgram,
     TAccountSystemProgram,
-    TAccountRent
+    TAccountRent,
+    TAccountTreasury,
+    TAccountTreasuryUsdc
   >,
   config?: { programAddress?: TProgramAddress },
 ): CreatePolicyInstruction<
@@ -197,7 +385,9 @@ export function getCreatePolicyInstruction<
   TAccountUsdcMint,
   TAccountTokenProgram,
   TAccountSystemProgram,
-  TAccountRent
+  TAccountRent,
+  TAccountTreasury,
+  TAccountTreasuryUsdc
 > {
   // Program address.
   const programAddress = config?.programAddress ?? INDORSE_PROGRAM_PROGRAM_ADDRESS
@@ -213,6 +403,8 @@ export function getCreatePolicyInstruction<
     tokenProgram: { value: input.tokenProgram ?? null, isWritable: false },
     systemProgram: { value: input.systemProgram ?? null, isWritable: false },
     rent: { value: input.rent ?? null, isWritable: false },
+    treasury: { value: input.treasury ?? null, isWritable: false },
+    treasuryUsdc: { value: input.treasuryUsdc ?? null, isWritable: true },
   }
   const accounts = originalAccounts as Record<keyof typeof originalAccounts, ResolvedInstructionAccount>
 
@@ -244,6 +436,8 @@ export function getCreatePolicyInstruction<
       getAccountMeta('tokenProgram', accounts.tokenProgram),
       getAccountMeta('systemProgram', accounts.systemProgram),
       getAccountMeta('rent', accounts.rent),
+      getAccountMeta('treasury', accounts.treasury),
+      getAccountMeta('treasuryUsdc', accounts.treasuryUsdc),
     ],
     data: getCreatePolicyInstructionDataEncoder().encode(args as CreatePolicyInstructionDataArgs),
     programAddress,
@@ -257,7 +451,9 @@ export function getCreatePolicyInstruction<
     TAccountUsdcMint,
     TAccountTokenProgram,
     TAccountSystemProgram,
-    TAccountRent
+    TAccountRent,
+    TAccountTreasury,
+    TAccountTreasuryUsdc
   >)
 }
 
@@ -276,6 +472,22 @@ export type ParsedCreatePolicyInstruction<
     tokenProgram: TAccountMetas[6]
     systemProgram: TAccountMetas[7]
     rent: TAccountMetas[8]
+    /**
+     * Program-owned treasury — this instruction draws the coverage from it
+     * in the same signature, so a policy is funded the moment it exists.
+     * Deliberately appended AFTER the original account list: Anchor
+     * consumes declared accounts positionally, so clients built against
+     * the deployed (pre-funding) program still match — trailing accounts
+     * the old struct does not declare are simply ignored until redeploy.
+     * `[b"treasury"]` under this program — no state is read beyond it.
+     */
+    treasury: TAccountMetas[9]
+    /**
+     * The treasury's canonical USDC ATA — the only account coverage may be
+     * drawn from, pinned by address the same way `settle_policy` pins its
+     * refund destination.
+     */
+    treasuryUsdc: TAccountMetas[10]
   }
   data: CreatePolicyInstructionData
 }
@@ -283,10 +495,10 @@ export type ParsedCreatePolicyInstruction<
 export function parseCreatePolicyInstruction<TProgram extends string, TAccountMetas extends readonly AccountMeta[]>(
   instruction: Instruction<TProgram> & InstructionWithAccounts<TAccountMetas> & InstructionWithData<ReadonlyUint8Array>,
 ): ParsedCreatePolicyInstruction<TProgram, TAccountMetas> {
-  if (instruction.accounts.length < 9) {
+  if (instruction.accounts.length < 11) {
     throw new SolanaError(SOLANA_ERROR__PROGRAM_CLIENTS__INSUFFICIENT_ACCOUNT_METAS, {
       actualAccountMetas: instruction.accounts.length,
-      expectedAccountMetas: 9,
+      expectedAccountMetas: 11,
     })
   }
   let accountIndex = 0
@@ -307,6 +519,8 @@ export function parseCreatePolicyInstruction<TProgram extends string, TAccountMe
       tokenProgram: getNextAccount(),
       systemProgram: getNextAccount(),
       rent: getNextAccount(),
+      treasury: getNextAccount(),
+      treasuryUsdc: getNextAccount(),
     },
     data: getCreatePolicyInstructionDataDecoder().decode(instruction.data),
   }

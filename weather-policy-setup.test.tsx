@@ -250,6 +250,10 @@ describe('weather policy setup', () => {
       'TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA',
       '11111111111111111111111111111111',
       'SysvarRent111111111111111111111111111111111',
+      // Coverage source: the program treasury's PDA and its USDC ATA,
+      // appended after the original account list.
+      await treasuryPda(),
+      await ataPda(await treasuryPda(), USDC_DEVNET),
     ])
 
     // Success closes the form again.

@@ -4,7 +4,8 @@
  * Builds and sends `create_policy` through the Mobile Wallet Adapter:
  *
  *   1. Derive policy + insurance-vault PDAs from ["policy"/"insurance_vault",
- *      farm, u32(policyCount)] and the farmer's USDC associated token account
+ *      farm, u32(policyCount)], the farmer's USDC ATA, and the program
+ *      treasury's ATA (the instruction draws the coverage from it)
  *   2. Encode {crop, coverageUsdc, premiumUsdc, triggerThresholdMm,
  *      seasonStart, seasonEnd} — money as 6-decimal lamports, the threshold
  *      in mm × 10 (the program's unit)
@@ -25,7 +26,7 @@ import { useWalletMutation } from '@/features/wallet/useWalletMutation'
 import { toWalletInstruction, walletSigner } from '@/features/wallet/mwaTransaction'
 import { USDC_DEVNET, USDC_MAINNET } from '@/constants/tokens'
 import { getCreatePolicyInstruction } from '@/lib/generated/indorse'
-import { ataPda, buildCreateAtaInstruction, insuranceVaultPda, policyPda, toAddress } from '@/lib/program'
+import { ataPda, buildCreateAtaInstruction, insuranceVaultPda, policyPda, toAddress, treasuryPda } from '@/lib/program'
 import { checkFundTier } from '@/lib/funds-tier'
 import { usdcToLamports } from '@/lib/format'
 import { validateCreatePolicy } from './types'
@@ -56,11 +57,13 @@ export function useCreatePolicy() {
       }
 
       const mint = network.cluster === 'mainnet' ? USDC_MAINNET : USDC_DEVNET
-      const [policy, insuranceVault, farmerUsdc] = await Promise.all([
+      const [policy, insuranceVault, farmerUsdc, treasury] = await Promise.all([
         policyPda(input.farmAddress, input.policyCount),
         insuranceVaultPda(input.farmAddress, input.policyCount),
         ataPda(address, mint),
+        treasuryPda(),
       ])
+      const treasuryUsdc = await ataPda(treasury, mint)
 
       const ix = getCreatePolicyInstruction({
         farmer: walletSigner(address),
@@ -69,6 +72,10 @@ export function useCreatePolicy() {
         insuranceVault,
         farmerUsdc,
         usdcMint: toAddress(mint),
+        // The program draws the coverage from the treasury inside this same
+        // instruction — a policy is funded at birth or it never exists.
+        treasury,
+        treasuryUsdc,
         crop: input.crop.trim(),
         coverageUsdc: usdcToLamports(input.coverageUsdc),
         premiumUsdc: usdcToLamports(input.premiumUsdc),

@@ -27,7 +27,7 @@ import {
   setTransactionMessageLifetimeUsingBlockhash,
 } from '@solana/kit'
 import { getCreatePolicyInstruction } from '@/lib/generated/indorse'
-import { ataPda, buildCreateAtaInstruction, insuranceVaultPda, policyPda, toAddress } from '@/lib/program'
+import { ataPda, buildCreateAtaInstruction, insuranceVaultPda, policyPda, toAddress, treasuryPda } from '@/lib/program'
 import { toWalletInstruction, walletSigner } from '@/features/wallet/mwaTransaction'
 import { USDC_DEVNET } from '@/constants/tokens'
 
@@ -41,11 +41,13 @@ const MAX_WIRE_BYTES = 1232
 
 describe('MWA payload', () => {
   async function buildCreatePolicyPayload() {
-    const [policy, insuranceVault, farmerUsdc] = await Promise.all([
+    const [policy, insuranceVault, farmerUsdc, treasury] = await Promise.all([
       policyPda(FARM, 0),
       insuranceVaultPda(FARM, 0),
       ataPda(WALLET, USDC_DEVNET),
+      treasuryPda(),
     ])
+    const treasuryUsdc = await ataPda(treasury, USDC_DEVNET)
 
     const ix = getCreatePolicyInstruction({
       farmer: walletSigner(WALLET),
@@ -54,6 +56,8 @@ describe('MWA payload', () => {
       insuranceVault,
       farmerUsdc,
       usdcMint: toAddress(USDC_DEVNET),
+      treasury,
+      treasuryUsdc,
       crop: 'Sunflower',
       coverageUsdc: 100_000_000n,
       premiumUsdc: 5_000_000n,

@@ -727,9 +727,11 @@ pub mod indorse_program {
     /// Coverage pays out in USDC when the weather trigger fires.
     /// The farmer's scouting history can reduce the premium rate.
     ///
-    /// The farmer pays the premium alone; the treasury tops the vault up with
-    /// the coverage amount in a separate transfer, so a mobile wallet only
-    /// ever needs one signature.
+    /// One signature funds the whole policy: the premium comes from the
+    /// farmer and the coverage is CPI'd out of the program's own treasury
+    /// inside this same instruction. A treasury short of the cover refuses
+    /// creation outright — no underfunded policy can exist to disappoint
+    /// at settle time.
     ///
     /// PDA seeds: [b"policy", farm, policy_index (u32 LE)]
     pub fn create_policy(
@@ -759,6 +761,15 @@ pub mod indorse_program {
             trigger_threshold_mm > 0 && trigger_threshold_mm <= MAX_TRIGGER_THRESHOLD_MM10,
             FarmError::InvalidTrigger
         );
+        // Solvency at birth: the coverage must be drawable from the program
+        // treasury right now, checked before any state or token movement.
+        // Refusing here is what makes the settle-time guard
+        // (`CoverageUnfunded`) a legacy defense instead of a live failure —
+        // a policy that cannot be paid for simply never exists.
+        require!(
+            ctx.accounts.treasury_usdc.amount >= coverage_usdc,
+            FarmError::TreasuryInsufficient
+        );
 
         let farm = &ctx.accounts.farm;
         let policy = &mut ctx.accounts.policy;
@@ -777,6 +788,24 @@ pub mod indorse_program {
         policy.state = PolicyState::Active;
         policy.bump = ctx.bumps.policy;
 
+        // Coverage from the program treasury: the program signs for its own
+        // PDA, so the farmer still signs exactly once. This runs inside the
+        // same instruction as the policy's creation — funded or not born.
+        let bump = ctx.bumps.treasury;
+        let treasury_seeds = [b"treasury".as_ref(), &[bump]];
+        token::transfer(
+            CpiContext::new_with_signer(
+                ctx.accounts.token_program.to_account_info(),
+                Transfer {
+                    from: ctx.accounts.treasury_usdc.to_account_info(),
+                    to: ctx.accounts.insurance_vault.to_account_info(),
+                    authority: ctx.accounts.treasury.to_account_info(),
+                },
+                &[&treasury_seeds[..]],
+            ),
+            coverage_usdc,
+        )?;
+
         // Farmer pays the premium into the insurance vault
         token::transfer(
             CpiContext::new(
@@ -789,9 +818,6 @@ pub mod indorse_program {
             ),
             premium_usdc,
         )?;
-
-        // The coverage amount is funded by the treasury with a plain token
-        // transfer into the vault after creation — no co-signer here.
 
         // Increment policy count on farm
         ctx.accounts.farm.policy_count = ctx
@@ -2366,6 +2392,31 @@ pub struct CreatePolicy<'info> {
     pub token_program: Program<'info, Token>,
     pub system_program: Program<'info, System>,
     pub rent: Sysvar<'info, Rent>,
+
+    /// Program-owned treasury — this instruction draws the coverage from it
+    /// in the same signature, so a policy is funded the moment it exists.
+    /// Deliberately appended AFTER the original account list: Anchor
+    /// consumes declared accounts positionally, so clients built against
+    /// the deployed (pre-funding) program still match — trailing accounts
+    /// the old struct does not declare are simply ignored until redeploy.
+    /// CHECK: the `seeds` constraint re-derives the address from
+    /// `[b"treasury"]` under this program — no state is read beyond it.
+    #[account(seeds = [b"treasury"], bump)]
+    pub treasury: UncheckedAccount<'info>,
+
+    /// The treasury's canonical USDC ATA — the only account coverage may be
+    /// drawn from, pinned by address the same way `settle_policy` pins its
+    /// refund destination.
+    #[account(
+        mut,
+        constraint = treasury_usdc.key()
+            == anchor_spl::associated_token::get_associated_token_address(
+                &treasury.key(),
+                &usdc_mint.key(),
+            ) @ FarmError::TokenAccountInvalid,
+        constraint = treasury_usdc.mint == usdc_mint.key() @ FarmError::TokenAccountInvalid
+    )]
+    pub treasury_usdc: Account<'info, TokenAccount>,
 }
 
 /// Bootstrap the reader rules: one-shot (the PDA's `init` refuses a second
@@ -3098,4 +3149,9 @@ pub enum FarmError {
     InvalidTrigger,
     #[msg("Seasonal rainfall exceeds the plausible maximum (mm x 10)")]
     ImplausibleRainfall,
+
+    // Appended with the create_policy coverage-funding step — still
+    // append-only.
+    #[msg("The program treasury cannot fund this coverage")]
+    TreasuryInsufficient,
 }

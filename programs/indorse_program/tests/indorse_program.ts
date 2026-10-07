@@ -9,14 +9,7 @@ import {
   SYSVAR_INSTRUCTIONS_PUBKEY,
   SYSVAR_SLOT_HASHES_PUBKEY,
 } from '@solana/web3.js'
-import {
-  createMint,
-  createAccount,
-  getOrCreateAssociatedTokenAccount,
-  mintTo,
-  getAccount,
-  transfer,
-} from '@solana/spl-token'
+import { createMint, createAccount, getOrCreateAssociatedTokenAccount, mintTo, getAccount } from '@solana/spl-token'
 import { assert } from 'chai'
 import { createPrivateKey, sign as signEd25519 } from 'node:crypto'
 
@@ -605,6 +598,10 @@ describe('indorse_program', () => {
     // The owner is a PDA, hence allowOwnerOffCurve.
     treasuryUsdc = (await getOrCreateAssociatedTokenAccount(provider.connection, owner, usdcMint, treasuryPda, true))
       .address
+
+    // Coverage float: create_policy draws each policy's coverage from this
+    // account inside the creation instruction itself.
+    await mintTo(provider.connection, owner, usdcMint, treasuryUsdc, owner, 1_000_000_000) // 1000 USDC float
 
     ;[policyPda] = PublicKey.findProgramAddressSync(
       [Buffer.from('policy'), farmPda.toBuffer(), u32le(0)],
@@ -1557,7 +1554,9 @@ describe('indorse_program', () => {
 
   // ── Treasury-pool insurance ────────────────────────────────────────────────
 
-  it('Create a policy with only the farmer signing', async () => {
+  it('Creates a policy funded in one signature — coverage lands from the treasury', async () => {
+    const treasuryBefore = (await getAccount(provider.connection, treasuryUsdc)).amount
+
     await program.methods
       .createPolicy(
         'maize',
@@ -1577,6 +1576,8 @@ describe('indorse_program', () => {
         tokenProgram: anchor.utils.token.TOKEN_PROGRAM_ID,
         systemProgram: SystemProgram.programId,
         rent: anchor.web3.SYSVAR_RENT_PUBKEY,
+        treasury: treasuryPda,
+        treasuryUsdc,
       })
       .signers([owner])
       .rpc()
@@ -1587,19 +1588,64 @@ describe('indorse_program', () => {
     assert.equal(policy.premiumUsdc.toNumber(), PREMIUM)
     assert.deepEqual(policy.state, { active: {} })
 
-    // Only the premium is in the vault — coverage arrives from the treasury.
-    const vault = await getAccount(provider.connection, policyVault)
-    assert.equal(Number(vault.amount), PREMIUM)
-  })
-
-  it('Fund coverage from the treasury with a plain token transfer', async () => {
-    const treasury = (provider.wallet as anchor.Wallet).payer
-
-    // No instruction needed: anyone can credit the vault.
-    await transfer(provider.connection, treasury, adminUsdc, policyVault, treasury, COVERAGE)
-
+    // Both halves arrived inside that one instruction: the vault holds
+    // premium + coverage, and the treasury paid the coverage part.
     const vault = await getAccount(provider.connection, policyVault)
     assert.equal(Number(vault.amount), PREMIUM + COVERAGE)
+    const treasuryAfter = (await getAccount(provider.connection, treasuryUsdc)).amount
+    assert.equal(Number(treasuryBefore - treasuryAfter), COVERAGE)
+  })
+
+  it('Refuses to create a policy the treasury cannot fund', async () => {
+    // The solvency check moved to birth: a treasury short of the cover
+    // refuses creation outright — no premium debit, no policy account, no
+    // doomed policy left for settle time to discover unfunded.
+    const UNFUNDABLE = 1_000_000_000_000 // 1M USDC — past any float here
+    const countBefore = (await program.account.farm.fetch(farmPda)).policyCount
+    const farmerBefore = (await getAccount(provider.connection, ownerUsdc)).amount
+    const [doomedPolicy] = PublicKey.findProgramAddressSync(
+      [Buffer.from('policy'), farmPda.toBuffer(), u32le(countBefore)],
+      program.programId,
+    )
+    const [doomedVault] = PublicKey.findProgramAddressSync(
+      [Buffer.from('insurance_vault'), farmPda.toBuffer(), u32le(countBefore)],
+      program.programId,
+    )
+
+    try {
+      await program.methods
+        .createPolicy(
+          'maize',
+          new anchor.BN(UNFUNDABLE),
+          new anchor.BN(UNFUNDABLE / 100), // 1% — inside the pricing bounds
+          THRESHOLD_MM,
+          new anchor.BN(SEASON_START),
+          new anchor.BN(SEASON_END),
+        )
+        .accounts({
+          farmer: owner.publicKey,
+          farm: farmPda,
+          policy: doomedPolicy,
+          insuranceVault: doomedVault,
+          farmerUsdc: ownerUsdc,
+          usdcMint,
+          tokenProgram: anchor.utils.token.TOKEN_PROGRAM_ID,
+          systemProgram: SystemProgram.programId,
+          rent: anchor.web3.SYSVAR_RENT_PUBKEY,
+          treasury: treasuryPda,
+          treasuryUsdc,
+        })
+        .signers([owner])
+        .rpc()
+      assert.fail('Should have thrown an error')
+    } catch (err) {
+      assert.include(err.message, 'cannot fund this coverage')
+    }
+
+    // Nothing moved: the slot stays free, the farmer's balance untouched.
+    assert.equal((await program.account.farm.fetch(farmPda)).policyCount, countBefore)
+    assert.equal(Number((await getAccount(provider.connection, ownerUsdc)).amount), Number(farmerBefore))
+    assert.isNull(await program.account.policy.fetchNullable(doomedPolicy))
   })
 
   it('Revoke returns the premium and sweeps coverage into the program treasury', async () => {
@@ -1614,7 +1660,6 @@ describe('indorse_program', () => {
       [Buffer.from('insurance_vault'), farmPda.toBuffer(), u32le(1)],
       program.programId,
     )
-    const adminWallet = (provider.wallet as anchor.Wallet).payer
 
     await program.methods
       .createPolicy(
@@ -1635,10 +1680,11 @@ describe('indorse_program', () => {
         tokenProgram: anchor.utils.token.TOKEN_PROGRAM_ID,
         systemProgram: SystemProgram.programId,
         rent: anchor.web3.SYSVAR_RENT_PUBKEY,
+        treasury: treasuryPda,
+        treasuryUsdc,
       })
       .signers([owner])
       .rpc()
-    await transfer(provider.connection, adminWallet, adminUsdc, vault2Pda, adminWallet, COVERAGE)
 
     const farmerBefore = (await getAccount(provider.connection, ownerUsdc)).amount
     const treasuryBefore = (await getAccount(provider.connection, treasuryUsdc)).amount
@@ -1843,7 +1889,6 @@ describe('indorse_program', () => {
       [Buffer.from('insurance_vault'), farmPda.toBuffer(), u32le(2)],
       program.programId,
     )
-    const treasuryWallet = (provider.wallet as anchor.Wallet).payer
 
     await program.methods
       .createPolicy(
@@ -1864,13 +1909,11 @@ describe('indorse_program', () => {
         tokenProgram: anchor.utils.token.TOKEN_PROGRAM_ID,
         systemProgram: SystemProgram.programId,
         rent: anchor.web3.SYSVAR_RENT_PUBKEY,
+        treasury: treasuryPda,
+        treasuryUsdc,
       })
       .signers([owner])
       .rpc()
-
-    // Coverage top-up: a plain transfer, no instruction — the documented
-    // solvency gap says settle then fails at the CPI if this line is skipped.
-    await transfer(provider.connection, treasuryWallet, adminUsdc, breachVault, treasuryWallet, COVERAGE)
 
     const farmerBefore = (await getAccount(provider.connection, ownerUsdc)).amount
     const settler = Keypair.generate()
@@ -1922,16 +1965,19 @@ describe('indorse_program', () => {
     }
   })
 
-  it('Refuses to settle an underfunded policy with an honest error', async () => {
-    // Same season as the finalized reading — but the treasury's post-creation
-    // top-up never landed, so the vault holds only the premium. The settle
-    // must fail BEFORE the CPI with the real reason, leaving the policy
-    // Active so revoke_policy (open until season_end) stays the escape hatch.
-    const [unfundedPolicy] = PublicKey.findProgramAddressSync(
+  it('Creates only against the canonical treasury ATA — a foreign source is refused', async () => {
+    // What this slot used to prove — an underfunded vault refusing settle —
+    // can no longer be built: create_policy funds coverage itself, so an
+    // underfunded policy has no way into the system. (settle's
+    // `CoverageUnfunded` guard stays as defense for accounts predating the
+    // funding step — deliberately unreachable through instructions.)
+    //
+    // Policy 3 is born funded and left Active — the close test below uses it.
+    const [policy3Pda] = PublicKey.findProgramAddressSync(
       [Buffer.from('policy'), farmPda.toBuffer(), u32le(3)],
       program.programId,
     )
-    const [unfundedVault] = PublicKey.findProgramAddressSync(
+    const [vault3Pda] = PublicKey.findProgramAddressSync(
       [Buffer.from('insurance_vault'), farmPda.toBuffer(), u32le(3)],
       program.programId,
     )
@@ -1948,44 +1994,66 @@ describe('indorse_program', () => {
       .accounts({
         farmer: owner.publicKey,
         farm: farmPda,
-        policy: unfundedPolicy,
-        insuranceVault: unfundedVault,
+        policy: policy3Pda,
+        insuranceVault: vault3Pda,
         farmerUsdc: ownerUsdc,
         usdcMint,
         tokenProgram: anchor.utils.token.TOKEN_PROGRAM_ID,
         systemProgram: SystemProgram.programId,
         rent: anchor.web3.SYSVAR_RENT_PUBKEY,
+        treasury: treasuryPda,
+        treasuryUsdc,
       })
       .signers([owner])
       .rpc()
 
-    const vault = await getAccount(provider.connection, unfundedVault)
-    assert.equal(Number(vault.amount), PREMIUM) // coverage never landed
+    const vault = await getAccount(provider.connection, vault3Pda)
+    assert.equal(Number(vault.amount), PREMIUM + COVERAGE) // funded at birth
+
+    // The coverage CPI may only draw from the treasury's own ATA — the same
+    // pin settle_policy puts on its refund destination. Handing it any other
+    // USDC account is refused before a single field is written.
+    const [policy4Pda] = PublicKey.findProgramAddressSync(
+      [Buffer.from('policy'), farmPda.toBuffer(), u32le(4)],
+      program.programId,
+    )
+    const [vault4Pda] = PublicKey.findProgramAddressSync(
+      [Buffer.from('insurance_vault'), farmPda.toBuffer(), u32le(4)],
+      program.programId,
+    )
 
     try {
       await program.methods
-        .settlePolicy()
+        .createPolicy(
+          'maize',
+          new anchor.BN(COVERAGE),
+          new anchor.BN(PREMIUM),
+          THRESHOLD_MM,
+          new anchor.BN(SEASON_START),
+          new anchor.BN(SEASON_END),
+        )
         .accounts({
-          settler: provider.wallet.publicKey,
-          policy: unfundedPolicy,
-          insuranceVault: unfundedVault,
-          oracle: oraclePda,
+          farmer: owner.publicKey,
+          farm: farmPda,
+          policy: policy4Pda,
+          insuranceVault: vault4Pda,
           farmerUsdc: ownerUsdc,
-          treasury: treasuryPda,
-          insurerUsdc: treasuryUsdc,
+          usdcMint,
           tokenProgram: anchor.utils.token.TOKEN_PROGRAM_ID,
+          systemProgram: SystemProgram.programId,
+          rent: anchor.web3.SYSVAR_RENT_PUBKEY,
+          treasury: treasuryPda,
+          treasuryUsdc: ownerUsdc, // the farmer's own account — not the treasury's
         })
+        .signers([owner])
         .rpc()
       assert.fail('Should have thrown an error')
     } catch (err) {
-      assert.include(err.message, 'does not hold the coverage')
+      assert.include(err.message, 'TokenAccountInvalid')
     }
 
-    // Nothing moved: still Active, still premium-only.
-    const still = await program.account.policy.fetch(unfundedPolicy)
-    assert.deepEqual(still.state, { active: {} })
-    const after = await getAccount(provider.connection, unfundedVault)
-    assert.equal(Number(after.amount), PREMIUM)
+    // The refusal left no trace: policy 4 was never allocated.
+    assert.isNull(await program.account.policy.fetchNullable(policy4Pda))
   })
 
   it('Closes settled policies: vault sweep to the treasury, rents to the farmer', async () => {
@@ -1999,11 +2067,11 @@ describe('indorse_program', () => {
       [Buffer.from('insurance_vault'), farmPda.toBuffer(), u32le(2)],
       program.programId,
     )
-    const [unfundedPolicy] = PublicKey.findProgramAddressSync(
+    const [policy3Pda] = PublicKey.findProgramAddressSync(
       [Buffer.from('policy'), farmPda.toBuffer(), u32le(3)],
       program.programId,
     )
-    const [unfundedVault] = PublicKey.findProgramAddressSync(
+    const [vault3Pda] = PublicKey.findProgramAddressSync(
       [Buffer.from('insurance_vault'), farmPda.toBuffer(), u32le(3)],
       program.programId,
     )
@@ -2029,7 +2097,7 @@ describe('indorse_program', () => {
 
     // The gate names the terminal states explicitly: Active cannot close.
     try {
-      await close(unfundedPolicy, unfundedVault)
+      await close(policy3Pda, vault3Pda)
       assert.fail('Should have thrown an error')
     } catch (err) {
       assert.include(err.message, 'settled policy')
@@ -2060,8 +2128,8 @@ describe('indorse_program', () => {
     const farmerLamportsAfter = await provider.connection.getBalance(owner.publicKey)
     assert.isAbove(farmerLamportsAfter, farmerLamportsBefore)
 
-    // The Active policy is untouched by all of this.
-    const still = await program.account.policy.fetch(unfundedPolicy)
+    // The Active policy (3, born funded) is untouched by all of this.
+    const still = await program.account.policy.fetch(policy3Pda)
     assert.deepEqual(still.state, { active: {} })
   })
 

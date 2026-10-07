@@ -524,9 +524,11 @@
         "Coverage pays out in USDC when the weather trigger fires.",
         "The farmer's scouting history can reduce the premium rate.",
         "",
-        "The farmer pays the premium alone; the treasury tops the vault up with",
-        "the coverage amount in a separate transfer, so a mobile wallet only",
-        "ever needs one signature.",
+        "One signature funds the whole policy: the premium comes from the",
+        "farmer and the coverage is CPI'd out of the program's own treasury",
+        "inside this same instruction. A treasury short of the cover refuses",
+        "creation outright — no underfunded policy can exist to disappoint",
+        "at settle time.",
         "",
         "PDA seeds: [b\"policy\", farm, policy_index (u32 LE)]"
       ],
@@ -633,6 +635,44 @@
         {
           "name": "rent",
           "address": "SysvarRent111111111111111111111111111111111"
+        },
+        {
+          "name": "treasury",
+          "docs": [
+            "Program-owned treasury — this instruction draws the coverage from it",
+            "in the same signature, so a policy is funded the moment it exists.",
+            "Deliberately appended AFTER the original account list: Anchor",
+            "consumes declared accounts positionally, so clients built against",
+            "the deployed (pre-funding) program still match — trailing accounts",
+            "the old struct does not declare are simply ignored until redeploy.",
+            "`[b\"treasury\"]` under this program — no state is read beyond it."
+          ],
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  116,
+                  114,
+                  101,
+                  97,
+                  115,
+                  117,
+                  114,
+                  121
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "name": "treasury_usdc",
+          "docs": [
+            "The treasury's canonical USDC ATA — the only account coverage may be",
+            "drawn from, pinned by address the same way `settle_policy` pins its",
+            "refund destination."
+          ],
+          "writable": true
         }
       ],
       "args": [
@@ -3491,6 +3531,26 @@
       "code": 6049,
       "name": "GradeNotesTooLong",
       "msg": "Grade notes too long (max 64 chars)"
+    },
+    {
+      "code": 6050,
+      "name": "PremiumMispriced",
+      "msg": "Premium must be between 1% and 100% of the coverage"
+    },
+    {
+      "code": 6051,
+      "name": "InvalidTrigger",
+      "msg": "Trigger threshold is out of range (mm x 10)"
+    },
+    {
+      "code": 6052,
+      "name": "ImplausibleRainfall",
+      "msg": "Seasonal rainfall exceeds the plausible maximum (mm x 10)"
+    },
+    {
+      "code": 6053,
+      "name": "TreasuryInsufficient",
+      "msg": "The program treasury cannot fund this coverage"
     }
   ],
   "types": [

@@ -77,7 +77,7 @@ import {
   getCastVoteInstructionAsync,
   getCloseSettledPolicyInstructionAsync,
   getCreateEscrowInstructionAsync,
-  getCreatePolicyInstruction,
+  getCreatePolicyInstructionAsync,
   getDeleteFarmInstruction,
   getInitConfigInstructionAsync,
   getInitOracleSetInstructionAsync,
@@ -133,7 +133,7 @@ import {
   type CastVoteAsyncInput,
   type CloseSettledPolicyAsyncInput,
   type CreateEscrowAsyncInput,
-  type CreatePolicyInput,
+  type CreatePolicyAsyncInput,
   type DeleteFarmInput,
   type InitConfigAsyncInput,
   type InitOracleSetAsyncInput,
@@ -1159,7 +1159,9 @@ export type IndorseProgramPluginInstructions = {
   createEscrow: (
     input: CreateEscrowAsyncInput,
   ) => ReturnType<typeof getCreateEscrowInstructionAsync> & SelfPlanAndSendFunctions
-  createPolicy: (input: CreatePolicyInput) => ReturnType<typeof getCreatePolicyInstruction> & SelfPlanAndSendFunctions
+  createPolicy: (
+    input: CreatePolicyAsyncInput,
+  ) => ReturnType<typeof getCreatePolicyInstructionAsync> & SelfPlanAndSendFunctions
   deleteFarm: (input: DeleteFarmInput) => ReturnType<typeof getDeleteFarmInstruction> & SelfPlanAndSendFunctions
   initConfig: (
     input: InitConfigAsyncInput,
@@ -1267,7 +1269,7 @@ export function indorseProgramProgram() {
           closeSettledPolicy: (input) =>
             addSelfPlanAndSendFunctions(client, getCloseSettledPolicyInstructionAsync(input)),
           createEscrow: (input) => addSelfPlanAndSendFunctions(client, getCreateEscrowInstructionAsync(input)),
-          createPolicy: (input) => addSelfPlanAndSendFunctions(client, getCreatePolicyInstruction(input)),
+          createPolicy: (input) => addSelfPlanAndSendFunctions(client, getCreatePolicyInstructionAsync(input)),
           deleteFarm: (input) => addSelfPlanAndSendFunctions(client, getDeleteFarmInstruction(input)),
           initConfig: (input) => addSelfPlanAndSendFunctions(client, getInitConfigInstructionAsync(input)),
           initOracleSet: (input) => addSelfPlanAndSendFunctions(client, getInitOracleSetInstructionAsync(input)),

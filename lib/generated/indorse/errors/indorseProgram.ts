@@ -114,6 +114,14 @@ export const INDORSE_PROGRAM_ERROR__RENT_DESTINATION_MISMATCH = 0x179f // 6047
 export const INDORSE_PROGRAM_ERROR__INVALID_GRADE = 0x17a0 // 6048
 /** GradeNotesTooLong: Grade notes too long (max 64 chars) */
 export const INDORSE_PROGRAM_ERROR__GRADE_NOTES_TOO_LONG = 0x17a1 // 6049
+/** PremiumMispriced: Premium must be between 1% and 100% of the coverage */
+export const INDORSE_PROGRAM_ERROR__PREMIUM_MISPRICED = 0x17a2 // 6050
+/** InvalidTrigger: Trigger threshold is out of range (mm x 10) */
+export const INDORSE_PROGRAM_ERROR__INVALID_TRIGGER = 0x17a3 // 6051
+/** ImplausibleRainfall: Seasonal rainfall exceeds the plausible maximum (mm x 10) */
+export const INDORSE_PROGRAM_ERROR__IMPLAUSIBLE_RAINFALL = 0x17a4 // 6052
+/** TreasuryInsufficient: The program treasury cannot fund this coverage */
+export const INDORSE_PROGRAM_ERROR__TREASURY_INSUFFICIENT = 0x17a5 // 6053
 
 export type IndorseProgramError =
   | typeof INDORSE_PROGRAM_ERROR__ALREADY_ORACLE
@@ -126,6 +134,7 @@ export type IndorseProgramError =
   | typeof INDORSE_PROGRAM_ERROR__ESCROW_NOT_FUNDED
   | typeof INDORSE_PROGRAM_ERROR__FARM_MISMATCH
   | typeof INDORSE_PROGRAM_ERROR__GRADE_NOTES_TOO_LONG
+  | typeof INDORSE_PROGRAM_ERROR__IMPLAUSIBLE_RAINFALL
   | typeof INDORSE_PROGRAM_ERROR__INVALID_FEED_REGISTRATION
   | typeof INDORSE_PROGRAM_ERROR__INVALID_GRADE
   | typeof INDORSE_PROGRAM_ERROR__INVALID_MEDIAN_QUORUM
@@ -133,6 +142,7 @@ export type IndorseProgramError =
   | typeof INDORSE_PROGRAM_ERROR__INVALID_SEASON
   | typeof INDORSE_PROGRAM_ERROR__INVALID_SWITCHBOARD_RECEIPT
   | typeof INDORSE_PROGRAM_ERROR__INVALID_SWITCHBOARD_VALUE
+  | typeof INDORSE_PROGRAM_ERROR__INVALID_TRIGGER
   | typeof INDORSE_PROGRAM_ERROR__LABEL_TOO_LONG
   | typeof INDORSE_PROGRAM_ERROR__NAME_TOO_LONG
   | typeof INDORSE_PROGRAM_ERROR__NOTES_TOO_LONG
@@ -145,6 +155,7 @@ export type IndorseProgramError =
   | typeof INDORSE_PROGRAM_ERROR__OVERFLOW
   | typeof INDORSE_PROGRAM_ERROR__POLICY_NOT_ACTIVE
   | typeof INDORSE_PROGRAM_ERROR__POLICY_NOT_SETTLED
+  | typeof INDORSE_PROGRAM_ERROR__PREMIUM_MISPRICED
   | typeof INDORSE_PROGRAM_ERROR__READING_FINALIZED
   | typeof INDORSE_PROGRAM_ERROR__READING_NOT_FINALIZED
   | typeof INDORSE_PROGRAM_ERROR__RENT_DESTINATION_MISMATCH
@@ -156,6 +167,7 @@ export type IndorseProgramError =
   | typeof INDORSE_PROGRAM_ERROR__TALLY_FULL
   | typeof INDORSE_PROGRAM_ERROR__TOKEN_ACCOUNT_INVALID
   | typeof INDORSE_PROGRAM_ERROR__TOO_MANY_FEED_SIGNERS
+  | typeof INDORSE_PROGRAM_ERROR__TREASURY_INSUFFICIENT
   | typeof INDORSE_PROGRAM_ERROR__UNAUTHORISED_ADMIN
   | typeof INDORSE_PROGRAM_ERROR__UNAUTHORISED_ESCROW
   | typeof INDORSE_PROGRAM_ERROR__UNAUTHORISED_ORACLE
@@ -180,6 +192,7 @@ if (process.env['NODE_ENV'] !== 'production') {
     [INDORSE_PROGRAM_ERROR__ESCROW_NOT_FUNDED]: `Escrow is not in funded state`,
     [INDORSE_PROGRAM_ERROR__FARM_MISMATCH]: `The farm passed does not match the report's farm`,
     [INDORSE_PROGRAM_ERROR__GRADE_NOTES_TOO_LONG]: `Grade notes too long (max 64 chars)`,
+    [INDORSE_PROGRAM_ERROR__IMPLAUSIBLE_RAINFALL]: `Seasonal rainfall exceeds the plausible maximum (mm x 10)`,
     [INDORSE_PROGRAM_ERROR__INVALID_FEED_REGISTRATION]: `The feed registration needs at least three distinct signers`,
     [INDORSE_PROGRAM_ERROR__INVALID_GRADE]: `Grade must be 0–4 (A–D) with confidence 0–100`,
     [INDORSE_PROGRAM_ERROR__INVALID_MEDIAN_QUORUM]: `Oracle quorum must be an odd number from 3 to the oracle-set maximum`,
@@ -187,6 +200,7 @@ if (process.env['NODE_ENV'] !== 'production') {
     [INDORSE_PROGRAM_ERROR__INVALID_SEASON]: `Season end must be after season start`,
     [INDORSE_PROGRAM_ERROR__INVALID_SWITCHBOARD_RECEIPT]: `The Switchboard receipt is malformed or not signed for the bound feed`,
     [INDORSE_PROGRAM_ERROR__INVALID_SWITCHBOARD_VALUE]: `The signed value is not a non-negative whole 0.1 mm of rainfall`,
+    [INDORSE_PROGRAM_ERROR__INVALID_TRIGGER]: `Trigger threshold is out of range (mm x 10)`,
     [INDORSE_PROGRAM_ERROR__LABEL_TOO_LONG]: `Label too long (max 32 chars)`,
     [INDORSE_PROGRAM_ERROR__NAME_TOO_LONG]: `Farm name too long (max 64 chars)`,
     [INDORSE_PROGRAM_ERROR__NOTES_TOO_LONG]: `Notes too long (max 256 chars)`,
@@ -199,6 +213,7 @@ if (process.env['NODE_ENV'] !== 'production') {
     [INDORSE_PROGRAM_ERROR__OVERFLOW]: `Counter overflow`,
     [INDORSE_PROGRAM_ERROR__POLICY_NOT_ACTIVE]: `Policy is not active`,
     [INDORSE_PROGRAM_ERROR__POLICY_NOT_SETTLED]: `Only a settled policy (paid out or expired) can be closed`,
+    [INDORSE_PROGRAM_ERROR__PREMIUM_MISPRICED]: `Premium must be between 1% and 100% of the coverage`,
     [INDORSE_PROGRAM_ERROR__READING_FINALIZED]: `The season reading is already final`,
     [INDORSE_PROGRAM_ERROR__READING_NOT_FINALIZED]: `The season reading has not reached quorum`,
     [INDORSE_PROGRAM_ERROR__RENT_DESTINATION_MISMATCH]: `Rent destination does not match the policy's farmer`,
@@ -210,6 +225,7 @@ if (process.env['NODE_ENV'] !== 'production') {
     [INDORSE_PROGRAM_ERROR__TALLY_FULL]: `The tally has no room for another vote`,
     [INDORSE_PROGRAM_ERROR__TOKEN_ACCOUNT_INVALID]: `Token account owner or mint does not match the expected values`,
     [INDORSE_PROGRAM_ERROR__TOO_MANY_FEED_SIGNERS]: `The feed registration exceeds the maximum signer count`,
+    [INDORSE_PROGRAM_ERROR__TREASURY_INSUFFICIENT]: `The program treasury cannot fund this coverage`,
     [INDORSE_PROGRAM_ERROR__UNAUTHORISED_ADMIN]: `Caller is not the authorised program admin`,
     [INDORSE_PROGRAM_ERROR__UNAUTHORISED_ESCROW]: `Caller is not authorised for this escrow`,
     [INDORSE_PROGRAM_ERROR__UNAUTHORISED_ORACLE]: `Caller is not the authorised weather oracle`,
