@@ -12,32 +12,35 @@ Android device or emulator with a wallet app (e.g. Phantom, Solflare) installed.
 
 ## Project status
 
-Snapshot as of **2026-10-05** — all four quality gates green
+Snapshot as of **2026-10-07** — all four quality gates green
 (`tsc --noEmit`, `prettier --check .`, `expo lint`, `vitest run`):
-**495 tests passing · 1 skipped (the opt-in smoke test) across 58 files**.
+**706 tests passing · 1 skipped (the opt-in smoke test) across 82 files**
+(`prettier --check .` is fully clean — `api/admin.test.ts` included).
 
-| Area                | State   | Notes                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                     |
-| ------------------- | ------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| On-chain program    | Shipped | 27 instructions — authority is data (the config PDA `839zrf…YzaY8` on devnet holds the admin/verifier/oracle roles every ops gate reads, rotated by `set_roles` instead of a redeploy), verification is a bonded K-of-N quorum (the verifier-set PDA `H4HnKfqu…XK` holds k, the seat price, and members with their recorded stakes; `cast_vote` finalizes a report at quorum; `reconfigure_verifier_set` rewrites the rules, voluntary exits stop at the k-member floor, and `release_verifier` is governance's fair-exit valve), season readings are a median (the oracle-set PDA `12FrAm…zTf` holds an odd k and its unbound readers; the k-th reading freezes the median and `settle_policy` trusts only a finalized one), and custody is program-owned (settle/revoke sweep refunds to the treasury PDA's USDC ATA; `withdraw_treasury` releases them to the admin only); deployed to devnet (`GVenujqgMJZCvYPKqMmPiAXQp7o3mwQbXw1nSBu3U5Ht`), IDL synced via `npm run idl:sync`; 44 Anchor integration cases plus an opt-in RPC smoke test, the full Phase 1/3A lifecycle (realloc on an old-layout account, quorum floor, governed reconfigure, freeze-on-contact, release valve, recorded-stake refunds) rehearsed end to end against the live devnet state, and (Phase 3B) a live Switchboard On-Demand receipt — 3 enclave signatures proved off-chain and on-chain — relayed permissionlessly into the season tally on devnet (`5cfMd1pv…RUS8`) |
-| Scout tab           | Shipped | Chain-fed log and field cards, attention banner, folding action stack, camera → AI diagnosis, the 3-step onboarding card for the no-farm state (scan works before setup — anchoring needs a farm), and a persisted scan store: captures survive restarts (`indorse.scout.v1`) and anchor through an outbox flush once a farm is reachable                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                 |
-| Provenance & escrow | Shipped | Score, evidence trail, harvest batches; escrow create → release / cancel-and-retry                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                        |
-| Weather             | Shipped | Policy setup, median-frozen oracle readings with error + retry, season chart plotted against the trigger — nothing reads as measured before the quorum finalizes it                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                       |
-| Profile & settings  | Shipped | Seven settings destinations (incl. Account & Local Data), passcode/biometrics app lock, hide balances, cluster health check, en/es/fr, system/dark/light themes                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                           |
-| Data honesty        | Shipped | No mock data reaches the UI — empty states and honest guest/failure/loading notes instead; seed constants survive only as test/CSV fixtures                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                               |
-| CSV export          | Shipped | Live chain reads → one flat RFC 4180 file → share or copy                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                 |
-| AI proxy (`api/`)   | Shipped | One route, two backends — OpenAI (streamed, strict `json_schema`) and Gemini (`responseSchema`; provider keys never reach the device)                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                     |
-| Device verification | Shipped | SIWS nonce/verify routes, SGT dev allowlist, transactional email via Resend                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                               |
-| Launch media        | Shipped | Launch video in `brag-output-2026-09-30-183600/`                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                          |
+| Area                | State   | Notes                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                    |
+| ------------------- | ------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| On-chain program    | Shipped | 28 instructions — authority is data (the config PDA `839zrf…YzaY8` on devnet holds the admin/verifier/oracle roles every ops gate reads, rotated by `set_roles` instead of a redeploy), verification is a bonded K-of-N quorum (the verifier-set PDA `H4HnKfqu…XK` holds k, the seat price, and members with their recorded stakes; `cast_vote` finalizes a report at quorum; `reconfigure_verifier_set` rewrites the rules, voluntary exits stop at the k-member floor, and `release_verifier` is governance's fair-exit valve), season readings are a median (the oracle-set PDA `12FrAm…zTf` holds an odd k and its unbound readers; the k-th reading freezes the median and `settle_policy` trusts only a finalized one), and custody is program-owned (settle/revoke sweep refunds to the treasury PDA's USDC ATA; `withdraw_treasury` releases them to the admin only); deployed to devnet (`GVenujqgMJZCvYPKqMmPiAXQp7o3mwQbXw1nSBu3U5Ht`), IDL synced via `npm run idl:sync`; 47 Anchor integration cases plus an opt-in RPC smoke test, the full Phase 1/3A lifecycle (realloc on an old-layout account, quorum floor, governed reconfigure, freeze-on-contact, release valve, recorded-stake refunds) rehearsed end to end against the live devnet state, and (Phase 3B) a live Switchboard On-Demand receipt — 3 enclave signatures proved off-chain and on-chain — relayed permissionlessly into the season tally on devnet (`5cfMd1pv…RUS8`); the multi-farm roster (per-farm seeds + `FarmCounter`, each farm keeps its own scout records) and the contract-review hardening (`close_settled_policy`, honest underfunded-settle errors, signer/tally bounds) were Anchor-tested at 47/47 on 2026-10-05 and **redeployed to devnet on 2026-10-07** (slot 508,420,779, the `.so` dump byte-compared against the build, live smoke round-trip green) — the same redeploy carried the coverage-funding step: `create_policy` now refuses a policy the treasury cannot fund (`TreasuryInsufficient`) and funds the vault in the same instruction, with `scripts/policy-solvency.ts` auditing every active vault |
+| Scout tab           | Shipped | Chain-fed log and field cards, attention banner, folding action stack, camera → AI diagnosis, the 3-step onboarding card for the no-farm state (scan works before setup — anchoring needs a farm), and a persisted scan store: captures survive restarts (`indorse.scout.v1`) — with their evidence photos copied into app storage at submit — and anchor through an outbox flush once a farm is reachable                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                               |
+| Provenance & escrow | Shipped | Score, evidence trail, harvest batches; escrow create → release / cancel-and-retry                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                       |
+| Weather             | Shipped | Policy setup, median-frozen oracle readings with error + retry, season chart plotted against the trigger — nothing reads as measured before the quorum finalizes it                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                      |
+| Profile & settings  | Shipped | Seven settings destinations (incl. Account & Local Data), passcode/biometrics app lock, hide balances, cluster health check, en/es/fr, system/dark/light themes                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                          |
+| Data honesty        | Shipped | No mock data reaches the UI — empty states and honest guest/failure/loading notes instead; seed constants survive only as test/CSV fixtures                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                              |
+| CSV export          | Shipped | Live chain reads → one flat RFC 4180 file → share or copy                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                |
+| AI proxy (`api/`)   | Shipped | Four routes, three jobs — photo diagnosis one route/two backends (OpenAI streamed `json_schema`, Gemini `responseSchema`; provider keys never reach the device), dual-model harvest grading (Gemini + Groq disagree → human-verifier flag), and the grounded "Ask indorse" assistant (Groq over a hand-written knowledge doc, explain-only, per-IP rate-limited)                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                         |
+| Device verification | Shipped | SIWS nonce/verify routes, SGT dev allowlist, transactional email via Resend                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                              |
+| Launch media        | Shipped | Launch video in `brag-output-2026-09-30-183600/`                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                         |
 
 **In flight:** the Solana Attestation Service issuer (`api/sas-issuer.ts` +
 `npm run sas:bootstrap`) and the HyperFrames launch deck (`deck/`).
 
 **Known gaps:** iOS scaffolding exists, but Mobile Wallet Adapter is
 Android-only, so wallet connect is Android-only; persisted captures anchor
-only to the farm that is current when the outbox flushes, and the captured
-photo _files_ live in the OS cache (the hash and anchor payload persist —
-the pixels are best-effort; copying each file into app storage at capture is
-deferred); the React Query cache stays in-memory, so chain rows do not
+only to the farm that is current when the outbox flushes; evidence photos
+are now copied into app storage at submit (`evidence/<sha256-of-bytes>.jpg`,
+content-addressed, released when a row is evicted or erased, wiped with the
+log in Account & Local Data), but there is still no upload backend — the
+on-chain `uri` remains a deterministic placeholder, and public verification
+from the chain alone (a hosted `uri`) is deferred; the React Query cache stays in-memory, so chain rows do not
 survive an app restart without RPC — persisting the query client for offline
 rows is deferred; on devnet the three roles are split across
 deterministic per-role keys (`scripts/role-keys.cjs` — reproducible from a
@@ -65,9 +68,12 @@ quorum so there is no liveness margin if a reader disappears (add spare
 `add_oracle` seats for that), a reader's own pre-quorum correction replaces
 rather than appends (once frozen the tally never moves), and `config.oracle`
 is vestigial for the same layout reason as `config.verifier`; the final
-device screenshots for the write-up are still outstanding; the one
-remaining on-chain design edge — coverage funding with no solvency check —
-is recorded under _Future work_ below (the admin gate on `settle_policy`
+device screenshots for the write-up are still outstanding; the
+on-chain design edge — coverage funding with no solvency check — was
+closed on 2026-10-07 (`create_policy` funds the coverage itself and
+refuses a policy the treasury cannot carry; the pre-upgrade book is
+audited by `scripts/policy-solvency.ts` — see _Future work_ below)
+(the admin gate on `settle_policy`
 has since been removed: settlement is permissionless, its authority the
 frozen median plus the pinned payout destinations — same shape as
 `reward_report`).
@@ -76,39 +82,62 @@ frozen median plus the pinned payout destinations — same shape as
 
 ## Future work
 
-Recorded 2026-10-05 so none of this lives only in someone's head.
+Recorded 2026-10-05 so none of this lives only in someone's head; item 2
+shipped 2026-10-07.
 
 ### Investor-funded vault model — marked for implementation
 
 All underwriting capital is protocol-owned today: the program treasury PDA
-is seeded by plain out-of-band USDC transfers, each policy's vault is topped
-up with coverage the same way, and there is deliberately no path for outside
-capital — no deposit instruction, no LP shares (the Phase 1 boundary). The
-planned replacement, sketched against the current program:
+is seeded by plain out-of-band USDC transfers (each new policy's coverage
+is now CPI-drawn from it inside `create_policy`), and there is deliberately
+no path for outside capital — no deposit instruction, no LP shares (the
+Phase 1 boundary). The planned replacement, sketched against the current
+program:
 
 1. a `deposit_treasury`-style instruction with share accounting, so third
    parties can fund capacity and earn premiums;
-2. an on-chain coverage-funding step inside `create_policy` instead of the
-   manual top-up, so a policy is provably funded the moment it exists;
+2. **shipped 2026-10-07** — the on-chain coverage-funding step inside
+   `create_policy`: the treasury balance is required (`TreasuryInsufficient`)
+   before anything moves and the coverage lands in the vault in the same
+   instruction, so a policy is provably funded the moment it exists;
 3. solvency/allocation rules at `settle_policy` (per-policy allocation, not
    "whose vault happened to be topped up") plus a withdrawal queue for
    unencumbered capital.
 
-### No solvency check before payout — known gap, operational today
+### No solvency check before payout — closed at creation 2026-10-07; the legacy book still names the gap
 
-`settle_policy` pays out of the policy's own vault and never checks that
-the coverage top-up happened. Funding is an out-of-band plain transfer
-("no instruction needed: anyone can credit the vault"), so a forgotten
-top-up makes settlement fail at the CPI with an opaque token-program error
-— a fully valid, breach-triggering policy whose payout simply does not
-land. Until item 2 above ships on-chain, treat funding as a **pre-demo
-checklist line, not memory**: for every demo policy, verify the vault (the
-`["insurance_vault", farm, index]` PDA _is_ the token account) covers the
-payout:
+Historically `settle_policy` paid out of the policy's own vault without
+ever having checked that the coverage top-up happened. Funding was an
+out-of-band plain transfer ("no instruction needed: anyone can credit the
+vault"), so a forgotten top-up made settlement fail at the CPI with an
+opaque token-program error — a fully valid, breach-triggering policy whose
+payout simply did not land.
+
+**What shipped (2026-10-07, devnet slot 508,420,779):** `create_policy`
+requires `treasury_usdc.amount >= coverage_usdc` (`TreasuryInsufficient`,
+error 6053) before any state or token movement and CPIs the coverage from
+the treasury PDA in the same instruction — one farmer signature, no manual
+top-up, and a doomed policy can no longer be created. `settle_policy`'s
+honest `CoverageUnfunded` guard stays as defense for accounts predating
+the upgrade. Deployed byte-for-byte from the local build (dump compared)
+and smoke-tested live (register → report → read-back).
+
+**What still names the gap:** policies created before the upgrade. The
+devnet book has one — `6RzevvAs2aNhXQ4ta5vQmAtzLeQbjwZaELQ84t449itL`,
+coverage 400 USDC against 50 in its vault; it will refuse to settle until
+topped up. Audit the whole book instead of memory:
 
 ```bash
-spl-token display <vault-pda>   # balance ≥ coverage_usdc, else transfer USDC in first
+npx tsx scripts/policy-solvency.ts                 # default: devnet
+SMOKE_RPC=http://127.0.0.1:8899 npx tsx scripts/policy-solvency.ts
+
+# exit 0 = every active vault covers its policy
+# exit 1 = at least one SHORT or missing vault (printed per policy)
+# exit 2 = cluster unreachable — never a silent pass
 ```
+
+The manual `spl-token display <vault-pda>` one-liner (balance ≥
+`coverage_usdc`) still works for a single vault between runs.
 
 ---
 
@@ -132,7 +161,7 @@ Every change lands only with all four gates green, run in this order:
 | Types  | `npx tsc --noEmit`       | missing i18n keys (es/fr are typed `Record<MessageKey, string>`), hook/type drift |
 | Format | `npx prettier --check .` | the whole tree — app, tests, `api/`, even `deck/` HTML and Markdown               |
 | Lint   | `npx expo lint`          | React hooks rules, dead code                                                      |
-| Tests  | `npx vitest run`         | behaviour — 58 files, 484 passing + 1 skipped (the opt-in smoke test)             |
+| Tests  | `npx vitest run`         | behaviour — 65 files, 544 passing + 1 skipped (the opt-in smoke test)             |
 
 `npm run ci` chains the same checks and finishes with an Android prebuild, so
 it also catches anything Metro refuses to bundle.
@@ -188,7 +217,9 @@ optional live round-trip with `SMOKE_RPC=… npx vitest run test/smoke.test.ts`.
 - **Theming** — every screen builds styles with `makeStyles(colors)`, which
   makes light mode a palette swap instead of a second stylesheet.
 - **Secrets stay server-side** — provider keys live only in the `api/`
-  proxies; the app knows a single `EXPO_PUBLIC_AI_CLASSIFY_URL`.
+  proxies; the app knows only public per-route URLs
+  (`EXPO_PUBLIC_AI_CLASSIFY_URL`, `EXPO_PUBLIC_AI_GRADE_URL`,
+  `EXPO_PUBLIC_AI_ASSISTANT_URL`).
 - **The app lock is not a wallet** — the passcode protects the app in
   `expo-secure-store`; signing always goes through Mobile Wallet Adapter.
 
@@ -200,13 +231,14 @@ A running postmortem: what broke, why, and the guard that now prevents it.
 
 ### Release-blocking
 
-| Failure                                                  | Root cause                                                                                                                                               | Fix / guard                                                                                                                                                                                         |
-| -------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| App died at startup with an opaque Metro transform error | A `*.test.*` file under `app/` entered Metro's module graph (its default `blockList` excludes nothing), bundling `describe`/`expect` into the release JS | Test moved to the repo root (`entry.test.tsx`); `test/bundle-guard.test.ts` now fails the suite if any test file appears under `app/` again                                                         |
-| "App not loading" on the device (2026-10-04)             | Two independent faults at once: the `adb reverse` mappings for 8081/3000 were gone **and** the APK was not installed (Android had wiped local app data)  | Restored both `adb reverse` lines, `adb install -r` the debug APK, verified the bundle answered HTTP 200 (~15 MB). The recovery checklist now lives in _Build process → Device dev loop_            |
-| Gemini proxy hung or failed silently in production       | Node's global `fetch` is HTTP/1.1-only, and the POC's mobile uplink blackholes H1 POSTs to Google's edge while H2 gets through                           | `h2Fetch` (`api/_lib/gemini.ts`) — a `node:http2` fetch-shaped client with a hard deadline that surfaces a mapped `timeout` instead of a hung proxy. **Never regress it**; tests inject `fetchImpl` |
-| Plain `anchor test` could not run                        | Anchor 0.32 drives Surfpool, which does not start in this environment; separately, Agave ≥ 2.2 rejects _new_ loader-v3 deploys on a local validator      | Run against `solana-test-validator` and deploy with `solana program-v4` — documented in _Running Anchor tests_                                                                                      |
-| Devnet reads failed intermittently                       | Helius free-tier rate limiting                                                                                                                           | Fall back to the public `https://api.devnet.solana.com` endpoint                                                                                                                                    |
+| Failure                                                                               | Root cause                                                                                                                                               | Fix / guard                                                                                                                                                                                                           |
+| ------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| App died at startup with an opaque Metro transform error                              | A `*.test.*` file under `app/` entered Metro's module graph (its default `blockList` excludes nothing), bundling `describe`/`expect` into the release JS | Test moved to the repo root (`entry.test.tsx`); `test/bundle-guard.test.ts` now fails the suite if any test file appears under `app/` again                                                                           |
+| "App not loading" on the device (2026-10-04)                                          | Two independent faults at once: the `adb reverse` mappings for 8081/3000 were gone **and** the APK was not installed (Android had wiped local app data)  | Restored both `adb reverse` lines, `adb install -r` the debug APK, verified the bundle answered HTTP 200 (~15 MB). The recovery checklist now lives in _Build process → Device dev loop_                              |
+| Gemini proxy hung or failed silently in production                                    | Node's global `fetch` is HTTP/1.1-only, and the POC's mobile uplink blackholes H1 POSTs to Google's edge while H2 gets through                           | `h2Fetch` (`api/_lib/gemini.ts`) — a `node:http2` fetch-shaped client with a hard deadline that surfaces a mapped `timeout` instead of a hung proxy. **Never regress it**; tests inject `fetchImpl`                   |
+| Plain `anchor test` could not run                                                     | Anchor 0.32 drives Surfpool, which does not start in this environment; separately, Agave ≥ 2.2 rejects _new_ loader-v3 deploys on a local validator      | Run against `solana-test-validator` and deploy with `solana program-v4` — documented in _Running Anchor tests_                                                                                                        |
+| Devnet reads failed intermittently                                                    | Helius free-tier rate limiting                                                                                                                           | Fall back to the public `https://api.devnet.solana.com` endpoint                                                                                                                                                      |
+| Devnet upgrade rejected: `ExtendProgram requires a minimum of 10240 additional bytes` | loader-v3 grows the programdata in ≥10,240-byte chunks; the new `.so` was only 2,176 B larger than the deployed one (2026-10-07)                         | `solana program extend <PROGRAM_ID> 10240 --url devnet` first, then re-run the deploy. If confirmation outlives the CLI the fully-uploaded buffer survives — reuse it with `--buffer <addr>` rather than re-uploading |
 
 ### Mock data shipped to the UI (purged)
 
@@ -254,7 +286,7 @@ A running postmortem: what broke, why, and the guard that now prevents it.
 
 ## On-chain program
 
-The Anchor program lives in `programs/indorse_program/` and exposes 27
+The Anchor program lives in `programs/indorse_program/` and exposes 28
 instructions. Layer 0 is the config: the `Config` PDA (seeds `["config"]`)
 holds the admin/verifier/oracle roles every ops gate reads, so authority is
 swappable account data — the `ADMIN` const survives only as the one key
@@ -376,6 +408,8 @@ cd ../.. && npm run idl:sync && npm run client:generate
 cd programs/indorse_program
 solana program deploy --program-id target/deploy/indorse_program-keypair.json \
   target/deploy/indorse_program.so --url devnet    # in-place upgrade
+# loader-v3 grows programdata in ≥10,240-byte chunks — on a small size
+# delta, run first: solana program extend <PROGRAM_ID> 10240 --url devnet
 node scripts/init-config.cjs                      # idempotent: config + treasury ATA + verifier set + bond vault + oracle set
 ```
 
@@ -390,6 +424,56 @@ verifier seats itself with `post_bond` from its own wallet. The oracle-set
 step (Phase 2) takes `ORACLE_K` (odd, default 3) and — because readers carry
 no bond — also seats the deterministic `oracle-1…n` keys from `role-keys.cjs`
 and tops them up for fees and the tally's first rent, both idempotently.
+
+### Multi-farm roster + contract-review hardening (2026-10-05)
+
+`register_farm` used to pin one farm per wallet (seeds `["farm", owner]`).
+The rework derives every farm at `["farm", owner, u32(index)]` and keeps a
+per-owner `["farm_counter", owner]` PDA whose monotonic `count` is the next
+free slot — never decremented, so deleted slots are not recycled. The
+instruction takes the counter account alongside the derived index; the client
+mirrors the whole roster: `FarmChainSync` enumerates `0…count-1` off the
+counter and upserts each farm into the registry independent of the current
+selection, `useFarmQuery` honors the registry's chain-current address
+(falling back to slot 0 with a post-fetch ownership guard), and each farm
+keeps its own scout log — reports, tallies and batches hang off the per-farm
+PDA, so switching farms switches the records.
+
+A line-by-line contract review (adversarial read of `lib.rs` against
+anchor-syn 0.32.1's codegen and the live devnet accounts) landed:
+
+- **`close_settled_policy` (new, permissionless)** — once a policy settled,
+  nothing could move its premium or reclaim the policy/vault rents:
+  `settle_policy` and `revoke_policy` both require `Active`. The new
+  instruction mirrors `revoke_policy` exactly — an explicit terminal-state
+  gate (`PaidOut` or `Expired`, never "anything but Active"), the vault
+  remainder swept to the treasury's canonical USDC ATA, `token::close_account`
+  returning the vault rent to the farmer, and Anchor `close = farmer` on the
+  policy — with both destinations pinned so a caller chooses nothing.
+- **Underfunded settles fail honestly** — `settle_policy` now refuses with
+  `CoverageUnfunded` before the CPI instead of retrying an opaque token
+  error; the policy stays `Active`, so `revoke_policy` remains the escape
+  hatch until `season_end`.
+- **Feed-signer bound** — `register_switchboard_feed` refuses more than
+  `MAX_ORACLES` signers (`TooManyFeedSigners`) rather than failing inside
+  account serialization.
+- **Tally capacity** — `cast_vote` refuses a ballot past `MAX_VERIFIERS`
+  (`TallyFull`), reachable only through mid-tally membership rotation, so
+  the `reconfigure_verifier_set` docs now carry the full ops rule: finish
+  open tallies before lowering `k` **or rotating members**.
+- **Docs corrected** — the PostBond realloc invariant now states the
+  empty-only rule where the realloc lives (anchor-syn deserializes before
+  constraints run, so a non-empty old-layout set must be closed and
+  re-inited, never realloc'd); `delete_farm` documents that a report still
+  Pending at deletion can never be voted on; two orphaned doc comments that
+  were corrupting the IDL (`init_verifier_set`/`init_oracle_set` carried
+  another instruction's docs) were removed; and `cast_vote`'s farm
+  constraint reports `FarmMismatch` instead of a raw constraint error.
+
+Known and accepted: the legacy two-seed farm (the pre-rework "Blue Berry
+Farms" account on devnet) can never be closed by `delete_farm` — its
+≈0.0011 SOL rent stays stranded; re-registering under the new seeds is the
+migration, and no legacy-close instruction is planned for devnet dust.
 
 ### Devnet role keys
 
@@ -532,6 +616,90 @@ newer versions target kit v8. `lib/program/generated-client.test.ts` asserts the
 generated client and the hand-rolled `lib/program/*` client agree on the program
 address, every instruction discriminator, the argument encoding and the PDA
 seeds, so drift between them fails the suite.
+
+---
+
+## AI services
+
+All three AI jobs run through `npm run api:dev` (one origin, Vercel-function
+compatible; provider keys stay server-side) and are switched per route from
+Expo public env:
+
+| Route                       | Client env                     | Backends                                    | Job                                               |
+| --------------------------- | ------------------------------ | ------------------------------------------- | ------------------------------------------------- |
+| `POST /api/classify`        | `EXPO_PUBLIC_AI_CLASSIFY_URL`  | OpenAI Responses (strict json_schema)       | Photo diagnosis, ≤5 shots in one `images[]` call  |
+| `POST /api/classify-gemini` | same                           | Gemini `generateContent` + `responseSchema` | Same contract; what the device uses today         |
+| `POST /api/grade`           | `EXPO_PUBLIC_AI_GRADE_URL`     | Gemini `flash-lite` + Groq `gpt-oss-120b`   | Dual-model harvest grade (batch record, no photo) |
+| `POST /api/assistant`       | `EXPO_PUBLIC_AI_ASSISTANT_URL` | Groq `gpt-oss-120b`                         | Grounded "Ask indorse" guide                      |
+
+### Diagnosis carries the full plant identity
+
+The vision schema now also answers `commonName`, `botanicalName` and
+`pathogenName` (e.g. Maize · _Zea mays_ · _Ustilago maydis_), rendered on the
+camera result card between the verdict and the confidence. All three are
+app-layer display fields like `severity`/`notes` — only the ≤32-byte label
+reaches the chain as `aiLabel`. Parse edge is lenient by design: a missing,
+non-text or over-long name is dropped rather than failing a verdict the
+farmer is waiting on (abiotic findings legitimately have no pathogen, so
+`""` → field absent). Proven live on the two test photos: `sc-healthy.jpeg`
+→ Healthy 0.95 with no pathogen; `sc-sick.jpeg` → Corn Smut 0.95 with
+_Ustilago maydis_.
+
+### Harvest grading — two models, one grade, one flag
+
+`submit_harvest_batch` now carries `grade u8` (0 = ungraded, 1–4 = A–D),
+`grade_confidence u8` (0–100), `grade_notes` (≤64 UTF-8 bytes) and
+`grade_flags` (bit 0 = the models disagreed → a human verifier must look).
+The grade is written **in the same transaction** as the batch, so provenance
+and its assessment can never diverge.
+
+- **Combine rules** (`api/_lib/grade.ts`): both agree → averaged confidence;
+  disagree → keep the higher-confidence grade, take the **minimum**
+  confidence, always set the flag; one model answers → `single`, flagged
+  below 0.5 confidence.
+- **Failure never blocks a harvest**: one grading attempt, then an explicit
+  "Submit without a grade" escape — grade 0 is an honest "ungraded", not a
+  fabricated average.
+- Gated: `anchor test` 47/47 with the grade fields; full vitest suite green.
+  Old devnet batches sit under orphaned pre-multi-farm farms, so the struct
+  growth is safe ahead of the redeploy.
+
+### Ask indorse — a grounded assistant, not an oracle
+
+One floating `?` chip (`components/help-chip.tsx`) sits over all four tabs
+(bottom-left, clear of the Scout dock) and opens a chat sheet
+(`components/assistant-sheet.tsx`) that sends the screen's question, this
+farm's state and the active policy figures.
+
+- **Knowledge first, doc second** (`api/_lib/knowledge.ts`): one
+  hand-written document audited line by line against what is actually
+  mounted — a test asserts it never names unmounted features (no
+  `/api/weather`, no live SGT).
+- **Context, honestly partial**: route, farm existence/name, policy
+  status/cover/trigger/finalized-rainfall only — allowlisted and clipped
+  server-side, and fields are omitted while their chain query is still
+  loading instead of guessed.
+- **Guardrails** (prompt + handler): explain-only, never builds/signs/sends
+  a transaction, no payout promises, says "I don't know", plain text only
+  (markdown stripped server-side), en/es/fr, 1000-char messages, 30 requests
+  per minute per IP → 429.
+- **The failure that shaped the doc**: the first live answer inverted the
+  payout mechanic ("rainfall must _exceed_ the trigger") because the doc
+  never stated the direction. The program pays strictly **below**
+  (`rainfall_mm < trigger_mm`); the doc now says so twice and a regression
+  test pins the direction.
+
+### AI environment
+
+- Server: `GROQ_API_KEY` (grading second opinion + assistant; optional
+  `GROQ_MODEL`) alongside `GEMINI_API_KEY`/`OPENAI_API_KEY`. The Groq key
+  was pasted in chat during setup — rotate it if that transcript was ever
+  shared; keys live only in the untracked `.env`.
+- Device: `EXPO_PUBLIC_AI_GRADE_URL` and `EXPO_PUBLIC_AI_ASSISTANT_URL`
+  next to `EXPO_PUBLIC_AI_CLASSIFY_URL`. The host LAN IP moved to
+  `192.168.245.156` (the old `192.168.1.47` is dead) — all three URLs were
+  updated and `adb reverse tcp:3000 tcp:3000` re-attached; Metro must
+  restart to pick up `.env` changes.
 
 ---
 
@@ -746,23 +914,31 @@ npm run icons           # Regenerate the app icons
 
 ## Running Anchor tests
 
-The integration tests (44 cases: config authority rotation, the K-of-N
+The integration tests (47 cases: config authority rotation, the K-of-N
 verifier set — quorum approve/reject, double-vote refusal, governed
 reconfiguration with its bounds, the `k`-member exit floor, reprice-then-join
 stake accounting, the admin release valve, the governed slash, and
 freeze-on-contact when `k` is lowered mid-tally — the oracle-set median —
 admin-only odd quorum, seat assignment/refusal, partial-tally settle refusal,
 own replacement and the final freeze — the Switchboard receipt relay —
-binding registration gates, missing proof, impostor signers, foreign job
-hash, stale slothash, fractional value, the permissionless happy path, the
-median freeze and key rotation — program-treasury revoke/withdraw,
-scouting, rewards, treasury-pool insurance with both settle paths pressed
-by an unfunded stranger (refund and breach payout), escrow cancel/retry)
-need a local validator and the Anchor CLI. Plain `anchor test`
-tries to drive Surfpool in Anchor 0.32; in environments where Surfpool does
-not start, run against `solana-test-validator` directly. Note that
-Agave ≥ 2.2 rejects _new_ loader-v3 programs on a local validator, so the
-program is deployed with `program-v4`:
+binding registration gates (including the >`MAX_ORACLES` signers refusal),
+missing proof, impostor signers, foreign job hash, stale slothash, fractional
+value, the permissionless happy path, the median freeze and key rotation —
+program-treasury revoke/withdraw, scouting, rewards, treasury-pool insurance
+with both settle paths pressed by an unfunded stranger (refund and breach
+payout), the treasury-can-fund refusal at creation (an underfunded vault
+can no longer be built), the settled-policy close (sweep,
+rents, and the Active refusal), escrow cancel/retry, and the multi-farm
+roster — a second farm on the same wallet at the counter-derived slot)
+need a local validator and the Anchor CLI. Plain `anchor test` tries to
+drive Surfpool in Anchor 0.32; where Surfpool does not start (it needs a
+TTY this environment does not give it), the same command runs against the
+classic validator with `--validator legacy` — proven green at 47/47 on
+2026-10-05 and again on 2026-10-07 (fresh validator, after the
+coverage-funding change). The manual recipe below remains as the fallback for environments
+where even that flag is unavailable. Note that Agave ≥ 2.2 rejects _new_
+loader-v3 programs on a local validator, so the manual path deploys with
+`program-v4`:
 
 ```bash
 cd programs/indorse_program
