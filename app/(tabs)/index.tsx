@@ -56,12 +56,14 @@ import { useFarmQuery } from '@/features/farm/useFarmQuery'
 import { useDirectoryQuery } from '@/features/farm/useDirectoryQuery'
 import { deriveDiscovery, formatDistance, type DiscoveryFarm } from '@/features/farm/directory'
 import { useReportsQuery } from '@/features/reports/useReportsQuery'
+import { useLatestReportTimestamp } from '@/features/reports/useLatestReportTimestamp'
 import { useRewardReport } from '@/features/reports/useRewardReport'
 import { useSubmitReport } from '@/features/reports/useSubmitReport'
 import { mergeLogEvents, reportToScoutEvent } from '@/features/reports/chain-events'
 import { buildFieldsFromReports } from '@/features/scout/fields'
 import { getCurrentCoords } from '@/features/scout/location'
 import { sha256HexToBytes } from '@/features/scout/photo'
+import { formatTimestamp } from '@/lib/format'
 import { useT, type MessageKey } from '@/lib/i18n'
 
 const STATUS_KEYS = {
@@ -123,6 +125,22 @@ export default function ScoutingScreen() {
     () => deriveDiscovery(directoryQuery.farms, { excludeAddresses: ownAddresses, origin: deviceCoords }),
     [directoryQuery.farms, ownAddresses, deviceCoords],
   )
+  // Recency for whichever farm's sheet is open. Called unconditionally —
+  // the early returns below come after every hook, as they must.
+  const latestReport = useLatestReportTimestamp(discoverySelected)
+  /**
+   * The sheet's "Last report" value, or `null` to leave the row out:
+   * nothing yet while the read is in flight, and nothing at all when there
+   * is no report to date (the Reports row already says 0). `unknown` is used
+   * exactly when we asked and could not answer — a failed read, or an
+   * account that is not there. A date is never guessed.
+   */
+  const lastReportValue =
+    latestReport.state === 'error' || (latestReport.state === 'ready' && latestReport.timestamp === null)
+      ? t('discover.lastReportUnknown')
+      : latestReport.timestamp !== null
+        ? formatTimestamp(latestReport.timestamp)
+        : null
   useEffect(() => {
     if (deviceCoords || discoveryRows.length === 0) return
     let cancelled = false
@@ -280,9 +298,134 @@ export default function ScoutingScreen() {
   if (showSkeleton) return <ScoutingSkeleton />
   if (readFailed) return <ScoutingError onRetry={farmQuery.retry} />
 
-  // No farm anywhere yet — the setup card replaces the dashboard and the
-  // docked pills with it. Scanning still works: the info card opens the
-  // camera, whose captures stay local until there is a farm to anchor them.
+  /**
+   * The Discover card and its detail sheet, built once and rendered by BOTH
+   * entry states — the dashboard below, and the no-farm setup screen above.
+   * Registering a farm used to be the price of discovering one, so a
+   * brand-new device could never learn that other farms existed. Neither
+   * block depends on which branch renders it: both touch only component-level
+   * state, and the sheet's "scout this farm" action arms a target that the
+   * camera wiring already honours with no farm of our own.
+   */
+  const discoverCard = (
+    <>
+      {/* ── Cross-farm discovery — other farms, scouted from here ── */}
+      {/* Hidden while there is nothing to discover (an empty directory is
+          not an error) and surfaced honestly when the directory itself
+          fails — the rest of the screen keeps working either way. */}
+      {directoryQuery.state === 'error' ? (
+        <View style={styles.block}>
+          <SectionLabel>{t('discover.title')}</SectionLabel>
+          <ErrorState
+            title={t('discover.error')}
+            message={t('discover.errorBody')}
+            retryLabel={t('discover.retry')}
+            onRetry={directoryQuery.retry}
+          />
+        </View>
+      ) : discoveryRows.length > 0 ? (
+        <View style={styles.block}>
+          <SectionLabel>{t('discover.title')}</SectionLabel>
+          <Text style={styles.discoverLead}>{t('discover.lead')}</Text>
+          <View style={styles.stack}>
+            {discoveryRows.map((row) => (
+              <Pressable
+                key={row.address}
+                testID={`discover-row-${row.address}`}
+                onPress={() => {
+                  Haptics.selectionAsync()
+                  setDiscoverySelected(row)
+                }}
+                style={[styles.discoverCard, scoutTarget?.address === row.address && styles.discoverCardTarget]}
+              >
+                <View style={styles.discoverTop}>
+                  <Text style={styles.discoverName} numberOfLines={1}>
+                    {row.name}
+                  </Text>
+                  {/* Provenance only claims itself once somebody reported. */}
+                  {row.reportCount > 0 ? (
+                    <Chip label={`${row.score ?? 0}%`} color={row.score === 100 ? colors.sage : colors.amber} filled />
+                  ) : null}
+                </View>
+                {/* Distance only claims itself once a position fix exists. */}
+                <Text style={styles.discoverMeta}>
+                  {row.km !== undefined ? `${formatDistance(row.km)} · ` : ''}
+                  {row.reportCount === 0
+                    ? t('discover.noReports')
+                    : t('discover.score', { v: row.verifiedReportCount, r: row.reportCount })}
+                </Text>
+                {row.pending > 0 ? (
+                  <Text style={styles.discoverPending}>{t('discover.pending', { n: row.pending })}</Text>
+                ) : null}
+              </Pressable>
+            ))}
+          </View>
+        </View>
+      ) : null}
+    </>
+  )
+
+  const discoverSheet = (
+    <>
+      {/* Discover sheet — the chain-public detail behind one row, with the
+          single action that arms the scout target. The backdrop closes;
+          the sheet itself only reacts to its own controls. */}
+      {discoverySelected && (
+        <Modal
+          visible
+          transparent
+          animationType="fade"
+          statusBarTranslucent
+          onRequestClose={() => setDiscoverySelected(null)}
+        >
+          <Pressable style={styles.sheetBackdrop} onPress={() => setDiscoverySelected(null)}>
+            <Pressable style={styles.sheet} onPress={() => undefined}>
+              <View style={styles.sheetHandle} />
+              <Text style={styles.sheetTitle} numberOfLines={1}>
+                {discoverySelected.name}
+              </Text>
+              <Mono>{discoverySelected.address}</Mono>
+              <View style={styles.sheetRows}>
+                {discoverySelected.km !== undefined ? (
+                  <LabelValue label={t('discover.distanceLabel')} value={formatDistance(discoverySelected.km)} />
+                ) : null}
+                {/* Coordinates are public on-chain by design — shown raw. */}
+                <LabelValue
+                  label={t('discover.coords')}
+                  value={`${discoverySelected.lat.toFixed(5)}, ${discoverySelected.lng.toFixed(5)}`}
+                />
+                <LabelValue label={t('discover.reports')} value={String(discoverySelected.reportCount)} />
+                <LabelValue label={t('discover.verifiedLabel')} value={String(discoverySelected.verifiedReportCount)} />
+                <LabelValue label={t('discover.pendingLabel')} value={String(discoverySelected.pending)} />
+                {lastReportValue !== null ? (
+                  <LabelValue label={t('discover.lastReport')} value={lastReportValue} />
+                ) : null}
+              </View>
+              <Pressable testID="discover-scout" onPress={handleScoutTarget} style={styles.sheetPrimary}>
+                <Text style={styles.sheetPrimaryText}>
+                  {scoutTarget?.address === discoverySelected.address
+                    ? t('discover.backToOwn')
+                    : t('discover.scoutFarm')}
+                </Text>
+              </Pressable>
+              <Pressable
+                testID="discover-close"
+                onPress={() => setDiscoverySelected(null)}
+                style={styles.sheetSecondary}
+              >
+                <Text style={styles.sheetSecondaryText}>{t('scout.photoClose')}</Text>
+              </Pressable>
+            </Pressable>
+          </Pressable>
+        </Modal>
+      )}
+    </>
+  )
+
+  // No farm anywhere yet — the setup card takes the screen, with Discover
+  // beside it: nobody should have to register a farm just to learn that other
+  // farms exist. Scanning still works: the info card opens the camera, whose
+  // captures stay local until there is a farm to anchor them.
   if (!hasFarmAnywhere) {
     return (
       <View style={styles.screen}>
@@ -300,6 +443,9 @@ export default function ScoutingScreen() {
             }}
             onScan={openCamera}
           />
+
+          {/* Register-free discovery — same card the dashboard shows. */}
+          {discoverCard}
         </ScrollView>
 
         {cameraOpen && (
@@ -313,6 +459,7 @@ export default function ScoutingScreen() {
         )}
 
         {registerOpen && <RegisterFarmModal onClose={() => setRegisterOpen(false)} />}
+        {discoverSheet}
       </View>
     )
   }
@@ -410,63 +557,7 @@ export default function ScoutingScreen() {
           )}
         </View>
 
-        {/* ── Cross-farm discovery — other farms, scouted from here ── */}
-        {/* Hidden while there is nothing to discover (an empty directory is
-            not an error) and surfaced honestly when the directory itself
-            fails — the rest of the screen keeps working either way. */}
-        {directoryQuery.state === 'error' ? (
-          <View style={styles.block}>
-            <SectionLabel>{t('discover.title')}</SectionLabel>
-            <ErrorState
-              title={t('discover.error')}
-              message={t('discover.errorBody')}
-              retryLabel={t('discover.retry')}
-              onRetry={directoryQuery.retry}
-            />
-          </View>
-        ) : discoveryRows.length > 0 ? (
-          <View style={styles.block}>
-            <SectionLabel>{t('discover.title')}</SectionLabel>
-            <Text style={styles.discoverLead}>{t('discover.lead')}</Text>
-            <View style={styles.stack}>
-              {discoveryRows.map((row) => (
-                <Pressable
-                  key={row.address}
-                  testID={`discover-row-${row.address}`}
-                  onPress={() => {
-                    Haptics.selectionAsync()
-                    setDiscoverySelected(row)
-                  }}
-                  style={[styles.discoverCard, scoutTarget?.address === row.address && styles.discoverCardTarget]}
-                >
-                  <View style={styles.discoverTop}>
-                    <Text style={styles.discoverName} numberOfLines={1}>
-                      {row.name}
-                    </Text>
-                    {/* Provenance only claims itself once somebody reported. */}
-                    {row.reportCount > 0 ? (
-                      <Chip
-                        label={`${row.score ?? 0}%`}
-                        color={row.score === 100 ? colors.sage : colors.amber}
-                        filled
-                      />
-                    ) : null}
-                  </View>
-                  {/* Distance only claims itself once a position fix exists. */}
-                  <Text style={styles.discoverMeta}>
-                    {row.km !== undefined ? `${formatDistance(row.km)} · ` : ''}
-                    {row.reportCount === 0
-                      ? t('discover.noReports')
-                      : t('discover.score', { v: row.verifiedReportCount, r: row.reportCount })}
-                  </Text>
-                  {row.pending > 0 ? (
-                    <Text style={styles.discoverPending}>{t('discover.pending', { n: row.pending })}</Text>
-                  ) : null}
-                </Pressable>
-              ))}
-            </View>
-          </View>
-        ) : null}
+        {discoverCard}
 
         {/* ── Scouting log ──────────────────────────────────────── */}
         <View
@@ -785,55 +876,7 @@ export default function ScoutingScreen() {
 
       {registerOpen && <RegisterFarmModal onClose={() => setRegisterOpen(false)} />}
 
-      {/* Discover sheet — the chain-public detail behind one row, with the
-          single action that arms the scout target. The backdrop closes;
-          the sheet itself only reacts to its own controls. */}
-      {discoverySelected && (
-        <Modal
-          visible
-          transparent
-          animationType="fade"
-          statusBarTranslucent
-          onRequestClose={() => setDiscoverySelected(null)}
-        >
-          <Pressable style={styles.sheetBackdrop} onPress={() => setDiscoverySelected(null)}>
-            <Pressable style={styles.sheet} onPress={() => undefined}>
-              <View style={styles.sheetHandle} />
-              <Text style={styles.sheetTitle} numberOfLines={1}>
-                {discoverySelected.name}
-              </Text>
-              <Mono>{discoverySelected.address}</Mono>
-              <View style={styles.sheetRows}>
-                {discoverySelected.km !== undefined ? (
-                  <LabelValue label={t('discover.distanceLabel')} value={formatDistance(discoverySelected.km)} />
-                ) : null}
-                {/* Coordinates are public on-chain by design — shown raw. */}
-                <LabelValue
-                  label={t('discover.coords')}
-                  value={`${discoverySelected.lat.toFixed(5)}, ${discoverySelected.lng.toFixed(5)}`}
-                />
-                <LabelValue label={t('discover.reports')} value={String(discoverySelected.reportCount)} />
-                <LabelValue label={t('discover.verifiedLabel')} value={String(discoverySelected.verifiedReportCount)} />
-                <LabelValue label={t('discover.pendingLabel')} value={String(discoverySelected.pending)} />
-              </View>
-              <Pressable testID="discover-scout" onPress={handleScoutTarget} style={styles.sheetPrimary}>
-                <Text style={styles.sheetPrimaryText}>
-                  {scoutTarget?.address === discoverySelected.address
-                    ? t('discover.backToOwn')
-                    : t('discover.scoutFarm')}
-                </Text>
-              </Pressable>
-              <Pressable
-                testID="discover-close"
-                onPress={() => setDiscoverySelected(null)}
-                style={styles.sheetSecondary}
-              >
-                <Text style={styles.sheetSecondaryText}>{t('scout.photoClose')}</Text>
-              </Pressable>
-            </Pressable>
-          </Pressable>
-        </Modal>
-      )}
+      {discoverSheet}
 
       {/* Destructive and device-local: ConfirmModal gates the tap, and its
           lead is honest about what deletion can and cannot reach. */}

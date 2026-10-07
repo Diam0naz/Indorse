@@ -14,7 +14,7 @@ Android device or emulator with a wallet app (e.g. Phantom, Solflare) installed.
 
 Snapshot as of **2026-10-07** — all four quality gates green
 (`tsc --noEmit`, `prettier --check .`, `expo lint`, `vitest run`):
-**758 tests passing · 1 skipped (the opt-in smoke test) across 86 files**
+**762 tests passing · 1 skipped (the opt-in smoke test) across 87 files**
 (`prettier --check .` is fully clean — `api/admin.test.ts` included).
 
 | Area                | State   | Notes                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                    |
@@ -160,7 +160,7 @@ Every change lands only with all four gates green, run in this order:
 | Types  | `npx tsc --noEmit`       | missing i18n keys (es/fr are typed `Record<MessageKey, string>`), hook/type drift |
 | Format | `npx prettier --check .` | the whole tree — app, tests, `api/`, even `deck/` HTML and Markdown               |
 | Lint   | `npx expo lint`          | React hooks rules, dead code                                                      |
-| Tests  | `npx vitest run`         | behaviour — 86 files, 758 passing + 1 skipped (the opt-in smoke test)             |
+| Tests  | `npx vitest run`         | behaviour — 87 files, 762 passing + 1 skipped (the opt-in smoke test)             |
 
 `npm run ci` chains the same checks and finishes with an Android prebuild, so
 it also catches anything Metro refuses to bundle.
@@ -820,7 +820,7 @@ indorse/
 ├── programs/
 │   └── indorse_program/     # Anchor workspace (Rust program + integration tests + init-config/role-keys scripts)
 │
-├── *.test.tsx / **/*.test.ts  # 86 suites — see Build process → Test strategy
+├── *.test.tsx / **/*.test.ts  # 87 suites — see Build process → Test strategy
 ├── test/setup-mocks.ts       # Shared test mocks (icon set, expo-crypto digest)
 ├── test/bundle-guard.test.ts # Fails if any test file lands under app/ (Metro would bundle it)
 ├── test/eas-guard.test.ts    # Fails if a build profile drops the FORCE_SEEKER pin or swaps AAB/APK

@@ -854,6 +854,46 @@ describe('screen redesign', () => {
     await waitFor(() => expect(screen.queryByTestId('scout-target-badge')).toBeNull(), LOAD)
   })
 
+  it('discovers other farms before any farm is registered — setup is not the price of admission', async () => {
+    // Guest default from the reset above: no wallet, no farm, no registry
+    // entry. Registering used to gate the whole dashboard, which put the
+    // directory behind exactly the step nobody had taken yet — so the device
+    // most in need of discovering anything could not discover anything.
+    directoryScenario.farms = [
+      {
+        address: OTHER_ADDRESS,
+        name: 'Rowan Ridge',
+        lat: 46.8821,
+        lng: -98.7023,
+        owner: 'y',
+        reportCount: 3,
+        verifiedReportCount: 1,
+        batchCount: 0,
+        policyCount: 0,
+        updatedAt: 1,
+      },
+    ]
+
+    const screen = await renderWithProviders(<ScoutingScreen />)
+
+    // The setup card still leads…
+    await screen.findByText('Set up in 3 steps', {}, LOAD)
+    // …and Discover sits beside it, with no farm and no wallet to our name.
+    expect(await screen.findByText('Rowan Ridge', {}, LOAD)).toBeTruthy()
+
+    // The sheet carries the same chain-public detail the dashboard shows.
+    await fireEvent.press(screen.getByTestId(`discover-row-${OTHER_ADDRESS}`))
+    await screen.findByText('46.88210, -98.70230', {}, LOAD)
+    expect(screen.getByText(OTHER_ADDRESS)).toBeTruthy()
+
+    // Its single action arms a target we own nothing yet: the camera stamps
+    // it on the capture, which stays queued until a wallet exists to put it
+    // on chain — exactly the register-free flow the camera wiring already
+    // expected (it reads `scoutTarget` with `farmAddress={null}`).
+    await fireEvent.press(screen.getByTestId('discover-scout'))
+    await waitFor(() => expect(screen.queryByTestId('discover-scout')).toBeNull(), LOAD)
+  })
+
   it('states a directory failure honestly without breaking the rest of the scout screen', async () => {
     scoutSetup.address = POLICY_ADDRESS
     scoutSetup.farm = { name: 'Green Valley', reportCount: 0 }

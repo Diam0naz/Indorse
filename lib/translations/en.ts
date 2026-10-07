@@ -188,6 +188,8 @@ export const en = {
   'discover.reports': 'Reports',
   'discover.verifiedLabel': 'Verified',
   'discover.pendingLabel': 'Awaiting verification',
+  'discover.lastReport': 'Last report',
+  'discover.lastReportUnknown': 'Unknown',
   'discover.scoutFarm': 'Scout this farm',
   'discover.scouting': 'Scouting {name}',
   'discover.backToOwn': 'Back to my farm',

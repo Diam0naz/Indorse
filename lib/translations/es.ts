@@ -186,6 +186,8 @@ export const es: Record<MessageKey, string> = {
   'discover.reports': 'Informes',
   'discover.verifiedLabel': 'Verificados',
   'discover.pendingLabel': 'Esperando verificación',
+  'discover.lastReport': 'Último informe',
+  'discover.lastReportUnknown': 'Desconocido',
   'discover.scoutFarm': 'Explorar esta finca',
   'discover.scouting': 'Explorando {name}',
   'discover.backToOwn': 'Volver a mi finca',

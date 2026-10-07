@@ -65,12 +65,28 @@ verified` (clamped ≥ 0), `score = round(100·verified/reports)` or `null`
    name (viewfinder label + row field); `queuedFarmAddress` = target
    regardless of wallet, so wallet-down captures still stamp.
 
+## Additions after the first build
+
+- **Register-free discovery** — the setup card no longer replaces the screen
+  outright: the Discover card renders beside it, so a device with no farm
+  (and no wallet) can browse the directory and arm a scout target before it
+  ever registers. The camera wiring already expected exactly this — it reads
+  `scoutTarget` with `farmAddress={null}` — so only the card was missing.
+  Captures stamp the target and queue as before, and an on-chain submit
+  still needs a wallet at flush time, which was always the real gate rather
+  than registration.
+- **Recency, read lazily** — the detail sheet now says when a farm was last
+  reported on. The original spec assumed this would cost a read of every
+  report account per farm; it costs one: reports are
+  `["report", farm, u32(index)]` and `Farm` carries `reportCount`, so the
+  newest account is addressable at `reportCount - 1`. The _list_ stays as
+  cheap as it ever was — the read happens only when a sheet opens.
+
 ## Deliberately unchanged
 
 - The on-chain program — no instruction, account or permission changed.
-- Guests / no-farm entry state: the setup card still precedes the
-  dashboard, so discovery starts once a farm exists anywhere (a
-  register-free scout flow is future work).
+- The setup card still leads the no-farm screen and still owns
+  registration — Discover was added beside it, not instead of it.
 - Existing queued rows (no `farmAddress` in their payload) keep anchoring
   to the featured farm.
 - Distance rounding / coordinate masking — rejected by the privacy
@@ -81,9 +97,10 @@ verified` (clamped ≥ 0), `score = round(100·verified/reports)` or `null`
 - The store is in-memory: after a server restart the list repopulates as
   devices sync; farms whose owner never re-syncs are absent until then
   (there is no possible global backfill — the chain cannot enumerate owners).
-- No recency signal in the list: report timestamps would require reading
-  every report account per farm. `pending` + `No reports yet` are the
-  needs-scouting signals today.
+- No recency signal **in the list** — still true, and still deliberate: a
+  per-row timestamp would mean one read per farm on every 60 s refresh. The
+  sheet answers it lazily instead (one read, only when opened), and
+  `pending` + `No reports yet` remain the list-level needs-scouting signals.
 - The Discover card hides when the directory is empty — an empty network is
   not an error; only a failed load says so (`Directory unreachable` + retry).
 
@@ -94,8 +111,12 @@ verified` (clamped ≥ 0), `score = round(100·verified/reports)` or `null`
 - `features/farm/directory.test.ts` — haversine/format, endpoint rule,
   filter/sort/enrichment, shape guard, the two HTTP calls (12 cases).
 - `screens.test.tsx › screen redesign` — card renders + roster exclusion,
-  sheet → arm → badge → stand-down; directory error state; flush anchors a
+  sheet → arm → badge → stand-down; the same sheet reachable with **no farm
+  and no wallet** (register-free); directory error state; flush anchors a
   stamped capture to _its_ farm while an unstamped one keeps the featured
-  farm (3 cases).
+  farm (4 cases).
+- `features/reports/useLatestReportTimestamp.test.ts` — the `reportCount - 1`
+  index, null when that account is not on chain, no request at all for an
+  empty farm (3 cases).
 - `camera-overlay.test.tsx` — the queued payload stamps the target when
   set, and does **not** carry a farm when it isn't (2 cases).
