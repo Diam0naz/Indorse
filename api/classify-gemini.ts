@@ -20,14 +20,19 @@
  *           "severity": "medium", "notes": "Lesions on lower canopy …" }
  *
  * Env:
- *   GEMINI_API_KEY — required (create at aistudio.google.com)
- *   GEMINI_MODEL   — optional, defaults to gemini-3.5-flash-lite
+ *   GEMINI_API_KEY  — primary provider
+ *   OPENAI_API_KEY  — failover provider (a quota wall, outage or dead key on
+ *                     one side answers from the other; only a client fault
+ *                     fails fast)
+ *   GEMINI_MODEL    — optional, defaults to gemini-3.5-flash-lite
  *
  * Run locally with `npm run api:dev` (no Vercel CLI needed) or `vercel dev`.
  */
 
 import { ClassificationError } from '@/features/ai/types'
+import { balanceProviders, type ProviderAttempt } from './_lib/balance'
 import { DEFAULT_GEMINI_MODEL, classifyWithGemini } from './_lib/gemini'
+import { DEFAULT_VISION_MODEL, classifyWithOpenAI } from './_lib/openai'
 import { MAX_IMAGES, collectImages, parseBody, statusFor, type ProxyRequest, type ProxyResponse } from './_lib/proxy'
 
 export default async function handler(req: ProxyRequest, res: ProxyResponse): Promise<void> {
@@ -52,18 +57,43 @@ export default async function handler(req: ProxyRequest, res: ProxyResponse): Pr
     return
   }
 
-  const apiKey = process.env.GEMINI_API_KEY
-  if (!apiKey) {
+  const geminiKey = process.env.GEMINI_API_KEY
+  const openaiKey = process.env.OPENAI_API_KEY
+  if (!geminiKey && !openaiKey) {
+    // No provider at all keeps the original misconfigured contract.
     res.status(500).json({ error: 'Server misconfigured: GEMINI_API_KEY missing' })
     return
   }
 
-  try {
-    const result = await classifyWithGemini(images, {
-      apiKey,
-      model: process.env.GEMINI_MODEL ?? DEFAULT_GEMINI_MODEL,
+  // Ordered failover, mirrored from classify.ts: Gemini answers when healthy,
+  // OpenAI takes over on provider-side failures, and a total outage reports
+  // the primary's error unchanged (see _lib/balance.ts).
+  const attempts: ProviderAttempt<unknown>[] = []
+  if (geminiKey) {
+    attempts.push({
+      name: 'gemini',
+      run: () =>
+        classifyWithGemini(images, {
+          apiKey: geminiKey,
+          model: process.env.GEMINI_MODEL ?? DEFAULT_GEMINI_MODEL,
+        }),
     })
-    res.status(200).json(result)
+  }
+  if (openaiKey) {
+    attempts.push({
+      name: 'openai',
+      run: () =>
+        classifyWithOpenAI(images, {
+          apiKey: openaiKey,
+          model: process.env.OPENAI_VISION_MODEL ?? DEFAULT_VISION_MODEL,
+        }),
+    })
+  }
+
+  try {
+    const { value, firstError } = await balanceProviders(attempts)
+    if (value === null) throw firstError
+    res.status(200).json(value)
   } catch (error) {
     if (error instanceof ClassificationError) {
       res.status(statusFor(error)).json({ error: error.message, code: error.code })

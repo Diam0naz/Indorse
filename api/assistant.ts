@@ -18,12 +18,17 @@
  * context shape, and an in-memory per-IP rate limit (30/min) so the server-
  * paid model key cannot become a free LLM for anyone who finds the URL.
  *
- * Env: GROQ_API_KEY (required), GROQ_MODEL (optional, default gpt-oss-120b).
+ * Env: GROQ_API_KEY (primary), OPENAI_API_KEY (failover — a Groq quota wall
+ * or outage answers from OpenAI; only a client fault fails fast),
+ * GROQ_MODEL (optional, default gpt-oss-120b), OPENAI_ASSISTANT_MODEL
+ * (optional, defaults to the OpenAI vision model).
  */
 
 import { ClassificationError, type ClassificationErrorCode } from '@/features/ai/types'
 import type { Lang } from '@/lib/i18n'
+import { balanceProviders, type ProviderAttempt } from './_lib/balance'
 import { DEFAULT_GROQ_MODEL } from './_lib/grade'
+import { DEFAULT_VISION_MODEL } from './_lib/openai'
 import { buildAssistantSystem, type AssistantContext } from './_lib/knowledge'
 import { parseBody, statusFor, type ProxyRequest, type ProxyResponse } from './_lib/proxy'
 
@@ -104,15 +109,27 @@ export function stripMarkdown(text: string): string {
     .trim()
 }
 
-/** Call Groq's chat endpoint and return the raw reply text. */
-async function chatWithGroq(system: string, user: string, apiKey: string, model?: string): Promise<string> {
+/** One provider slot of the chat failover — both speak the OpenAI wire shape. */
+interface ChatProvider {
+  /** Human name used in error messages (Groq → OpenAI preserves its wording). */
+  label: string
+  baseUrl: string
+  apiKey: string
+  model: string
+}
+
+const GROQ_CHAT_URL = 'https://api.groq.com/openai/v1/chat/completions'
+const OPENAI_CHAT_URL = 'https://api.openai.com/v1/chat/completions'
+
+/** Call an OpenAI-compatible chat endpoint and return the raw reply text. */
+async function chatCompletion(system: string, user: string, provider: ChatProvider): Promise<string> {
   let response: Response
   try {
-    response = await fetch('https://api.groq.com/openai/v1/chat/completions', {
+    response = await fetch(provider.baseUrl, {
       method: 'POST',
-      headers: { authorization: `Bearer ${apiKey}`, 'content-type': 'application/json' },
+      headers: { authorization: `Bearer ${provider.apiKey}`, 'content-type': 'application/json' },
       body: JSON.stringify({
-        model: model ?? DEFAULT_GROQ_MODEL,
+        model: provider.model,
         messages: [
           { role: 'system', content: system },
           { role: 'user', content: user },
@@ -136,7 +153,7 @@ async function chatWithGroq(system: string, user: string, apiKey: string, model?
   if (!response.ok) {
     const code: ClassificationErrorCode =
       response.status === 401 || response.status === 403 ? 'unauthorized' : 'upstream'
-    throw new ClassificationError(code, `Groq responded with ${response.status}`, response.status)
+    throw new ClassificationError(code, `${provider.label} responded with ${response.status}`, response.status)
   }
 
   let content: unknown
@@ -144,10 +161,10 @@ async function chatWithGroq(system: string, user: string, apiKey: string, model?
     const body: unknown = await response.json()
     content = (body as { choices?: Array<{ message?: { content?: unknown } }> }).choices?.[0]?.message?.content
   } catch {
-    throw new ClassificationError('malformed', 'Groq returned a non-JSON response')
+    throw new ClassificationError('malformed', `${provider.label} returned a non-JSON response`)
   }
   if (typeof content !== 'string' || content.trim().length === 0) {
-    throw new ClassificationError('malformed', 'Groq returned an empty reply')
+    throw new ClassificationError('malformed', `${provider.label} returned an empty reply`)
   }
   return content.trim()
 }
@@ -177,15 +194,47 @@ export default async function handler(req: ProxyRequest, res: ProxyResponse): Pr
   const lang: Lang = typeof body.lang === 'string' && LANGS.includes(body.lang) ? (body.lang as Lang) : 'en'
   const context = sanitizeContext(body.context)
 
-  const apiKey = process.env.GROQ_API_KEY
-  if (!apiKey) {
+  const groqKey = process.env.GROQ_API_KEY
+  const openaiKey = process.env.OPENAI_API_KEY
+  if (!groqKey && !openaiKey) {
+    // No provider at all keeps the original misconfigured contract.
     res.status(500).json({ error: 'Server misconfigured: GROQ_API_KEY missing' })
     return
   }
 
   try {
     const system = buildAssistantSystem({ lang, context })
-    const reply = stripMarkdown(await chatWithGroq(system, message, apiKey, process.env.GROQ_MODEL))
+    // Ordered failover: Groq answers when healthy, OpenAI takes over on
+    // provider-side failures (quota wall, outage, dead key); a total outage
+    // reports the primary's error unchanged (see _lib/balance.ts).
+    const attempts: ProviderAttempt<string>[] = []
+    if (groqKey) {
+      attempts.push({
+        name: 'groq',
+        run: () =>
+          chatCompletion(system, message, {
+            label: 'Groq',
+            baseUrl: GROQ_CHAT_URL,
+            apiKey: groqKey,
+            model: process.env.GROQ_MODEL ?? DEFAULT_GROQ_MODEL,
+          }),
+      })
+    }
+    if (openaiKey) {
+      attempts.push({
+        name: 'openai',
+        run: () =>
+          chatCompletion(system, message, {
+            label: 'OpenAI',
+            baseUrl: OPENAI_CHAT_URL,
+            apiKey: openaiKey,
+            model: process.env.OPENAI_ASSISTANT_MODEL ?? DEFAULT_VISION_MODEL,
+          }),
+      })
+    }
+    const { value: rawReply, firstError } = await balanceProviders(attempts)
+    if (rawReply === null) throw firstError
+    const reply = stripMarkdown(rawReply)
     if (reply.length === 0) {
       res.status(502).json({ error: 'Assistant returned an empty reply', code: 'malformed' })
       return

@@ -200,6 +200,15 @@ Background shells do not survive an environment restart, and when they die the
 symptoms look exactly like an app failure. After any restart, re-run the lines
 above and verify `POST /api/siws/nonce → 200` **before** debugging deeper.
 
+`npm run dev:tunnel` (`scripts/tunnel-watchdog.sh`) supervises that loop
+instead of leaving it to be re-typed: every few seconds it health-checks the
+API, scans for whichever Metro port answers, re-adds any missing
+`adb reverse` line, and self-heals — restarting the preferred Metro after
+three dead cycles, and `api:dev` only when the API is dead _and_ no
+supervisor is already about to restart it. It prints state **changes** only,
+so the log stays quiet while healthy (`TUNNEL_WATCH_INTERVAL` tunes the
+cadence).
+
 ### On-chain change loop
 
 `anchor build` → `npm run idl:sync` → `npm run client:generate` → deploy (devnet,
@@ -663,12 +672,40 @@ All three AI jobs run through `npm run api:dev` (one origin, Vercel-function
 compatible; provider keys stay server-side) and are switched per route from
 Expo public env:
 
-| Route                       | Client env                     | Backends                                    | Job                                               |
-| --------------------------- | ------------------------------ | ------------------------------------------- | ------------------------------------------------- |
-| `POST /api/classify`        | `EXPO_PUBLIC_AI_CLASSIFY_URL`  | OpenAI Responses (strict json_schema)       | Photo diagnosis, ≤5 shots in one `images[]` call  |
-| `POST /api/classify-gemini` | same                           | Gemini `generateContent` + `responseSchema` | Same contract; what the device uses today         |
-| `POST /api/grade`           | `EXPO_PUBLIC_AI_GRADE_URL`     | Gemini `flash-lite` + Groq `gpt-oss-120b`   | Dual-model harvest grade (batch record, no photo) |
-| `POST /api/assistant`       | `EXPO_PUBLIC_AI_ASSISTANT_URL` | Groq `gpt-oss-120b`                         | Grounded "Ask indorse" guide                      |
+| Route                       | Client env                     | Backends                                       | Job                                               |
+| --------------------------- | ------------------------------ | ---------------------------------------------- | ------------------------------------------------- |
+| `POST /api/classify`        | `EXPO_PUBLIC_AI_CLASSIFY_URL`  | OpenAI Responses ⇄ Gemini (strict json_schema) | Photo diagnosis, ≤5 shots in one `images[]` call  |
+| `POST /api/classify-gemini` | same                           | Gemini `generateContent` ⇄ OpenAI              | Same contract; what the device uses today         |
+| `POST /api/grade`           | `EXPO_PUBLIC_AI_GRADE_URL`     | Gemini `flash-lite` + Groq `gpt-oss-120b`      | Dual-model harvest grade (batch record, no photo) |
+| `POST /api/assistant`       | `EXPO_PUBLIC_AI_ASSISTANT_URL` | Groq `gpt-oss-120b` → OpenAI                   | Grounded "Ask indorse" guide                      |
+
+⇄ = ordered failover between two providers with the same wire contract; → =
+primary plus a fallback model. See _Surviving a moved origin and a provider
+outage_ below.
+
+### Surviving a moved origin and a provider outage
+
+Two failures are routine in this setup and neither should reach the user as
+an error: the API origin moving under a running app, and one provider hitting
+a quota wall.
+
+- **Origin failover (client).** `installResilientFetch()`, called once from
+  `app/_layout.tsx`, wraps the global `fetch`. Foreign origins — Solana RPC,
+  CDNs — pass straight through. A URL on one of ours is rewritten to the
+  currently pinned origin before the first attempt; if it then fails to
+  _connect_ (dropped adb reverse, a moved DHCP lease — never an HTTP response,
+  even a 5xx) it re-races the configured origin against
+  `EXPO_PUBLIC_API_FALLBACKS` and retries **exactly once** on whichever
+  answered. Nothing is invented: with no configured URL the features disable
+  themselves exactly as before. Source: `lib/api-origin.ts`, `lib/api-net.ts`.
+- **Provider failover (server).** `api/_lib/balance.ts` runs an ordered list
+  of attempts and answers from the first that succeeds — `classify`
+  OpenAI ⇄ Gemini, `classify-gemini` Gemini ⇄ OpenAI, `assistant`
+  Groq → OpenAI. A client fault (`bad-request`) fails fast, because every
+  provider would reject the same payload, and a total outage reports the
+  **primary's** error so the route's contract never changes shape.
+- **Camera reachability chip.** Probes retry 5× at 2.5 s, so a tunnel flap is
+  absorbed while the sheet is still open instead of leaving the chip red.
 
 ### Diagnosis carries the full plant identity
 
@@ -730,11 +767,17 @@ farm's state and the active policy figures.
 ### AI environment
 
 - Server: `GROQ_API_KEY` (grading second opinion + assistant; optional
-  `GROQ_MODEL`) alongside `GEMINI_API_KEY`/`OPENAI_API_KEY`. The Groq key
+  `GROQ_MODEL`) alongside `GEMINI_API_KEY`/`OPENAI_API_KEY`. Both of the
+  latter now carry the classify routes as primary _and_ failover for each
+  other, so either one alone is enough to keep diagnosis up; the assistant
+  needs `GROQ_API_KEY` and/or `OPENAI_API_KEY` (optional
+  `OPENAI_ASSISTANT_MODEL`, defaulting to the vision model). The Groq key
   was pasted in chat during setup — rotate it if that transcript was ever
   shared; keys live only in the untracked `.env`.
 - Device: `EXPO_PUBLIC_AI_GRADE_URL` and `EXPO_PUBLIC_AI_ASSISTANT_URL`
-  next to `EXPO_PUBLIC_AI_CLASSIFY_URL`. The host LAN IP moved to
+  next to `EXPO_PUBLIC_AI_CLASSIFY_URL`, plus the optional
+  `EXPO_PUBLIC_API_FALLBACKS` candidate list the origin race probes. The
+  host LAN IP moved to
   `192.168.245.156` (the old `192.168.1.47` is dead) — all three URLs were
   updated and `adb reverse tcp:3000 tcp:3000` re-attached; Metro must
   restart to pick up `.env` changes.

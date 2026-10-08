@@ -26,7 +26,15 @@ import { ScoutLogProvider } from '@/components/scout-log-provider'
 import { SettingsProvider } from '@/components/settings-provider'
 import { ThemeProvider } from '@/components/theme-provider'
 import { LanguageProvider } from '@/lib/i18n'
+import { installResilientFetch } from '@/lib/api-net'
 import '../global.css'
+
+// One wrapped global fetch: when an API request cannot CONNECT (dropped adb
+// reverse, DHCP lease change), the wrapper re-races the configured origin
+// against EXPO_PUBLIC_API_FALLBACKS and retries once on whichever answered —
+// an origin shift is absorbed before the UI ever sees an error. Foreign
+// origins (Solana RPC, CDNs) pass through untouched. See lib/api-net.ts.
+installResilientFetch()
 
 /**
  * Design system fonts — Space Grotesk (the single text face) + Inter (dense

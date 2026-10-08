@@ -152,11 +152,17 @@ describe('assistant route', () => {
     resetAssistantRateLimit()
     process.env.GROQ_API_KEY = 'test-key'
     delete process.env.GROQ_MODEL
+    // Pinned OFF unless a test opts in — a leaked OPENAI_API_KEY would turn
+    // "Groq failed → 502" into a silent fallback and change what every other
+    // test in this file means.
+    delete process.env.OPENAI_API_KEY
   })
 
   afterEach(() => {
     vi.unstubAllGlobals()
     delete process.env.GROQ_API_KEY
+    delete process.env.OPENAI_API_KEY
+    delete process.env.OPENAI_ASSISTANT_MODEL
   })
 
   it('405s non-POST methods', async () => {
@@ -211,6 +217,49 @@ describe('assistant route', () => {
     expect(system.content).toContain('Blue Berry Farms')
     expect(system.content).toContain('Reply in Spanish (español)')
     expect(system.content).toContain(KNOWLEDGE_DOC.slice(0, 60))
+  })
+
+  /* ── Provider failover (api/_lib/balance.ts) ───────────────────────── */
+
+  it('falls back to OpenAI when Groq fails, and answers from the second provider', async () => {
+    process.env.OPENAI_API_KEY = 'sk-test'
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce({ ok: false, status: 500, json: async () => ({}) } as Response)
+      .mockResolvedValueOnce({
+        ok: true,
+        status: 200,
+        json: async () => ({ choices: [{ message: { content: REPLY } }] }),
+      } as Response)
+    vi.stubGlobal('fetch', fetchMock)
+
+    const res = mockRes()
+    await handler({ body: { message: 'what is escrow?' } }, res)
+
+    expect(res.statusCode).toBe(200)
+    expect(res.payload).toEqual({ reply: REPLY, lang: 'en' })
+    // Two attempts: the primary Groq call, then a real OpenAI one.
+    expect(fetchMock).toHaveBeenCalledTimes(2)
+    const [firstUrl, secondUrl] = fetchMock.mock.calls.map((call) => String(call[0]))
+    expect(firstUrl).toContain('api.groq.com')
+    expect(secondUrl).toContain('api.openai.com')
+  })
+
+  it('reports GROQ’s error when both providers are down', async () => {
+    process.env.OPENAI_API_KEY = 'sk-test'
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce({ ok: false, status: 401, json: async () => ({}) } as Response)
+      .mockResolvedValueOnce({ ok: false, status: 503, json: async () => ({}) } as Response)
+    vi.stubGlobal('fetch', fetchMock)
+
+    const res = mockRes()
+    await handler({ body: { message: 'what is escrow?' } }, res)
+
+    // The route answers with the PRIMARY's failure — a total outage must not
+    // hand back OpenAI's 502 and quietly redefine the endpoint's contract.
+    expect(res.statusCode).toBe(401)
+    expect(res.payload).toMatchObject({ code: 'unauthorized' })
   })
 
   it('asks the model at temperature 0 — rewording is drift, not variety', async () => {

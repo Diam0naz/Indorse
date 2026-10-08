@@ -1,61 +1,9 @@
 import { afterEach, beforeEach, describe, it, expect, vi } from 'vitest'
+// Imported BEFORE the handler so this module is evaluated before
+// `node:http2` is first requested — the factory below reads `h2` from it.
+import { h2, scriptGeminiVerdict } from '../test/h2-double'
 import handler from '@/api/classify-gemini'
 import { GEMINI_TIMEOUT_MS } from '@/api/_lib/gemini'
-
-/**
- * Fake `node:http2` so the handler tests run through the real `h2Fetch`
- * transport (event wiring, status line, body assembly) without a network.
- * Responses are scripted per test via `h2.state`.
- */
-const h2 = vi.hoisted(() => {
-  const state = {
-    status: 200,
-    body: '{}',
-    error: null as Error | null,
-    noResponse: false,
-    connects: [] as string[],
-    requests: [] as Array<{ headers: Record<string, string>; body: string }>,
-  }
-
-  const client = {
-    on: () => client,
-    close: () => {},
-    destroy: () => {},
-    request(headers: Record<string, string>) {
-      const handlers: Record<string, Array<(...args: unknown[]) => void>> = {}
-      const fire = (event: string, ...args: unknown[]) => {
-        for (const callback of handlers[event] ?? []) callback(...args)
-      }
-      return {
-        on(event: string, callback: (...args: unknown[]) => void) {
-          ;(handlers[event] ||= []).push(callback)
-          return this
-        },
-        setEncoding: () => {},
-        end(body: string) {
-          state.requests.push({ headers, body })
-          if (state.noResponse) return
-          queueMicrotask(() => {
-            if (state.error) {
-              fire('error', state.error)
-              return
-            }
-            fire('response', { ':status': state.status })
-            if (state.body) fire('data', state.body)
-            fire('end')
-          })
-        },
-      }
-    },
-  }
-
-  const connect = (authority: string) => {
-    state.connects.push(authority)
-    return client
-  }
-
-  return { state, connect }
-})
 
 vi.mock('node:http2', () => ({ connect: h2.connect }))
 
@@ -74,12 +22,6 @@ function mockRes() {
   return res
 }
 
-/** Script a buffered `generateContent` reply — verdict JSON in `candidates`. */
-function scriptVerdict(verdict: { label: string; confidence: number; severity: string; notes: string }) {
-  h2.state.status = 200
-  h2.state.body = JSON.stringify({ candidates: [{ content: { parts: [{ text: JSON.stringify(verdict) }] } }] })
-}
-
 const GRAY_LEAF_SPOT = {
   label: 'Gray Leaf Spot',
   confidence: 0.87,
@@ -90,6 +32,10 @@ const GRAY_LEAF_SPOT = {
 describe('POST /api/classify-gemini', () => {
   beforeEach(() => {
     process.env.GEMINI_API_KEY = 'test-key'
+    // Pinned OFF unless a test opts in — a leaked OPENAI_API_KEY would turn
+    // "primary failed → 502" into a silent fallback, changing what every
+    // other test in this file means.
+    delete process.env.OPENAI_API_KEY
     h2.state.status = 200
     h2.state.body = '{}'
     h2.state.error = null
@@ -100,6 +46,8 @@ describe('POST /api/classify-gemini', () => {
 
   afterEach(() => {
     delete process.env.GEMINI_API_KEY
+    delete process.env.OPENAI_API_KEY
+    vi.unstubAllGlobals()
     vi.useRealTimers()
   })
 
@@ -133,7 +81,7 @@ describe('POST /api/classify-gemini', () => {
   })
 
   it('classifies a photo over HTTP/2 and returns the full verdict', async () => {
-    scriptVerdict(GRAY_LEAF_SPOT)
+    scriptGeminiVerdict(GRAY_LEAF_SPOT)
     const res = mockRes()
 
     await handler({ method: 'POST', body: { imageBase64: 'ZmFrZQ==', mimeType: 'image/jpeg' } }, res)
@@ -153,7 +101,7 @@ describe('POST /api/classify-gemini', () => {
   })
 
   it('accepts a raw JSON string body', async () => {
-    scriptVerdict(GRAY_LEAF_SPOT)
+    scriptGeminiVerdict(GRAY_LEAF_SPOT)
     const res = mockRes()
 
     await handler(
@@ -190,6 +138,50 @@ describe('POST /api/classify-gemini', () => {
     expect(res.payload).toMatchObject({ code: 'unauthorized' })
   })
 
+  /* ── Provider failover (api/_lib/balance.ts) ───────────────────────── */
+
+  it('falls back to OpenAI when Gemini fails, and answers from the second provider', async () => {
+    process.env.OPENAI_API_KEY = 'sk-test'
+    h2.state.status = 500 // 503/429 would retry inside Gemini first — not here.
+    h2.state.body = '{}'
+    const openai = vi.fn(async () => ({
+      ok: true,
+      status: 200,
+      json: async () => ({
+        output: [{ type: 'message', content: [{ type: 'output_text', text: JSON.stringify(GRAY_LEAF_SPOT) }] }],
+      }),
+    }))
+    vi.stubGlobal('fetch', openai)
+
+    const res = mockRes()
+    await handler({ method: 'POST', body: { imageBase64: 'ZmFrZQ==', mimeType: 'image/jpeg' } }, res)
+
+    expect(res.statusCode).toBe(200)
+    expect(res.payload).toEqual(GRAY_LEAF_SPOT)
+    // The primary was tried first and really failed over — one Gemini
+    // request, then exactly one OpenAI request.
+    expect(h2.state.requests).toHaveLength(1)
+    expect(openai).toHaveBeenCalledTimes(1)
+  })
+
+  it('reports the PRIMARY error when every provider is down', async () => {
+    process.env.OPENAI_API_KEY = 'sk-test'
+    h2.state.status = 500
+    h2.state.body = '{}'
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => ({ ok: false, status: 401, json: async () => ({}) })),
+    )
+
+    const res = mockRes()
+    await handler({ method: 'POST', body: { imageBase64: 'ZmFrZQ==', mimeType: 'image/jpeg' } }, res)
+
+    // Gemini is this route's primary: its 502 is the contract, and OpenAI's
+    // 401 must not overwrite it just because it was tried last.
+    expect(res.statusCode).toBe(502)
+    expect(res.payload).toMatchObject({ code: 'upstream' })
+  })
+
   it('maps a transport timeout to 504 instead of hanging', async () => {
     vi.useFakeTimers()
     h2.state.noResponse = true
@@ -214,7 +206,7 @@ describe('POST /api/classify-gemini', () => {
   })
 
   it('sends every shot as parts of one request', async () => {
-    scriptVerdict(GRAY_LEAF_SPOT)
+    scriptGeminiVerdict(GRAY_LEAF_SPOT)
     const res = mockRes()
 
     await handler(
