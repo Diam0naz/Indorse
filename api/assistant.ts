@@ -24,7 +24,7 @@
  * (optional, defaults to the OpenAI vision model).
  */
 
-import { ClassificationError, type ClassificationErrorCode } from '@/features/ai/types'
+import { ClassificationError, type ClassificationErrorCode } from './_lib/ai-types'
 import type { Lang } from '@/lib/i18n'
 import { balanceProviders, type ProviderAttempt } from './_lib/balance'
 import { DEFAULT_GROQ_MODEL } from './_lib/grade'

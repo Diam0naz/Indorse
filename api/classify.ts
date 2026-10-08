@@ -24,7 +24,7 @@
  * Run locally with `npm run api:dev` (no Vercel CLI needed) or `vercel dev`.
  */
 
-import { ClassificationError } from '@/features/ai/types'
+import { ClassificationError } from './_lib/ai-types'
 import { balanceProviders, type ProviderAttempt } from './_lib/balance'
 import { DEFAULT_GEMINI_MODEL, classifyWithGemini } from './_lib/gemini'
 import { DEFAULT_VISION_MODEL, classifyWithOpenAI } from './_lib/openai'

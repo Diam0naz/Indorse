@@ -34,7 +34,7 @@ export default async function handler(req: ProxyRequest, res: ProxyResponse): Pr
     return
   }
 
-  const auth = verifySignInBody(parseBody(req.body))
+  const auth = await verifySignInBody(parseBody(req.body))
   if (!auth.ok) {
     res.status(auth.status).json(auth.error)
     return

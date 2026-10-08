@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from 'vitest'
-import { ClassificationError } from '@/features/ai/types'
+import { ClassificationError } from './ai-types'
 import {
   classifyWithGemini,
   DEFAULT_GEMINI_MODEL,

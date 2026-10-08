@@ -38,8 +38,92 @@
  * keeps a public RPC viable) — failures are never cached.
  */
 
-import { Connection, PublicKey } from '@solana/web3.js'
-import { getMetadataPointerState, getTokenGroupMemberState, TOKEN_2022_PROGRAM_ID, unpackMint } from '@solana/spl-token'
+// Use plain HTTP RPC + @solana/spl-token only (no @solana/web3.js to avoid rpc-websockets ESM issue)
+// We need a minimal PublicKey implementation for base58 encoding/decoding
+
+const BS58_ALPHABET = '123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz'
+
+function decodeBase58(str: string): Uint8Array {
+  let num = BigInt(0)
+  for (const char of str) {
+    const idx = BS58_ALPHABET.indexOf(char)
+    if (idx === -1) throw new Error(`Invalid base58 character: ${char}`)
+    num = num * 58n + BigInt(idx)
+  }
+  const bytes = []
+  while (num > 0n) {
+    bytes.unshift(Number(num & 0xffn))
+    num >>= 8n
+  }
+  // Handle leading zeros (base58 '1' = zero byte)
+  let leadingZeros = 0
+  for (const char of str) {
+    if (char === '1') leadingZeros++
+    else break
+  }
+  return new Uint8Array([...new Array(leadingZeros).fill(0), ...bytes])
+}
+
+function encodeBase58(bytes: Uint8Array): string {
+  let leadingZeros = 0
+  for (const byte of bytes) {
+    if (byte === 0) leadingZeros++
+    else break
+  }
+  let num = BigInt(0)
+  for (const byte of bytes) {
+    num = (num << 8n) + BigInt(byte)
+  }
+  let str = ''
+  while (num > 0n) {
+    const rem = Number(num % 58n)
+    str = BS58_ALPHABET[rem] + str
+    num /= 58n
+  }
+  return '1'.repeat(leadingZeros) + str
+}
+
+/** Minimal PublicKey implementation for @solana/spl-token compatibility */
+export class PublicKey {
+  readonly _bn: Uint8Array
+
+  constructor(value: string | Uint8Array) {
+    if (typeof value === 'string') {
+      this._bn = decodeBase58(value)
+    } else {
+      this._bn = value
+    }
+    if (this._bn.length !== 32) {
+      throw new Error(`PublicKey must be 32 bytes, got ${this._bn.length}`)
+    }
+  }
+
+  toBase58(): string {
+    return encodeBase58(this._bn)
+  }
+
+  toBuffer(): Buffer {
+    return Buffer.from(this._bn)
+  }
+
+  // Compatibility methods for @solana/spl-token
+  equals(other: PublicKey): boolean {
+    return this._bn.every((byte, i) => byte === other._bn[i])
+  }
+  toJSON(): string {
+    return this.toBase58()
+  }
+  toBytes(): Uint8Array {
+    return this._bn
+  }
+  get [Symbol.toStringTag](): string {
+    return 'PublicKey'
+  }
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  encode(): any {
+    return this._bn
+  }
+}
 
 /** The authority both SGT signatures must name. */
 export const SGT_MINT_AUTHORITY = 'GT2zuHVaZQYZSyQMgJPLzvkmyztfyXg2NJunqFp4p3A4'
@@ -49,6 +133,9 @@ export const SGT_GROUP_MINT_ADDRESS = 'GT22s89nU4iWFkNXj1Bw6uYhJJWDRPpShHt4Bk8f9
 
 /** Public mainnet fallback for direct calls; the handlers stay env-gated. */
 export const DEFAULT_SGT_RPC_URL = 'https://api.mainnet-beta.solana.com'
+
+/** Token-2022 program ID */
+export const TOKEN_2022_PROGRAM_ID = new PublicKey('TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb')
 
 /** The check is on only when an endpoint was configured for it. */
 export function sgtEnabled(): boolean {
@@ -61,14 +148,8 @@ export interface SgtResult {
   mintAddress: string | null
 }
 
-/** The connection surface this module needs (web3.js `Connection` shape). */
-export type SgtConnection = Pick<Connection, 'getParsedTokenAccountsByOwner' | 'getMultipleAccountsInfo'>
-
 /** What a handler consumes — injectable so tests never touch mainnet. */
 export type SgtChecker = (walletAddress: string) => Promise<SgtResult>
-
-/** `getMultipleAccountsInfo` batches at 100 — most providers reject larger. */
-const BATCH_SIZE = 100
 
 /** Verdict cache — holdings change on the order of days, not minutes. */
 const CACHE_TTL_MS = 60_000
@@ -79,15 +160,70 @@ export function resetSgtCache(): void {
   cache.clear()
 }
 
-/**
- * Batched mint examination: decode each candidate as a Token-2022 mint and
- * require all four SGT properties. Returns the MINT address (the device
- * identity), not a boolean — anti-Sybil needs to record which device.
- */
-async function findSgtMint(connection: SgtConnection, mintPubkeys: PublicKey[]): Promise<string | null> {
+/** JSON-RPC request helper */
+async function rpcRequest<T>(method: string, params: unknown[], rpcUrl: string): Promise<T> {
+  const response = await fetch(rpcUrl, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ jsonrpc: '2.0', id: 1, method, params }),
+  })
+  if (!response.ok) {
+    throw new Error(`RPC request failed: ${response.status} ${response.statusText}`)
+  }
+  const data = await response.json()
+  if (data.error) {
+    throw new Error(`RPC error: ${data.error.message} (code ${data.error.code})`)
+  }
+  return data.result
+}
+
+/** Get parsed token accounts by owner using plain HTTP RPC */
+async function getParsedTokenAccountsByOwner(
+  walletAddress: string,
+  rpcUrl: string,
+): Promise<Array<{ mint: string; amount: string }>> {
+  const result = await rpcRequest<any>(
+    'getTokenAccountsByOwner',
+    [
+      walletAddress,
+      { programId: TOKEN_2022_PROGRAM_ID.toBase58() },
+      { encoding: 'jsonParsed', commitment: 'confirmed' },
+    ],
+    rpcUrl,
+  )
+
+  return result.value
+    .filter((entry: any) => entry.account.data.parsed?.info?.tokenAmount?.amount !== '0')
+    .map((entry: any) => ({
+      mint: entry.account.data.parsed.info.mint,
+      amount: entry.account.data.parsed.info.tokenAmount.amount,
+    }))
+}
+
+/** Get multiple account info using plain HTTP RPC */
+async function getMultipleAccountsInfo(
+  mintPubkeys: string[],
+  rpcUrl: string,
+): Promise<Array<{ data: string; executable: boolean; lamports: number; owner: string; rentEpoch: number } | null>> {
+  const result = await rpcRequest<any>(
+    'getMultipleAccounts',
+    [mintPubkeys, { encoding: 'base64', commitment: 'confirmed' }],
+    rpcUrl,
+  )
+
+  return result.value
+}
+
+/** Batched mint examination: decode each candidate as a Token-2022 mint and require all four SGT properties */
+async function findSgtMint(mintPubkeys: string[], rpcUrl: string): Promise<string | null> {
+  // Import @solana/spl-token dynamically to avoid ESM issues
+  const splToken = await import('@solana/spl-token')
+  const { unpackMint, getMetadataPointerState, getTokenGroupMemberState } = splToken
+
+  const BATCH_SIZE = 100
   for (let i = 0; i < mintPubkeys.length; i += BATCH_SIZE) {
     const batch = mintPubkeys.slice(i, i + BATCH_SIZE)
-    const infos = await connection.getMultipleAccountsInfo(batch)
+    const infos = await getMultipleAccountsInfo(batch, rpcUrl)
 
     for (let j = 0; j < infos.length; j += 1) {
       const info = infos[j]
@@ -95,7 +231,13 @@ async function findSgtMint(connection: SgtConnection, mintPubkeys: PublicKey[]):
 
       let mint
       try {
-        mint = unpackMint(batch[j], info, TOKEN_2022_PROGRAM_ID)
+        // Convert base64 to Uint8Array
+        const buffer = Buffer.from(info.data[0], 'base64')
+        mint = unpackMint(
+          new PublicKey(batch[j]),
+          { data: buffer, owner: TOKEN_2022_PROGRAM_ID } as any,
+          TOKEN_2022_PROGRAM_ID as any,
+        )
       } catch {
         continue // Unreadable or not a Token-2022 mint — not an SGT.
       }
@@ -118,39 +260,30 @@ async function findSgtMint(connection: SgtConnection, mintPubkeys: PublicKey[]):
 /**
  * Does this wallet CURRENTLY hold an SGT? Throws on RPC failure (the
  * caller distinguishes outage from absence — see the module header).
- *
- * `connection` is injectable so tests exercise the real parsing against
- * fixtures instead of mainnet.
  */
-export async function checkWalletForSGT(walletAddress: string, connection?: SgtConnection): Promise<SgtResult> {
-  const conn = connection ?? new Connection(process.env.SGT_RPC_URL?.trim() || DEFAULT_SGT_RPC_URL, 'confirmed')
+export async function checkWalletForSGT(walletAddress: string, rpcUrl?: string): Promise<SgtResult> {
+  const url = rpcUrl?.trim() || process.env.SGT_RPC_URL?.trim() || DEFAULT_SGT_RPC_URL
 
-  const { value: tokenAccounts } = await conn.getParsedTokenAccountsByOwner(new PublicKey(walletAddress), {
-    programId: TOKEN_2022_PROGRAM_ID,
-  })
+  const tokenAccounts = await getParsedTokenAccountsByOwner(walletAddress, url)
 
-  // Balance filter first — a zero-balance residue is not a holding.
   const mintPubkeys = tokenAccounts
-    .filter((entry) => entry.account.data.parsed?.info?.tokenAmount?.amount !== '0')
-    .map((entry) => entry.account.data.parsed?.info?.mint)
+    .map((entry) => entry.mint)
     .filter((mint): mint is string => typeof mint === 'string' && mint.length > 0)
-    .map((mint) => new PublicKey(mint))
 
-  const mintAddress = await findSgtMint(conn, mintPubkeys)
+  const mintAddress = await findSgtMint(mintPubkeys, url)
   return { hasSGT: mintAddress !== null, mintAddress }
 }
 
 /**
  * The cached check the handlers call. Only successful verdicts enter the
  * cache — an outage propagates every time until the RPC recovers.
- * `connection` is the same test seam as `checkWalletForSGT`.
  */
-export async function verifySgt(walletAddress: string, connection?: SgtConnection): Promise<SgtResult> {
+export async function verifySgt(walletAddress: string, rpcUrl?: string): Promise<SgtResult> {
   const now = Date.now()
   const hit = cache.get(walletAddress)
   if (hit && hit.expiresAt > now) return hit.value
 
-  const value = await checkWalletForSGT(walletAddress, connection)
+  const value = await checkWalletForSGT(walletAddress, rpcUrl)
   cache.set(walletAddress, { value, expiresAt: now + CACHE_TTL_MS })
   return value
 }

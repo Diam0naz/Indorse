@@ -3,7 +3,7 @@
  */
 
 import { describe, expect, it, vi } from 'vitest'
-import { ClassificationError } from '@/features/ai/types'
+import { ClassificationError } from './ai-types'
 import { balanceProviders, isClientFault } from './balance'
 
 describe('balanceProviders', () => {

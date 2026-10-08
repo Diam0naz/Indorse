@@ -29,7 +29,7 @@
  *      GEMINI_MODEL / GROQ_MODEL (optional overrides).
  */
 
-import { ClassificationError, type ClassificationErrorCode } from '@/features/ai/types'
+import { ClassificationError, type ClassificationErrorCode } from './_lib/ai-types'
 import { DEFAULT_GROQ_MODEL, combineGrades, gradeWithGemini, gradeWithGroq, validateGradeInput } from './_lib/grade'
 import { DEFAULT_GEMINI_MODEL } from './_lib/gemini'
 import { parseBody, statusFor, type ProxyRequest, type ProxyResponse } from './_lib/proxy'

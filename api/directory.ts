@@ -21,12 +21,18 @@
  * Devnet by default (`CLUSTER_URLS.devnet`) — same cluster the app reads.
  */
 
-import { address as parseAddress } from '@solana/kit'
-import { CLUSTER_URLS } from '@/constants/app-config'
-import { fromE6 } from '@/lib/format'
-import { createProgramRpc, fetchAccount } from '@/lib/program'
-import type { Farm } from '@/features/farm/types'
+import { CLUSTER_URLS } from './_lib/app-config'
+import { fromE6 } from './_lib/format'
+import { createProgramRpc, fetchAccount } from './_lib/program'
+import type { Farm } from './_lib/farm-types'
 import { parseBody, type ProxyRequest, type ProxyResponse } from './_lib/proxy'
+import { PublicKey } from './_lib/sgt'
+
+/** Minimal address parser - base58 validation */
+function parseAddress(value: string): string {
+  const pubkey = new PublicKey(value)
+  return pubkey.toBase58()
+}
 
 /** One directory row — a snapshot of a public `Farm` account. */
 export interface DirectoryFarm {
@@ -59,9 +65,8 @@ export interface DirectoryDeps {
 
 /** Default chain read: decode the `Farm` account on devnet. */
 async function defaultReadFarm(farmAddress: string): Promise<DirectoryFarm | null> {
-  const rpc = createProgramRpc(CLUSTER_URLS.devnet)
   try {
-    const farm = await fetchAccount<Farm>(rpc, farmAddress, 'Farm')
+    const farm = await fetchAccount(CLUSTER_URLS.devnet, farmAddress)
     if (!farm) return null
     return {
       address: farmAddress,

@@ -55,7 +55,7 @@ export function createVerifyHandler(deps: VerifyHandlerDeps = {}) {
       return
     }
 
-    const auth = verifySignInBody(parseBody(req.body))
+    const auth = await verifySignInBody(parseBody(req.body))
     if (!auth.ok) {
       res.status(auth.status).json(auth.error)
       return

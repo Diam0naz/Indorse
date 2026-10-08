@@ -26,7 +26,7 @@ import {
   DEFAULT_MIME_TYPE,
   type ClassificationResult,
   type ImageInput,
-} from '@/features/ai/types'
+} from './ai-types'
 import { EVENT_DIAGNOSIS_SCHEMA, VISION_PROMPT } from './prompt'
 import { connect as http2Connect } from 'node:http2'
 

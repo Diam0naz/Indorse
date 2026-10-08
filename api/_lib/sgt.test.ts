@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { Keypair, PublicKey, type AccountInfo } from '@solana/web3.js'
+import { Keypair, PublicKey } from '@solana/web3.js'
 import { TOKEN_2022_PROGRAM_ID } from '@solana/spl-token'
 import {
   SGT_GROUP_MINT_ADDRESS,
@@ -9,7 +9,6 @@ import {
   resetSgtCache,
   sgtEnabled,
   verifySgt,
-  type SgtConnection,
 } from '@/api/_lib/sgt'
 
 // ── Fixtures ──────────────────────────────────────────────────────────
@@ -18,6 +17,9 @@ import {
 
 const WALLET = Keypair.generate().publicKey.toBase58()
 const ACCOUNT_ADDRESS = Keypair.generate().publicKey // token-account pubkey (unused by the check)
+
+/** Any URL works: the transport is stubbed, so nothing reaches a provider. */
+const RPC_URL = 'http://sgt-rpc.test'
 
 const u16 = (n: number) => {
   const b = Buffer.alloc(2)
@@ -76,12 +78,19 @@ interface TokenAccountStub {
   state?: string
 }
 
-/** Duck-typed connection over fixtures. `mints` maps mint address → account data. */
-function makeConnection(tokenAccounts: TokenAccountStub[], mints: Record<string, Buffer>) {
-  const getParsedTokenAccountsByOwner = vi.fn(async () => ({
-    context: { slot: 1 },
-    value: tokenAccounts.map((stub) => ({
-      pubkey: ACCOUNT_ADDRESS,
+/** Base58 pubkeys only — anything else is what a provider rejects as malformed. */
+const BASE58 = /^[1-9A-HJ-NP-Za-km-z]{32,44}$/
+
+/**
+ * Stub the global `fetch` as a JSON-RPC endpoint — the transport production
+ * speaks since the module dropped its connection object for a plain `rpcUrl`.
+ * `mints` maps mint address → account data. Returns the two RPC methods as
+ * spies so tests can assert call counts and batch sizes.
+ */
+function stubRpc(tokenAccounts: TokenAccountStub[], mints: Record<string, Buffer>) {
+  const getTokenAccountsByOwner = vi.fn(async () =>
+    tokenAccounts.map((stub) => ({
+      pubkey: ACCOUNT_ADDRESS.toBase58(),
       account: {
         data: {
           program: 'spl-token-2022',
@@ -103,42 +112,85 @@ function makeConnection(tokenAccounts: TokenAccountStub[], mints: Record<string,
         },
         executable: false,
         lamports: 1_000_000,
-        owner: TOKEN_2022_PROGRAM_ID,
+        owner: TOKEN_2022_PROGRAM_ID.toBase58(),
         rentEpoch: 0,
       },
     })),
-  }))
-  const getMultipleAccountsInfo = vi.fn(async (keys: PublicKey[]) =>
+  )
+
+  const getMultipleAccounts = vi.fn(async (keys: string[]) =>
     keys.map((k) => {
-      const data = mints[k.toBase58()]
+      const data = mints[k]
       if (!data) return null
       return {
-        data,
+        data: [data.toString('base64'), 'base64'],
         executable: false,
         lamports: 1_000_000,
-        owner: TOKEN_2022_PROGRAM_ID,
+        owner: TOKEN_2022_PROGRAM_ID.toBase58(),
         rentEpoch: 0,
-      } satisfies AccountInfo<Buffer>
+      }
     }),
   )
-  return { getParsedTokenAccountsByOwner, getMultipleAccountsInfo }
+
+  vi.stubGlobal(
+    'fetch',
+    vi.fn(async (_url: unknown, init?: RequestInit) => {
+      const body = JSON.parse(String(init?.body)) as {
+        method: string
+        params: [unknown, ...unknown[]]
+      }
+
+      // A provider rejects a malformed pubkey before doing any work. The
+      // module no longer validates locally, so this is where that guard now
+      // lives — and `rpcRequest` must surface `error` rather than swallow it.
+      if (body.method === 'getTokenAccountsByOwner' && !BASE58.test(String(body.params[0]))) {
+        return {
+          ok: true,
+          status: 200,
+          statusText: 'OK',
+          json: async () => ({
+            error: { code: -32602, message: `Invalid param: Invalid public key: ${body.params[0]}` },
+          }),
+        }
+      }
+
+      const result =
+        body.method === 'getTokenAccountsByOwner'
+          ? await getTokenAccountsByOwner()
+          : body.method === 'getMultipleAccounts'
+            ? await getMultipleAccounts(body.params[0] as string[])
+            : (() => {
+                throw new Error(`unexpected RPC method: ${body.method}`)
+              })()
+
+      return {
+        ok: true,
+        status: 200,
+        statusText: 'OK',
+        // `rpcRequest` hands back `data.result`; both methods answer with
+        // the standard `{ context, value }` envelope production reads `.value` off.
+        json: async () => ({ result: { context: { slot: 1 }, value: result } }),
+      }
+    }),
+  )
+
+  return { getTokenAccountsByOwner, getMultipleAccounts }
 }
 
-const asConnection = (stub: ReturnType<typeof makeConnection>) => stub as unknown as SgtConnection
-
 afterEach(() => {
+  vi.unstubAllGlobals()
   resetSgtCache()
 })
 
 describe('checkWalletForSGT', () => {
   it('returns the mint address when the wallet holds a valid SGT', async () => {
     const mint = Keypair.generate().publicKey.toBase58()
-    const conn = makeConnection([{ mint, amount: '1' }], { [mint]: buildMintData() })
+    const rpc = stubRpc([{ mint, amount: '1' }], { [mint]: buildMintData() })
 
-    const result = await checkWalletForSGT(WALLET, asConnection(conn))
+    const result = await checkWalletForSGT(WALLET, RPC_URL)
 
     expect(result).toEqual({ hasSGT: true, mintAddress: mint })
-    expect(conn.getParsedTokenAccountsByOwner).toHaveBeenCalledTimes(1)
+    expect(rpc.getTokenAccountsByOwner).toHaveBeenCalledTimes(1)
   })
 
   it('rejects a mint forged on any single SGT property — all four must match', async () => {
@@ -151,30 +203,30 @@ describe('checkWalletForSGT', () => {
 
     for (const mutation of forged) {
       const mint = Keypair.generate().publicKey.toBase58()
-      const conn = makeConnection([{ mint, amount: '1' }], { [mint]: buildMintData(mutation) })
+      const rpc = stubRpc([{ mint, amount: '1' }], { [mint]: buildMintData(mutation) })
 
-      const result = await checkWalletForSGT(WALLET, asConnection(conn))
+      const result = await checkWalletForSGT(WALLET, RPC_URL)
 
       expect(result).toEqual({ hasSGT: false, mintAddress: null })
-      expect(conn.getMultipleAccountsInfo).toHaveBeenCalled() // the mint WAS examined
+      expect(rpc.getMultipleAccounts).toHaveBeenCalled() // the mint WAS examined
     }
   })
 
   it('filters a zero-balance residue BEFORE the mint check — moving an SGT out ends the holding', async () => {
     const mint = Keypair.generate().publicKey.toBase58()
-    const conn = makeConnection([{ mint, amount: '0' }], { [mint]: buildMintData() }) // perfect SGT, empty wallet
+    const rpc = stubRpc([{ mint, amount: '0' }], { [mint]: buildMintData() }) // perfect SGT, empty wallet
 
-    const result = await checkWalletForSGT(WALLET, asConnection(conn))
+    const result = await checkWalletForSGT(WALLET, RPC_URL)
 
     expect(result).toEqual({ hasSGT: false, mintAddress: null })
-    expect(conn.getMultipleAccountsInfo).not.toHaveBeenCalled() // never even examined
+    expect(rpc.getMultipleAccounts).not.toHaveBeenCalled() // never even examined
   })
 
   it('does not treat a frozen account as suspicious — balance is the discriminator', async () => {
     const mint = Keypair.generate().publicKey.toBase58()
-    const conn = makeConnection([{ mint, amount: '1', state: 'frozen' }], { [mint]: buildMintData() })
+    stubRpc([{ mint, amount: '1', state: 'frozen' }], { [mint]: buildMintData() })
 
-    const result = await checkWalletForSGT(WALLET, asConnection(conn))
+    const result = await checkWalletForSGT(WALLET, RPC_URL)
 
     expect(result).toEqual({ hasSGT: true, mintAddress: mint })
   })
@@ -182,7 +234,7 @@ describe('checkWalletForSGT', () => {
   it('skips degenerate and unreadable entries without failing the whole check', async () => {
     const garbage = Keypair.generate().publicKey.toBase58()
     const good = Keypair.generate().publicKey.toBase58()
-    const conn = makeConnection(
+    stubRpc(
       [
         { mint: '', amount: '1' }, // no mint string — dropped
         { mint: garbage, amount: '1' }, // not decodable as a mint
@@ -191,52 +243,54 @@ describe('checkWalletForSGT', () => {
       { [garbage]: Buffer.alloc(200, 7), [good]: buildMintData() },
     )
 
-    const result = await checkWalletForSGT(WALLET, asConnection(conn))
+    const result = await checkWalletForSGT(WALLET, RPC_URL)
 
     expect(result).toEqual({ hasSGT: true, mintAddress: good })
   })
 
   it('treats a vanished account (null) as not-an-SGT', async () => {
     const mint = Keypair.generate().publicKey.toBase58()
-    const conn = makeConnection([{ mint, amount: '1' }], {}) // account no longer exists
+    stubRpc([{ mint, amount: '1' }], {}) // account no longer exists
 
-    const result = await checkWalletForSGT(WALLET, asConnection(conn))
+    const result = await checkWalletForSGT(WALLET, RPC_URL)
 
     expect(result).toEqual({ hasSGT: false, mintAddress: null })
   })
 
   it('batches mint reads at 100 — providers reject larger requests', async () => {
     const mint = Keypair.generate().publicKey.toBase58()
-    const conn = makeConnection(
+    const rpc = stubRpc(
       Array.from({ length: 250 }, () => ({ mint, amount: '1' })),
       { [mint]: Buffer.alloc(200, 7) }, // never matches; the point is the batching
     )
 
-    const result = await checkWalletForSGT(WALLET, asConnection(conn))
+    const result = await checkWalletForSGT(WALLET, RPC_URL)
 
     expect(result.hasSGT).toBe(false)
-    expect(conn.getMultipleAccountsInfo.mock.calls.map((call) => (call[0] as PublicKey[]).length)).toEqual([
-      100, 100, 50,
-    ])
+    expect(rpc.getMultipleAccounts.mock.calls.map((call) => (call[0] as string[]).length)).toEqual([100, 100, 50])
   })
 
   it('throws when the token-account query fails — an outage is not a verdict', async () => {
-    const conn = makeConnection([], {})
-    conn.getParsedTokenAccountsByOwner.mockRejectedValueOnce(new Error('429 too many requests'))
+    const rpc = stubRpc([], {})
+    rpc.getTokenAccountsByOwner.mockRejectedValueOnce(new Error('429 too many requests'))
 
-    await expect(checkWalletForSGT(WALLET, asConnection(conn))).rejects.toThrow('429 too many requests')
+    await expect(checkWalletForSGT(WALLET, RPC_URL)).rejects.toThrow('429 too many requests')
   })
 
   it('throws when the mint batch read fails', async () => {
     const mint = Keypair.generate().publicKey.toBase58()
-    const conn = makeConnection([{ mint, amount: '1' }], { [mint]: buildMintData() })
-    conn.getMultipleAccountsInfo.mockRejectedValueOnce(new Error('rpc gone'))
+    const rpc = stubRpc([{ mint, amount: '1' }], { [mint]: buildMintData() })
+    rpc.getMultipleAccounts.mockRejectedValueOnce(new Error('rpc gone'))
 
-    await expect(checkWalletForSGT(WALLET, asConnection(conn))).rejects.toThrow('rpc gone')
+    await expect(checkWalletForSGT(WALLET, RPC_URL)).rejects.toThrow('rpc gone')
   })
 
-  it('rejects a malformed wallet address outright', async () => {
-    await expect(checkWalletForSGT('not-a-key')).rejects.toThrow()
+  it('surfaces a provider error on a malformed wallet address', async () => {
+    // The module no longer validates locally — a bad pubkey reaches the
+    // provider, whose `error` must propagate rather than read as "no SGT".
+    stubRpc([], {})
+
+    await expect(checkWalletForSGT('not-a-key')).rejects.toThrow('Invalid public key')
   })
 })
 
@@ -247,36 +301,36 @@ describe('verifySgt cache', () => {
 
   it('serves a repeated verdict from cache', async () => {
     const mint = Keypair.generate().publicKey.toBase58()
-    const conn = makeConnection([{ mint, amount: '1' }], { [mint]: buildMintData() })
+    const rpc = stubRpc([{ mint, amount: '1' }], { [mint]: buildMintData() })
 
-    const first = await verifySgt(WALLET, asConnection(conn))
-    const second = await verifySgt(WALLET, asConnection(conn))
+    const first = await verifySgt(WALLET, RPC_URL)
+    const second = await verifySgt(WALLET, RPC_URL)
 
     expect(first).toEqual(second)
-    expect(conn.getParsedTokenAccountsByOwner).toHaveBeenCalledTimes(1)
+    expect(rpc.getTokenAccountsByOwner).toHaveBeenCalledTimes(1)
   })
 
   it('re-checks after resetSgtCache', async () => {
     const mint = Keypair.generate().publicKey.toBase58()
-    const conn = makeConnection([{ mint, amount: '1' }], { [mint]: buildMintData() })
+    const rpc = stubRpc([{ mint, amount: '1' }], { [mint]: buildMintData() })
 
-    await verifySgt(WALLET, asConnection(conn))
+    await verifySgt(WALLET, RPC_URL)
     resetSgtCache()
-    await verifySgt(WALLET, asConnection(conn))
+    await verifySgt(WALLET, RPC_URL)
 
-    expect(conn.getParsedTokenAccountsByOwner).toHaveBeenCalledTimes(2)
+    expect(rpc.getTokenAccountsByOwner).toHaveBeenCalledTimes(2)
   })
 
   it('never caches a failure — the next attempt hits the RPC again', async () => {
     const mint = Keypair.generate().publicKey.toBase58()
-    const conn = makeConnection([{ mint, amount: '1' }], { [mint]: buildMintData() })
-    conn.getParsedTokenAccountsByOwner.mockRejectedValueOnce(new Error('outage'))
+    const rpc = stubRpc([{ mint, amount: '1' }], { [mint]: buildMintData() })
+    rpc.getTokenAccountsByOwner.mockRejectedValueOnce(new Error('outage'))
 
-    await expect(verifySgt(WALLET, asConnection(conn))).rejects.toThrow('outage')
+    await expect(verifySgt(WALLET, RPC_URL)).rejects.toThrow('outage')
 
-    const recovered = await verifySgt(WALLET, asConnection(conn))
+    const recovered = await verifySgt(WALLET, RPC_URL)
     expect(recovered).toEqual({ hasSGT: true, mintAddress: mint })
-    expect(conn.getParsedTokenAccountsByOwner).toHaveBeenCalledTimes(2)
+    expect(rpc.getTokenAccountsByOwner).toHaveBeenCalledTimes(2)
   })
 })
 

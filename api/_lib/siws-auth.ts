@@ -11,6 +11,10 @@
  *      key to address itself, so taking the key from the request body would
  *      let any throwaway keypair sign a message naming any address.
  *
+ * Nothing here is synchronous any more: step 2 consumes the nonce through
+ * `_lib/siws-store.ts`, whose shared (Redis) backend is async so a
+ * multi-instance deployment burns the nonce exactly once across instances.
+ *
  * Step 4 (eligibility) stays with the caller: the sign-in route checks the
  * dev allowlist; the admin routes skip it and check `config.admin` on-chain
  * instead — protocol authority is not entitlement.
@@ -41,7 +45,7 @@ export type SiwsAuthResult = { ok: true; address: string } | SiwsAuthFailure
  * status and body the caller should answer with verbatim (the shapes are the
  * existing `/api/siws/verify` contract).
  */
-export function verifySignInBody(body: unknown): SiwsAuthResult {
+export async function verifySignInBody(body: unknown): Promise<SiwsAuthResult> {
   const { address, nonce, signature, signedMessage } = body as {
     address?: unknown
     nonce?: unknown
@@ -69,7 +73,7 @@ export function verifySignInBody(body: unknown): SiwsAuthResult {
   }
 
   // ── 2. Consume the nonce — unknown, expired and replayed all fail ────
-  const issued = siwsStore.consume(nonce)
+  const issued = await siwsStore.consume(nonce)
   if (!issued) {
     return { ok: false, status: 401, error: { error: 'Invalid, reused, or expired nonce.', code: 'nonce' } }
   }

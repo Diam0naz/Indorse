@@ -22,7 +22,7 @@ import {
   DEFAULT_MIME_TYPE,
   type ClassificationResult,
   type ImageInput,
-} from '@/features/ai/types'
+} from './ai-types'
 import { EVENT_DIAGNOSIS_SCHEMA, VISION_PROMPT } from './prompt'
 
 // The prompt/schema pair lives in `_lib/prompt.ts` (shared with the Gemini

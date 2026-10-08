@@ -9,7 +9,7 @@ import {
   validateGradeInput,
   type ResolvedGrade,
 } from '@/api/_lib/grade'
-import { ClassificationError } from '@/features/ai/types'
+import { ClassificationError } from '@/api/_lib/ai-types'
 
 /**
  * The grade route's provider edge: Gemini rides the real `h2Fetch`

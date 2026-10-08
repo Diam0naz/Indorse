@@ -41,6 +41,6 @@ export default async function handler(req: ProxyRequest, res: ProxyResponse): Pr
     version: '1',
   }
 
-  siwsStore.issue(payload)
+  await siwsStore.issue(payload)
   res.status(200).json(payload)
 }

@@ -7,7 +7,7 @@
  * Underscore-prefixed directories are not treated as routes by Vercel.
  */
 
-import { ClassificationError, DEFAULT_MIME_TYPE } from '@/features/ai/types'
+import { ClassificationError, DEFAULT_MIME_TYPE } from './ai-types'
 
 /** ~6 MB decoded image ceiling, generous for a phone photo while bounding cost. */
 export const MAX_IMAGE_CHARS = 8 * 1024 * 1024

@@ -12,7 +12,7 @@
  * assistant (Groq → OpenAI). Grade already carries its own two opinions.
  */
 
-import { ClassificationError } from '@/features/ai/types'
+import { ClassificationError } from './ai-types'
 
 export interface ProviderAttempt<T> {
   /** Provider name — carried in the result for logging/tests, never leaked to clients. */

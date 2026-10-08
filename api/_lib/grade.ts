@@ -26,7 +26,7 @@
  * Provider calls take an injectable `fetchImpl` so tests run without keys.
  */
 
-import { ClassificationError, utf8ByteLength } from '@/features/ai/types'
+import { ClassificationError, utf8ByteLength } from './ai-types'
 import { GEMINI_BASE_URL, extractText, h2Fetch, sendWithRetry, toGeminiSchema, GEMINI_RETRY_DELAY_MS } from './gemini'
 
 /** The four market grades, best to worst. */
