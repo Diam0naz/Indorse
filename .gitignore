@@ -80,3 +80,5 @@ programs/**/test-ledger/
 
 # local validator ledger created when a root-level solana-test-validator runs
 /test-ledger/
+.vercel
+.env*

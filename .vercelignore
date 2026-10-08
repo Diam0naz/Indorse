@@ -1,0 +1,44 @@
+# Solana test validator ledger (contains special files Vercel can't read)
+test-ledger/
+
+# Anchor/Solana programs (huge, not needed for API)
+programs/
+
+# Android build outputs
+android/
+
+# Expo/web build outputs
+dist/
+web-build/
+
+# Node modules (handled by Vercel)
+node_modules/
+
+# Environment files
+.env
+.env.local
+.env.test
+
+# Test files
+*.test.ts
+*.test.tsx
+test/
+
+# IDE
+.vscode/
+.idea/
+
+# OS
+.DS_Store
+
+# Logs
+*.log
+npm-debug.log*
+
+# Large media/output folders
+brag-output-*/
+deck/snapshots/
+
+# Cache
+.cache/
+.eslintcache

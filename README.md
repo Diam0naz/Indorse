@@ -256,12 +256,100 @@ or EAS environment variables:
 - `EXPO_PUBLIC_API_FALLBACKS` (optional — the liveness-probe candidate list)
 
 `EXPO_PUBLIC_FORCE_SEEKER` is pinned to `"false"` in all three profiles: it is a
-dev flag that must never ship enabled. This repo has no deployed API origin yet
-(the proxy runs via `npm run api:dev`), so a release build ships with the AI
-features off until one exists.
+dev flag that must never ship enabled. A build whose environment has no
+`EXPO_PUBLIC_AI_CLASSIFY_URL` ships with the AI / SIWS features off
+(`getApiOrigin()` returns `null`), so point a release build at a deployed API
+origin first — see _Deploying the API_ below.
 
 The submit profile points at `./google-service-account.json`, which is
 gitignored like every other key.
+
+### Deploying the API (Vercel)
+
+The `api/` handlers are Vercel-function compatible, and **only `api/` deploys** —
+the Expo app is built with EAS, never here.
+
+- `vercel.json` pins `"framework": null` and `"buildCommand": null` so Vercel
+  does not run this repo's `build` script (an Android prebuild), sets
+  `"outputDirectory": "public"`, and raises the function budget to 60s for the
+  vision routes (lower it if your plan rejects 60).
+- `public/index.html` is a placeholder — without an output directory Vercel
+  fails with _"No Output Directory named public"_.
+- `.vercelignore` drops `api/**/*.test.ts`: Vercel turns every non-underscore
+  file under `api/` into a function, and the colocated vitest files import
+  vitest, which the function bundler cannot resolve.
+- `installCommand` passes `--legacy-peer-deps` because the root `package.json`
+  carries the React Native tree; drop the flag if the install passes without it.
+- The `@/*` path alias resolves from `tsconfig.json`, which Vercel's Node
+  builder honours — the handlers keep importing `@/features/…`.
+
+```bash
+npx vercel link
+# Set for PRODUCTION — Preview-only vars are the classic "works in preview,
+# 500s in prod" trap. Server-only; never EXPO_PUBLIC_:
+npx vercel env add GEMINI_API_KEY production
+npx vercel env add OPENAI_API_KEY production
+npx vercel env add GROQ_API_KEY production        # rotate first — see the AI env note
+npx vercel env add RESEND_API_KEY production
+npx vercel env add SGT_RPC_URL production          # enables the real SGT gate
+npx vercel env add SGT_DEV_ALLOWLIST production    # clear the '*' before judging
+npx vercel env add OPERATOR_ALLOWLIST production
+npx vercel env add UPSTASH_REDIS_REST_URL production
+npx vercel env add UPSTASH_REDIS_REST_TOKEN production
+npx vercel env add SIWS_DOMAIN production          # must match what the app signs in with
+npx vercel env add SIWS_URI production
+# SAS_* only if you are writing attestations.
+npx vercel deploy --prod
+```
+
+Then, before touching anything else:
+
+```bash
+curl -X POST https://<deployment>.vercel.app/api/siws/nonce   # expect 200
+```
+
+#### Serverless state — the nonce store must be shared
+
+Serverless instances do not share memory. What is and is not safe here:
+
+- **SIWS nonces** — shared _only when `UPSTASH_REDIS_REST_URL` **and**
+  `UPSTASH_REDIS_REST_TOKEN` are set_; the store then reads-and-burns through
+  Redis `GETDEL`. With neither set it falls back to a per-process `Map`, and
+  `/api/siws/nonce` → `/api/siws/verify` can land on different instances and
+  answer `401`. **Set both, or sign-in fails intermittently.**
+- **Email OTP codes** (`api/_lib/otp-store.ts`) — still a per-process `Map`:
+  `/api/email/start` and `/api/email/verify` can miss each other the same way.
+- **Per-IP rate limits** (`api/assistant.ts`, `api/directory.ts`) — per-process
+  counters, so the effective cap is `max × instances` rather than 30/min.
+  Degraded, not broken.
+- **Admin-console allowlist overrides** (`api/_lib/allowlist.ts`) — per-process;
+  an edit applies only to the instance that served it. The `env` base is what
+  every instance agrees on.
+
+#### Two things that will bite judges
+
+- **Resend's sandbox sender only delivers to your own inbox** — email
+  verification fails for anyone else until a sending domain is verified.
+- **The SGT gate fails closed** — a judge with no Seeker cannot sign in unless
+  they are on `SGT_DEV_ALLOWLIST`. Decide that deliberately.
+
+#### Point the app at it, then build
+
+Put the deployed origin in the **app's build environment** (EAS profile `env` or
+EAS environment variables), not in Vercel's:
+
+```bash
+EXPO_PUBLIC_AI_CLASSIFY_URL=https://<deployment>.vercel.app/api/classify-gemini
+EXPO_PUBLIC_AI_GRADE_URL=https://<deployment>.vercel.app/api/grade
+EXPO_PUBLIC_AI_ASSISTANT_URL=https://<deployment>.vercel.app/api/assistant
+EXPO_PUBLIC_FUND_TIER_URL=https://<deployment>.vercel.app/api/funds-tier
+```
+
+`EXPO_PUBLIC_*` is inlined at bundle time, so the sequence is **deploy the API,
+set these, then `eas build`** — a build made before the URLs exist ships with the
+AI / SIWS features off. The app derives its SIWS origin from
+`EXPO_PUBLIC_AI_CLASSIFY_URL`, so `/api/siws/*` is reachable the moment that one
+URL is set. Leave `EXPO_PUBLIC_FORCE_SEEKER` as `"false"`.
 
 ### Rules the codebase enforces
 
