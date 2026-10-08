@@ -242,6 +242,28 @@ vi.mock('@/features/farm/useDirectoryQuery', () => ({
   }),
 }))
 
+/**
+ * The sheet's recency row reads a report account over RPC — stubbed at the
+ * hook layer for the same reason as the directory above. Outside a
+ * SettingsProvider `useProgramRpc` points at devnet, so an unmocked sheet
+ * would fire a real `getAccountInfo` and let react-query retry it while the
+ * rest of the suite is still running. Idle by default: the row does not
+ * appear until a test says it has an answer.
+ */
+const latestReportScenario = vi.hoisted(() => ({
+  timestamp: null as number | null,
+  state: 'idle' as 'idle' | 'loading' | 'error' | 'ready',
+  retry: vi.fn(),
+}))
+
+vi.mock('@/features/reports/useLatestReportTimestamp', () => ({
+  useLatestReportTimestamp: () => ({
+    timestamp: latestReportScenario.timestamp,
+    state: latestReportScenario.state,
+    retry: latestReportScenario.retry,
+  }),
+}))
+
 /** Simulated fetches resolve in 450–550ms; give each assertion room. */
 const LOAD = { timeout: 3000 }
 
@@ -288,6 +310,10 @@ beforeEach(async () => {
   directoryScenario.farms = []
   directoryScenario.state = 'ready'
   directoryScenario.retry.mockClear()
+  // And the recency read — a "Last report" row must not outlive its test.
+  latestReportScenario.timestamp = null
+  latestReportScenario.state = 'idle'
+  latestReportScenario.retry.mockClear()
 })
 
 /** Demo policy fixture: 180 mm trigger, $96k cover, 30 days left of season. */
@@ -822,6 +848,10 @@ describe('screen redesign', () => {
       updatedAt: 1,
     }
     directoryScenario.farms = [ownListing, other]
+    // This sheet also dates the farm — stubbed above like every other chain
+    // read, so the row is the real one and not a request to devnet.
+    latestReportScenario.timestamp = 1_758_100_000
+    latestReportScenario.state = 'ready'
 
     const screen = await renderWithProviders(<ScoutingScreen />)
 
@@ -843,6 +873,9 @@ describe('screen redesign', () => {
     expect(screen.getByText('3')).toBeTruthy()
     expect(screen.getByText('Verified')).toBeTruthy()
     expect(screen.getByText('1')).toBeTruthy()
+    // …and when the farm was last reported on — one account read, only ever
+    // fetched because this sheet opened.
+    expect(screen.getByText('Last report')).toBeTruthy()
 
     // Arming the target closes the sheet and rides the dock badge…
     await fireEvent.press(screen.getByTestId('discover-scout'))
