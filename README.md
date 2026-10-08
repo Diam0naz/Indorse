@@ -196,6 +196,15 @@ adb reverse tcp:3000 tcp:3000   # API     → device
 adb install -r <debug.apk>      # first run, or after Android wipes app data
 ```
 
+`npm run up` (`scripts/dev-up.sh`) runs those four lines in order as one
+command: preflight (`node_modules`, `.env`, an attached adb device, free
+ports) → `api:dev` → Metro → both `adb reverse` lines → the
+`POST /api/siws/nonce → 200` check below. It reuses whatever is already
+healthy rather than starting a second copy, stops only what it started, and
+puts back any `adb reverse` line it changed. `npm run up -- --check` gates
+startup on the four quality gates; `--keep-cache` skips the Metro cache
+clear. It supervises processes; `dev:tunnel` below is what self-heals them.
+
 Background shells do not survive an environment restart, and when they die the
 symptoms look exactly like an app failure. After any restart, re-run the lines
 above and verify `POST /api/siws/nonce → 200` **before** debugging deeper.
@@ -1001,6 +1010,7 @@ column (farm, field, scout_event, escrow, weather_policy), RFC 4180 quoting,
 npm run dev             # Metro (clear cache, dev client)
 npm run android         # Build and run on a device or emulator
 npm run api:dev         # AI proxy + SIWS routes on localhost:3000
+npm run up              # preflight → api:dev → Metro → adb reverse → verify
 
 # Quality gates (all four must be green before any handoff)
 npm run test            # Vitest, verbose pass/fail output
