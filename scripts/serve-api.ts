@@ -24,7 +24,16 @@
  *
  * Methods are NOT filtered here on purpose — the handlers themselves answer
  * 405 to non-POST, and the app's reachability probe treats *any* HTTP
- * response as "the endpoint is up".
+ * response as "the endpoint is up". `OPTIONS` is the one exception: it is a
+ * browser preflight, never an app call, so it is answered here (see CORS).
+ *
+ * CORS: the web target (`expo start --web`) runs on its own Metro origin and
+ * calls this server cross-origin, so a browser needs `Access-Control-Allow-*`
+ * on every response AND a successful preflight before it will send the JSON
+ * POSTs. Without this the assistant and the classify probe both fail as pure
+ * client-side CORS errors while `curl` looks perfectly healthy. Native
+ * clients (the phone, via adb reverse) never send an Origin and ignore these
+ * headers, so the mobile path is unchanged.
  *
  * `.env` is loaded manually (without overriding exported variables) so the
  * provider keys never have to be exported by hand.
@@ -48,6 +57,18 @@ import directoryHandler from '../api/directory'
 
 type HandlerReq = Parameters<typeof classifyHandler>[0]
 type HandlerRes = Parameters<typeof classifyHandler>[1]
+
+/**
+ * CORS headers for browser clients. Deliberately permissive — this is a local
+ * dev host, not a deployment — and set on EVERY response so both the preflight
+ * and the real request carry them.
+ */
+const CORS_HEADERS: Record<string, string> = {
+  'access-control-allow-origin': '*',
+  'access-control-allow-methods': 'GET, POST, OPTIONS',
+  'access-control-allow-headers': 'content-type',
+  'access-control-max-age': '86400',
+}
 
 /** The app's single classify URL points at one of these. */
 const routes: Record<string, (req: HandlerReq, res: HandlerRes) => Promise<void>> = {
@@ -83,6 +104,14 @@ loadDotEnv()
 const PORT = Number(process.env.PORT ?? 3000)
 
 const server = createServer((req, res) => {
+  for (const [key, value] of Object.entries(CORS_HEADERS)) res.setHeader(key, value)
+  // A preflight carries no route payload — answer it before parsing or routing.
+  if (req.method === 'OPTIONS') {
+    res.writeHead(204)
+    res.end()
+    return
+  }
+
   const path = (req.url ?? '/').split('?')[0]
   const started = Date.now()
   const from = req.socket.remoteAddress ?? '?'

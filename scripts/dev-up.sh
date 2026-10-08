@@ -175,8 +175,17 @@ adb_available() { [ -n "$ADB_SERIAL" ]; }
 # What a device port pointed at before we touched it, if anything. The list
 # prints a leading transport field ("UsbFfs tcp:8081 tcp:8082"), so match on
 # the last two fields rather than anchoring at the start of the line.
+#
+# `NF >= 2` is not decoration: on a fresh boot ADB_REVERSE_LIST is empty, and
+# printf turns that into a single empty record — NF=0, so $(NF-1) is $(-1),
+# which awk rejects with "attempt to access field -1" and exit 2. That status
+# escapes the command substitution into the assignment below, and `set -e`
+# then aborts the whole run *after* Metro is up: the device step dies and
+# cleanup tears down the process that was working. This is the normal path,
+# not an edge case — a phone replug or an environment restart always starts
+# with no reverse lines at all.
 reverse_prev() { # device_port → prints the previous host port, or nothing
-  printf '%s\n' "$ADB_REVERSE_LIST" | awk -v d="tcp:$1" '$(NF - 1) == d { print $NF; exit }'
+  printf '%s\n' "$ADB_REVERSE_LIST" | awk -v d="tcp:$1" 'NF >= 2 && $(NF - 1) == d { print $NF; exit }'
 }
 
 # Adds a mapping unless it already reads exactly as we want it. When it does
