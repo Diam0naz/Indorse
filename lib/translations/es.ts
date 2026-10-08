@@ -129,6 +129,8 @@ export const es: Record<MessageKey, string> = {
   'assist.copied': 'Copiado',
   'assist.retry': 'Reintentar',
   'assist.thinking': 'Pensando…',
+  'assist.stop': 'Detener',
+  'assist.stopped': 'Detenido.',
   'assist.err.notConfigured': 'El punto de conexión del asistente no está configurado.',
   'assist.err.rate': 'Demasiadas preguntas — espera un minuto e inténtalo de nuevo.',
   'assist.err.generic': 'La guía no pudo responder — inténtalo de nuevo.',

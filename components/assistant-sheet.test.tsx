@@ -15,14 +15,17 @@
  *   - each bubble's small copy icon puts exactly that message on the
  *     clipboard and flips to the "Copied" check;
  *   - a failed ask keeps its question bubble and the error line carries
- *     a retry icon that re-asks it once — but not-configured offers none.
+ *     a retry icon that re-asks it once — but not-configured offers none;
+ *   - while a question is in flight the composer's Send button turns into
+ *     Stop — one slot, so abandoning a slow question needs no new target
+ *     and the spinner line stays purely a status readout.
  *
  * The chain hooks are module-mocked: the sheet reads the same farm/policy/
  * oracle queries the Weather screen uses, and here they are fixtures.
  */
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { fireEvent, render, screen } from '@testing-library/react-native'
+import { fireEvent, render, screen, within } from '@testing-library/react-native'
 import Clipboard from '@react-native-clipboard/clipboard'
 import { AssistantSheet } from '@/components/assistant-sheet'
 import type { Farm } from '@/features/farm/types'
@@ -254,6 +257,49 @@ describe('AssistantSheet', () => {
     await screen.findByText('indorse has no bounties.', {}, LOAD)
     expect(screen.getAllByText('How do I set up a bounty?')).toHaveLength(1)
     expect(screen.queryByLabelText('Retry')).toBeNull()
+  })
+
+  it('stops a question that is taking too long, and keeps it for a retry', async () => {
+    // A request that never answers on its own, but rejects when aborted —
+    // exactly what a slow proxy looks like to the sheet.
+    const hanging = vi.fn(
+      (_input: unknown, init?: RequestInit) =>
+        new Promise<Response>((_resolve, reject) => {
+          init?.signal?.addEventListener('abort', () =>
+            reject(Object.assign(new Error('aborted'), { name: 'AbortError' })),
+          )
+        }),
+    )
+    vi.stubGlobal('fetch', hanging)
+    await render(<AssistantSheet initialQuestion="Is the oracle reading final?" onClose={vi.fn()} />)
+
+    await screen.findByText('Thinking…', {}, LOAD)
+
+    // Stop lives in the composer, in Send's own slot — not parked beside the
+    // spinner — and it has taken that slot outright: Send is gone while the
+    // question is out, so there is exactly one action to reach for.
+    const composer = screen.getByLabelText('Ask anything about the app…').parent
+    expect(composer).not.toBeNull()
+    expect(within(composer!).getByLabelText('Stop')).toBeTruthy()
+    expect(within(composer!).queryByLabelText('Send')).toBeNull()
+    // …and it really is the composer, not some ancestor that spans the sheet:
+    // the spinner line is a sibling, so it must not be found inside.
+    expect(within(composer!).queryByText('Thinking…')).toBeNull()
+
+    await fireEvent.press(screen.getByLabelText('Stop'))
+
+    // Stopped, not failed: the honest line appears, the spinner goes, and the
+    // question stays as one bubble — offered back, never dressed as an error.
+    await screen.findByText('Stopped.', {}, LOAD)
+    expect(screen.queryByText('Thinking…')).toBeNull()
+    expect(screen.getAllByText('Is the oracle reading final?')).toHaveLength(1)
+    expect(screen.queryByText('The guide could not answer — try again.')).toBeNull()
+
+    // Retrying re-asks the same question and answers it.
+    vi.stubGlobal('fetch', okFetch('Yes — finalized means the median is frozen.'))
+    await fireEvent.press(screen.getByLabelText('Retry'))
+    await screen.findByText('Yes — finalized means the median is frozen.', {}, LOAD)
+    expect(screen.getAllByText('Is the oracle reading final?')).toHaveLength(1)
   })
 
   it('says so honestly when the endpoint is not configured', async () => {

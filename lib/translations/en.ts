@@ -132,6 +132,8 @@ export const en = {
   'assist.copied': 'Copied',
   'assist.retry': 'Retry',
   'assist.thinking': 'Thinking…',
+  'assist.stop': 'Stop',
+  'assist.stopped': 'Stopped.',
   'assist.err.notConfigured': 'The assistant endpoint is not configured.',
   'assist.err.rate': 'Too many questions — wait a minute and try again.',
   'assist.err.generic': 'The guide could not answer — try again.',

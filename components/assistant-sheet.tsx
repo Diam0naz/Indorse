@@ -30,6 +30,13 @@
  * retry, since none could help. The error belongs to that turn: asking
  * a later question never clears an earlier one's error line, so a
  * question can never sit on screen unanswered with no way to retry it.
+ *
+ * While the guide is thinking, the composer's send button becomes a Stop
+ * button — the same slot, the same size, where the eye already is rather
+ * than parked beside the spinner. It aborts the in-flight request and
+ * leaves the question bubble in place with an honest "Stopped." line and
+ * the same retry icon — abandoning a slow question is not a failure, so it
+ * never renders as one, and never in the red the app reserves for failure.
  */
 
 import { Fragment, useEffect, useMemo, useRef, useState } from 'react'
@@ -75,6 +82,8 @@ interface Turn {
    * question on screen answered by nothing and with no way to retry it.
    */
   failed?: SheetError
+  /** Set when the farmer pressed Stop on THIS question's ask — not an error. */
+  stopped?: boolean
 }
 
 type SheetError = 'assist.err.notConfigured' | 'assist.err.rate' | 'assist.err.generic'
@@ -128,6 +137,8 @@ export function AssistantSheet({ initialQuestion, onClose }: AssistantSheetProps
   const [copiedIndex, setCopiedIndex] = useState<number | null>(null)
   const startedRef = useRef(false)
   const gateRef = useRef(false)
+  /** The in-flight ask's controller, so Stop can abort exactly that request. */
+  const abortRef = useRef<AbortController | null>(null)
   const threadRef = useRef<ScrollView>(null)
   const copyTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
 
@@ -154,27 +165,41 @@ export function AssistantSheet({ initialQuestion, onClose }: AssistantSheetProps
    */
   async function ask(turnIndex: number, message: string) {
     setBusy(true)
+    const controller = new AbortController()
+    abortRef.current = controller
     try {
-      const result = await askAssistant(message, { lang, context })
+      const result = await askAssistant(message, { lang, context, signal: controller.signal })
       setTurns((prev) => {
         const next = [...prev]
         const own = next[turnIndex]
-        if (own?.role === 'user') next[turnIndex] = { ...own, failed: undefined }
+        if (own?.role === 'user') next[turnIndex] = { ...own, failed: undefined, stopped: undefined }
         next.push({ role: 'assistant', text: result.reply })
         return next
       })
     } catch (caught) {
-      const failed = errorKeyFor(caught)
+      // An abort is a deliberate Stop, not a failure — say "Stopped." and
+      // keep the retry, rather than dressing it up as an error.
+      const stopped = controller.signal.aborted
       setTurns((prev) => {
         const own = prev[turnIndex]
         if (!own || own.role !== 'user') return prev
         const next = [...prev]
-        next[turnIndex] = { ...own, failed }
+        next[turnIndex] = { ...own, failed: stopped ? undefined : errorKeyFor(caught), stopped }
         return next
       })
     } finally {
-      setBusy(false)
+      // Only the newest ask owns `busy` — a Stop followed by an immediate
+      // retry must not have the old request clear the new one's spinner.
+      if (abortRef.current === controller) {
+        abortRef.current = null
+        setBusy(false)
+      }
     }
+  }
+
+  /** Abort the in-flight ask; the question bubble stays so it can be retried. */
+  function stop() {
+    abortRef.current?.abort()
   }
 
   /** One question → user bubble → assistant bubble (or that turn's honest error). */
@@ -269,10 +294,10 @@ export function AssistantSheet({ initialQuestion, onClose }: AssistantSheetProps
                       )}
                     </Pressable>
                   </View>
-                  {mine && turn.failed ? (
+                  {mine && (turn.failed || turn.stopped) ? (
                     <View style={styles.errorRow}>
-                      <Text style={styles.error} accessibilityRole="alert">
-                        {t(turn.failed)}
+                      <Text style={turn.failed ? styles.error : styles.stopped} accessibilityRole="alert">
+                        {turn.failed ? t(turn.failed) : t('assist.stopped')}
                       </Text>
                       {turn.failed !== 'assist.err.notConfigured' ? (
                         <Pressable
@@ -311,14 +336,17 @@ export function AssistantSheet({ initialQuestion, onClose }: AssistantSheetProps
               returnKeyType="send"
               accessibilityLabel={t('assist.placeholder')}
             />
+            {/* One slot, two jobs. While a question is in flight this is Stop —
+                same spot, same size, so the thumb never has to hunt for it and
+                the composer never shifts when the state flips. */}
             <Pressable
-              style={[styles.sendBtn, (busy || input.trim().length === 0) && styles.sendDisabled]}
-              onPress={() => send(input)}
-              disabled={busy || input.trim().length === 0}
+              style={[styles.sendBtn, !busy && input.trim().length === 0 && styles.sendDisabled]}
+              onPress={busy ? stop : () => send(input)}
+              disabled={!busy && input.trim().length === 0}
               accessibilityRole="button"
-              accessibilityLabel={t('assist.send')}
+              accessibilityLabel={busy ? t('assist.stop') : t('assist.send')}
             >
-              <Text style={styles.sendText}>{t('assist.send')}</Text>
+              {busy ? <StopGlyph fg={colors.surface} /> : <Text style={styles.sendText}>{t('assist.send')}</Text>}
             </Pressable>
           </View>
         </KeyboardAvoidingView>
@@ -333,6 +361,15 @@ function CopyGlyph({ fg, bg }: { fg: string; bg: string }) {
     <Svg width={14} height={14} viewBox="0 0 16 16" fill="none">
       <Rect x="5.75" y="5.75" width="8" height="8" rx="2" stroke={fg} strokeWidth="1.4" />
       <Rect x="2.5" y="2.5" width="8.5" height="8.5" rx="2" fill={bg} stroke={fg} strokeWidth="1.4" />
+    </Svg>
+  )
+}
+
+/** The stop glyph — the universal "halt" mark, replacing Send while a question is in flight. */
+function StopGlyph({ fg }: { fg: string }) {
+  return (
+    <Svg width={14} height={14} viewBox="0 0 16 16" fill="none">
+      <Rect x="3.5" y="3.5" width="9" height="9" rx="1.5" fill={fg} />
     </Svg>
   )
 }
@@ -525,6 +562,14 @@ const makeStyles = (colors: Colors) =>
       paddingVertical: spacing.sm,
       textAlign: 'center',
     },
+    stopped: {
+      alignSelf: 'center',
+      fontSize: fontSizes.sm,
+      color: colors.textDim,
+      paddingHorizontal: spacing.md,
+      paddingVertical: spacing.sm,
+      textAlign: 'center',
+    },
     errorRow: {
       flexDirection: 'row',
       alignItems: 'center',
@@ -562,6 +607,10 @@ const makeStyles = (colors: Colors) =>
     },
     sendBtn: {
       justifyContent: 'center',
+      alignItems: 'center',
+      // Widest label across locales ("Envoyer") plus slack: Send and Stop share
+      // one floor, so the composer never shifts when the two swap.
+      minWidth: 72,
       paddingHorizontal: spacing.md,
       borderRadius: radii.md,
       backgroundColor: colors.amber,
