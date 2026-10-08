@@ -94,6 +94,30 @@ describe('mergeLogEvents', () => {
     expect(merged).toEqual([queued])
   })
 
+  it('adopts the chain’s timestamp but keeps the local row’s plant identity', () => {
+    // The program wrote the timestamp with its own clock — that is the
+    // instant a season is derived from. The plant name, by contrast, exists
+    // only locally (the account has nowhere to store it), so the merged row
+    // must hold on to it or the log forgets what was scouted.
+    const local = localEvent({ id: 'Report9', timestamp: 1_700_000_000, plant: 'Tomato' })
+    const fetched = chainRow({ id: 'Report9', timestamp: 1_712_000_000 })
+
+    const merged = mergeLogEvents([local], [fetched])
+
+    expect(merged).toHaveLength(1)
+    expect(merged[0].timestamp).toBe(1_712_000_000)
+    expect(merged[0].plant).toBe('Tomato')
+  })
+
+  it('falls back to the local timestamp when the fetched row carries none', () => {
+    const local = localEvent({ id: 'sc7', timestamp: 1_700_000_000 })
+    const fetched = chainRow({ id: 'sc7', timestamp: undefined })
+
+    const merged = mergeLogEvents([local], [fetched])
+
+    expect(merged[0].timestamp).toBe(1_700_000_000)
+  })
+
   it('leaves fetched rows alone when no local copy exists', () => {
     const fetched = chainRow({ id: 'Report2' })
 
@@ -129,6 +153,12 @@ describe('reportToScoutEvent', () => {
     expect(event.field).toBe('Green Valley')
     expect(event.diagnosis).toBe('Powdery mildew')
     expect(event.chainStatus).toBe('verified')
+    // The program's own clock reading, in the unit seasons derive from —
+    // not a re-parse of the formatted `date`.
+    expect(event.timestamp).toBe(1712000000)
+    // Display-only plant identity is NOT on the account, so a chain-only row
+    // claims none rather than borrowing one from somewhere.
+    expect(event.plant).toBeUndefined()
     // The chain has no probability — zero here means "not stored", not 0%.
     expect(event.confidence).toBe(0)
     expect(event.severity).toBe('none')

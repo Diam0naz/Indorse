@@ -28,9 +28,32 @@ export const FARM = {
 
 export interface ScoutEvent {
   id: string
+  /** Human display date (`Oct 4`) — cosmetic, never parsed back. */
   date: string
+  /**
+   * The same instant as `date`, as epoch SECONDS (the on-chain
+   * `ScoutReport.timestamp` unit). This is what seasons are derived from:
+   * `date` is a formatted string and would have to be parsed, which is
+   * exactly the kind of guess `seasonForLocation` exists to avoid. Set at
+   * capture time and by `reportToScoutEvent`; absent only on rows written
+   * before this field existed, which the season grouping leaves undated.
+   */
+  timestamp?: number
   field: string
   crop: string
+  /**
+   * The plant the model actually identified — `commonName`, else
+   * `botanicalName`, from the classification at capture time. This is the
+   * identity behind the diagnosis (`diagnosis` is what is WRONG with it),
+   * so it is what a per-season record of scouted plants is grouped by.
+   *
+   * Display-only and local: `features/ai/types.ts` pins these names as
+   * never reaching the chain, and `crop` stays `'—'` because the Farm
+   * account has no crop field. Absent on rows read from chain alone (a
+   * fresh install, somebody else's report) — the log then falls back to
+   * `crop` and claims nothing.
+   */
+  plant?: string
   diagnosis: string
   confidence: number
   severity: 'high' | 'medium' | 'low' | 'none'

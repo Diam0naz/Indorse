@@ -172,24 +172,40 @@ export function CameraOverlay({ onClose, onSubmit, farmAddress, farmName, queued
 
   /* Reachability probe for the classify proxy — any HTTP response (the
      handler answers 405 to GET) means "up"; only a network failure means
-     "down". Skipped entirely when the endpoint is not configured. */
+     "down". A failure retries a few times while the sheet stays open: tunnel
+     flaps are transient (the host watchdog repairs them within seconds), so
+     one bad instant must not leave the chip red for the whole session — the
+     wrapped fetch already re-races origins per attempt, these retries only
+     cover the time dimension. Skipped entirely when unconfigured. */
   useEffect(() => {
     const endpoint = getClassifyEndpoint()
     if (!endpoint) return
     let active = true
-    const controller = new AbortController()
-    const timer = setTimeout(() => controller.abort(), 4000)
-    fetch(endpoint, { method: 'GET', signal: controller.signal })
-      .then(() => {
-        if (active) setAiEndpoint('up')
-      })
-      .catch(() => {
-        if (active) setAiEndpoint('down')
-      })
-      .finally(() => clearTimeout(timer))
+    let attempt = 0
+    let retryTimer: ReturnType<typeof setTimeout> | undefined
+    let controller: AbortController | undefined
+
+    const probe = () => {
+      controller = new AbortController()
+      const timer = setTimeout(() => controller?.abort(), 4000)
+      fetch(endpoint, { method: 'GET', signal: controller.signal })
+        .then(() => {
+          if (active) setAiEndpoint('up')
+        })
+        .catch(() => {
+          if (!active) return
+          attempt += 1
+          setAiEndpoint('down')
+          if (attempt < 5) retryTimer = setTimeout(probe, 2500)
+        })
+        .finally(() => clearTimeout(timer))
+    }
+    probe()
+
     return () => {
       active = false
-      controller.abort()
+      if (retryTimer) clearTimeout(retryTimer)
+      controller?.abort()
     }
   }, [])
 
@@ -329,10 +345,21 @@ export function CameraOverlay({ onClose, onSubmit, farmAddress, farmName, queued
 
     // Shared by both paths: real date, real farm name (or honest fallback),
     // no invented crop, the actual number of captured shots.
-    const base: Pick<ScoutEvent, 'date' | 'field' | 'crop' | 'images' | 'lat' | 'lng'> = {
+    const base: Pick<ScoutEvent, 'date' | 'timestamp' | 'field' | 'crop' | 'plant' | 'images' | 'lat' | 'lng'> = {
       date: formatShortDate(stamp / 1000),
+      // The epoch twin of `date` — seasons are derived from this, never from
+      // the formatted string. Same instant the display date was made from.
+      timestamp: Math.floor(stamp / 1000),
       field: farmName ?? t('scout.cam.unregistered'),
       crop: NO_CROP,
+      /**
+       * The plant behind the diagnosis — what the per-season record is
+       * grouped by. Deliberately local and display-only: it is absent from
+       * `anchor` below, so it is never submitted, and `features/ai/types.ts`
+       * pins these names as never reaching the chain. Unidentified → left
+       * undefined so the row claims no plant rather than inventing one.
+       */
+      plant: classification?.commonName ?? classification?.botanicalName ?? undefined,
       images: realBytes.length,
       lat: point.lat,
       lng: point.lng,

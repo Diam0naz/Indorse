@@ -146,6 +146,8 @@ export const en = {
   'scout.tile.fields': 'Fields',
   'scout.fields': 'Field Status',
   'scout.log': 'Scouting Log · {n}',
+  'scout.seasonGroup': '{season} {year}',
+  'scout.seasonUndated': 'Undated',
   'scout.fab': 'Scout Field',
   'scout.actions': 'Scouting actions',
   'scout.conf': 'Conf.',

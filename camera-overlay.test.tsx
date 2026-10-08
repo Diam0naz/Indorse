@@ -25,6 +25,7 @@ import type { ComponentProps, ReactNode } from 'react'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { CameraOverlay } from '@/components/camera-overlay'
 import type { ScoutEvent } from '@/constants/data'
+import type { ClassificationResult } from '@/features/ai/types'
 
 const LOAD = { timeout: 4000 }
 
@@ -50,6 +51,23 @@ vi.mock('@/features/reports/useSubmitReport', () => ({
   }),
 }))
 
+/**
+ * Injected verdict. The real hook only lands a classification when a proxy
+ * is configured and answers, which no test here drives end to end — so a
+ * test that needs a named plant says so, and everyone else gets `null`,
+ * exactly the hook's initial state.
+ */
+const verdict = vi.hoisted(() => ({ classification: null as ClassificationResult | null }))
+
+vi.mock('@/features/ai/usePhotoClassification', () => ({
+  usePhotoClassification: () => ({
+    classification: verdict.classification,
+    classifying: false,
+    classify: vi.fn(async () => verdict.classification),
+    reset: vi.fn(),
+  }),
+}))
+
 type OverlayProps = ComponentProps<typeof CameraOverlay>
 type Screen = Awaited<ReturnType<typeof render>>
 
@@ -69,6 +87,8 @@ beforeEach(() => {
   // The environment has no proxy configured unless a test says otherwise.
   delete process.env.EXPO_PUBLIC_AI_CLASSIFY_URL
   delete process.env.EXPO_PUBLIC_FORCE_SEEKER
+  // …and no verdict, unless a test injects one.
+  verdict.classification = null
 })
 
 afterEach(() => {
@@ -201,6 +221,67 @@ describe('camera overlay — submit honesty', () => {
     expect(event.severity).toBe('none')
     expect(event.confidence).toBe(0)
     expect(event.crop).toBe('—')
+    // No verdict means no identified plant, and `timestamp` is the epoch
+    // twin of `date` — the pair seasons are derived from.
+    expect(event.plant).toBeUndefined()
+    expect(event.timestamp).toBeGreaterThan(1_700_000_000)
+    // Neither display-only field joins the payload the program receives.
+    expect(event.anchor).not.toHaveProperty('plant')
+    expect(event.anchor).not.toHaveProperty('timestamp')
+  })
+
+  it('records the plant the model named, and keeps it off the chain', async () => {
+    verdict.classification = {
+      label: 'Powdery mildew',
+      confidence: 0.94,
+      severity: 'medium',
+      notes: 'White growth across the upper canopy.',
+      commonName: 'Cucumber',
+      botanicalName: 'Cucumis sativus',
+    }
+    const onSubmit = vi.fn()
+    const screen = await renderOverlay({ farmName: 'Riverbend Farm', onSubmit })
+
+    await captureShot(screen, '1 / 5 shots')
+    await fireEvent.press(screen.getByLabelText('Analyze crop'))
+    await screen.findByText('1 photo captured', {}, LOAD)
+    // The identity beside the diagnosis on the card is the identity the row
+    // keeps — the log renders it under whichever season it belongs to. The
+    // card composes plain + Latin into one line, so match on content.
+    expect(screen.getByText(/Cucumber/)).toBeTruthy()
+    await fireEvent.press(screen.getByText('Submit to Chain'))
+
+    await waitFor(() => expect(onSubmit).toHaveBeenCalledTimes(1))
+    const event = onSubmit.mock.calls[0][0] as ScoutEvent
+
+    expect(event.plant).toBe('Cucumber')
+    expect(event.diagnosis).toBe('Powdery mildew')
+    // Only the diagnosis reaches the program — the plant names are display-
+    // only by contract, so the anchor payload must not grow a new field.
+    expect(event.anchor?.aiLabel).toBe('Powdery mildew')
+    expect(event.anchor).not.toHaveProperty('plant')
+  })
+
+  it('falls back to the Latin name when the model gave no plain-English one', async () => {
+    verdict.classification = {
+      label: 'Late blight',
+      confidence: 0.8,
+      severity: 'high',
+      notes: 'Brown lesions on the lower canopy.',
+      botanicalName: 'Solanum tuberosum',
+    }
+    const onSubmit = vi.fn()
+    const screen = await renderOverlay({ farmName: 'Riverbend Farm', onSubmit })
+
+    await captureShot(screen, '1 / 5 shots')
+    await fireEvent.press(screen.getByLabelText('Analyze crop'))
+    await screen.findByText('1 photo captured', {}, LOAD)
+    await fireEvent.press(screen.getByText('Submit to Chain'))
+
+    await waitFor(() => expect(onSubmit).toHaveBeenCalledTimes(1))
+    const event = onSubmit.mock.calls[0][0] as ScoutEvent
+
+    expect(event.plant).toBe('Solanum tuberosum')
   })
 
   it('stamps a known scout target on the queued payload so the flush finds it', async () => {

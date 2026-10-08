@@ -144,6 +144,8 @@ export const fr: Record<MessageKey, string> = {
   'scout.tile.fields': 'Parcelles',
   'scout.fields': 'État des parcelles',
   'scout.log': 'Journal de recon. · {n}',
+  'scout.seasonGroup': '{season} {year}',
+  'scout.seasonUndated': 'Sans date',
   'scout.fab': 'Reconnaître',
   'scout.actions': 'Actions de reconnaissance',
   'scout.conf': 'Conf.',

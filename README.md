@@ -720,6 +720,34 @@ farmer is waiting on (abiotic findings legitimately have no pathogen, so
 → Healthy 0.95 with no pathogen; `sc-sick.jpeg` → Corn Smut 0.95 with
 _Ustilago maydis_.
 
+### Scouted plants, recorded per season
+
+That identity now outlives the camera. A capture stamps `plant` (the model's
+`commonName`, else its `botanicalName`) and `timestamp` (epoch seconds, the
+twin of the display date) onto its log row, and the Scout screen folds the
+log into **season sections** — so a farm reads as "what was scouted, and in
+which season", rather than one flat newest-first list.
+
+- **Seasons are derived, never stored.** Each row is passed through
+  `seasonForLocation(lat, lng, at)` — the same function the Profile tab's
+  season row uses, so the two can never disagree — from **its own**
+  coordinates and timestamp. No account, instruction or PDA is involved;
+  the program was not touched.
+- **Nothing is dropped.** A row with no timestamp (written before the field
+  existed) or unusable coordinates cannot be placed honestly, so it keeps
+  its place under an `Undated` heading instead of vanishing.
+- **Headings only when they say something.** One section means every row
+  shares a season, so the log renders exactly as it did before. Sections
+  come back newest-season-first; rows inside keep the log's own order.
+- **Display-only stays display-only.** `plant` never joins the anchor
+  payload — `submit_scout_report` still receives only the ≤32-byte `aiLabel`,
+  and a row read from chain alone (a fresh install, another scout's report)
+  claims no plant rather than borrowing one.
+
+Source: `features/reports/season-log.ts` (+ 13-case test), with the stamp in
+`components/camera-overlay.tsx`, the chain mapping in
+`features/reports/chain-events.ts` and the fold in `app/(tabs)/index.tsx`.
+
 ### Harvest grading — two models, one grade, one flag
 
 `submit_harvest_batch` now carries `grade u8` (0 = ungraded, 1–4 = A–D),

@@ -1008,6 +1008,113 @@ describe('screen redesign', () => {
       expect(doc.events.every((event) => event.anchorStatus === 'anchored')).toBe(true)
     }, LOAD)
   })
+
+  /* ── Season grouping ─────────────────────────────────────────────── */
+
+  it('groups the log under season headings and names the plant beside the farm', async () => {
+    scoutSetup.address = POLICY_ADDRESS
+    scoutSetup.farm = { name: 'Green Valley', reportCount: 0 }
+    const common = {
+      field: 'Green Valley',
+      crop: '—',
+      confidence: 0.91,
+      severity: 'high',
+      txSig: 'ab'.repeat(32),
+      notes: 'Lesions on lower leaves.',
+      images: 1,
+      lat: 46.8821,
+      lng: -98.7023,
+      anchorStatus: 'anchored',
+    }
+    await AsyncStorage.setItem(
+      'indorse.scout.v1',
+      JSON.stringify({
+        events: [
+          // Two seasons at the same temperate farm — July reads summer,
+          // January winter, both derived from the row's own timestamp.
+          {
+            ...common,
+            id: 'scSummer',
+            date: 'Jul 15',
+            timestamp: Math.floor(new Date(2026, 6, 15).getTime() / 1000),
+            diagnosis: 'Sclerotinia Head Rot',
+            plant: 'Sunflower',
+          },
+          {
+            ...common,
+            id: 'scWinter',
+            date: 'Jan 15',
+            timestamp: Math.floor(new Date(2026, 0, 15).getTime() / 1000),
+            diagnosis: 'Late blight',
+            plant: 'Wheat',
+          },
+          // Written before `timestamp` existed: kept in the log, under a
+          // heading that makes no claim about when it happened.
+          { ...common, id: 'scLegacy', date: 'Sep 29', diagnosis: 'No disease detected' },
+        ],
+      }),
+    )
+
+    const screen = await renderWithProviders(<ScoutingScreen />)
+
+    await screen.findByText('Sclerotinia Head Rot', {}, LOAD)
+    expect(screen.getByText('Scouting Log · 3')).toBeTruthy()
+
+    // Newest season first, the unplaceable row last — headings included.
+    const headings = screen.queryAllByText(/2026$|^Undated$/).map((node) => String(node.props.children))
+    expect(headings).toEqual(['Summer 2026', 'Winter 2026', 'Undated'])
+
+    // The plant identity rides beside the farm it was scouted on…
+    expect(screen.getByText('Green Valley · Sunflower')).toBeTruthy()
+    // …and a row whose model never named one claims no plant at all.
+    expect(screen.getByText('Green Valley · —')).toBeTruthy()
+  })
+
+  it('stays unheaded when the whole log sits in one season', async () => {
+    scoutSetup.address = POLICY_ADDRESS
+    scoutSetup.farm = { name: 'Green Valley', reportCount: 0 }
+    const common = {
+      field: 'Green Valley',
+      crop: '—',
+      confidence: 0.91,
+      severity: 'high',
+      txSig: 'ab'.repeat(32),
+      notes: 'Lesions on lower leaves.',
+      images: 1,
+      lat: 46.8821,
+      lng: -98.7023,
+    }
+    await AsyncStorage.setItem(
+      'indorse.scout.v1',
+      JSON.stringify({
+        events: [
+          {
+            ...common,
+            id: 'scA',
+            date: 'Jul 15',
+            timestamp: Math.floor(new Date(2026, 6, 15).getTime() / 1000),
+            diagnosis: 'Sclerotinia Head Rot',
+          },
+          {
+            ...common,
+            id: 'scB',
+            date: 'Jul 2',
+            timestamp: Math.floor(new Date(2026, 6, 2).getTime() / 1000),
+            diagnosis: 'Late blight',
+          },
+        ],
+      }),
+    )
+
+    const screen = await renderWithProviders(<ScoutingScreen />)
+
+    await screen.findByText('Late blight', {}, LOAD)
+    expect(screen.getByText('Scouting Log · 2')).toBeTruthy()
+    // One season for everything is the default reading — a heading over it
+    // would be decoration, so the flat log renders exactly as it did before.
+    expect(screen.queryByText(/2026$/)).toBeNull()
+    expect(screen.queryByText('Undated')).toBeNull()
+  })
 })
 
 /* ── Notification state ─────────────────────────────────────────────── */

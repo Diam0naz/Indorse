@@ -60,6 +60,8 @@ import { useLatestReportTimestamp } from '@/features/reports/useLatestReportTime
 import { useRewardReport } from '@/features/reports/useRewardReport'
 import { useSubmitReport } from '@/features/reports/useSubmitReport'
 import { mergeLogEvents, reportToScoutEvent } from '@/features/reports/chain-events'
+import { groupLogBySeason, shouldLabelSeasons } from '@/features/reports/season-log'
+import { seasonKey } from '@/features/farm/season'
 import { buildFieldsFromReports } from '@/features/scout/fields'
 import { getCurrentCoords } from '@/features/scout/location'
 import { sha256HexToBytes } from '@/features/scout/photo'
@@ -164,6 +166,17 @@ export default function ScoutingScreen() {
   const baseEvents: ScoutEvent[] =
     onChain && farm ? reportsQuery.reports.map((report) => reportToScoutEvent(report, farm)) : []
   const events = mergeLogEvents(log.events, baseEvents)
+
+  /**
+   * The same rows, folded into season sections. Every row carries its own
+   * timestamp and coordinates, so each season is DERIVED from where and when
+   * that observation happened (`features/farm/season.ts`, the Profile tab's
+   * source) — nothing is stored, and a row that predates `timestamp` is kept
+   * under an `undated` heading rather than dropped. Headers only earn their
+   * space once the log actually spans more than one group.
+   */
+  const seasonSections = groupLogBySeason(events)
+  const labelSeasons = shouldLabelSeasons(seasonSections)
 
   // Field cards follow the same source as the log: chain when the farm is
   // registered, empty otherwise — the empty states below carry no data.
@@ -595,178 +608,198 @@ export default function ScoutingScreen() {
                 />
               ) : null}
               <View style={styles.stack}>
-                {events.map((ev) => {
-                  const isOpen = expanded === ev.id
-                  // Rows on-chain (or cached from one) show anchored facts;
-                  // queued/failed captures are honest about being local only.
-                  const anchoredRow = !!ev.chainStatus || ev.anchorStatus === 'anchored'
-                  const pillStyle =
-                    ev.anchorStatus === 'queued'
-                      ? { backgroundColor: colors.amberDim, borderColor: colors.amber, color: colors.amber }
-                      : { backgroundColor: colors.dangerDim, borderColor: colors.danger, color: colors.dangerText }
-                  return (
-                    <Pressable
-                      key={ev.id}
-                      onPress={() => toggleEvent(ev.id)}
-                      style={[styles.eventCard, isOpen && styles.eventCardOpen]}
-                    >
-                      <View style={styles.eventHeader}>
-                        <View style={styles.eventHeaderMain}>
-                          <View style={styles.eventTags}>
-                            {ev.chainStatus ? null : <SeverityPill severity={ev.severity} />}
-                            {ev.anchorStatus === 'queued' || ev.anchorStatus === 'failed' ? (
-                              <View
-                                style={[
-                                  styles.anchorPill,
-                                  { backgroundColor: pillStyle.backgroundColor, borderColor: pillStyle.borderColor },
-                                ]}
-                              >
-                                <Text style={[styles.anchorPillText, { color: pillStyle.color }]}>
-                                  {t(ev.anchorStatus === 'queued' ? 'scout.anchor.queued' : 'scout.anchor.failed')}
-                                </Text>
+                {seasonSections.map((section) => (
+                  <View key={section.key} style={styles.seasonGroup}>
+                    {labelSeasons ? (
+                      <SectionLabel style={styles.seasonHeader}>
+                        {section.season
+                          ? t('scout.seasonGroup', {
+                              season: t(seasonKey(section.season.name)),
+                              year: section.season.year,
+                            })
+                          : t('scout.seasonUndated')}
+                      </SectionLabel>
+                    ) : null}
+                    {section.items.map((ev) => {
+                      const isOpen = expanded === ev.id
+                      // Rows on-chain (or cached from one) show anchored facts;
+                      // queued/failed captures are honest about being local only.
+                      const anchoredRow = !!ev.chainStatus || ev.anchorStatus === 'anchored'
+                      const pillStyle =
+                        ev.anchorStatus === 'queued'
+                          ? { backgroundColor: colors.amberDim, borderColor: colors.amber, color: colors.amber }
+                          : { backgroundColor: colors.dangerDim, borderColor: colors.danger, color: colors.dangerText }
+                      return (
+                        <Pressable
+                          key={ev.id}
+                          onPress={() => toggleEvent(ev.id)}
+                          style={[styles.eventCard, isOpen && styles.eventCardOpen]}
+                        >
+                          <View style={styles.eventHeader}>
+                            <View style={styles.eventHeaderMain}>
+                              <View style={styles.eventTags}>
+                                {ev.chainStatus ? null : <SeverityPill severity={ev.severity} />}
+                                {ev.anchorStatus === 'queued' || ev.anchorStatus === 'failed' ? (
+                                  <View
+                                    style={[
+                                      styles.anchorPill,
+                                      {
+                                        backgroundColor: pillStyle.backgroundColor,
+                                        borderColor: pillStyle.borderColor,
+                                      },
+                                    ]}
+                                  >
+                                    <Text style={[styles.anchorPillText, { color: pillStyle.color }]}>
+                                      {t(ev.anchorStatus === 'queued' ? 'scout.anchor.queued' : 'scout.anchor.failed')}
+                                    </Text>
+                                  </View>
+                                ) : null}
+                                <Text style={styles.eventDate}>{ev.date}</Text>
                               </View>
-                            ) : null}
-                            <Text style={styles.eventDate}>{ev.date}</Text>
-                          </View>
-                          <Text style={styles.eventDiagnosis}>{ev.diagnosis}</Text>
-                          <Text style={styles.eventMeta}>
-                            {ev.field} · {ev.crop}
-                          </Text>
-                        </View>
-                        {ev.chainStatus ? (
-                          <View style={[styles.statusPill, statusPalette(ev.chainStatus, colors).pill]}>
-                            <Text style={[styles.statusPillText, statusPalette(ev.chainStatus, colors).text]}>
-                              {t(STATUS_KEYS[ev.chainStatus])}
-                            </Text>
-                          </View>
-                        ) : (
-                          <View style={styles.eventConfidence}>
-                            <Text style={styles.eventConfidenceLabel}>{t('scout.conf')}</Text>
-                            <Text
-                              style={[
-                                styles.eventConfidenceValue,
-                                {
-                                  color:
-                                    ev.confidence > 0.85
-                                      ? colors.sageLight
-                                      : ev.confidence > 0.65
-                                        ? colors.warningText
-                                        : colors.skyLight,
-                                },
-                              ]}
-                            >
-                              {Math.round(ev.confidence * 100)}%
-                            </Text>
-                          </View>
-                        )}
-                      </View>
-
-                      {isOpen && (
-                        <View style={styles.eventDetail}>
-                          <Text style={styles.eventNotes}>{ev.notes}</Text>
-
-                          <View style={styles.gpsRow}>
-                            <Svg width={12} height={12} viewBox="0 0 12 12" fill="none">
-                              <Circle cx={6} cy={5} r={2.5} stroke={colors.sage} strokeWidth={1.2} />
-                              <Path d="M6 7.5L6 11" stroke={colors.sage} strokeWidth={1.2} strokeLinecap="round" />
-                            </Svg>
-                            <Text style={styles.gpsText}>
-                              {ev.lat.toFixed(4)}° N, {Math.abs(ev.lng).toFixed(4)}° W
-                            </Text>
-                          </View>
-
-                          <View style={styles.detailRow}>
-                            <View>
-                              <Text style={styles.detailLabel}>{t('scout.images')}</Text>
-                              <Text style={styles.detailValue}>
-                                {t(anchoredRow ? 'scout.imagesAnchored' : 'scout.imagesCaptured', { n: ev.images })}
+                              <Text style={styles.eventDiagnosis}>{ev.diagnosis}</Text>
+                              <Text style={styles.eventMeta}>
+                                {/* The identified plant when the model named one,
+                                else the (honest) crop placeholder — never a
+                                plant the model did not claim. */}
+                                {ev.field} · {ev.plant ?? ev.crop}
                               </Text>
                             </View>
-                            {ev.chainStatus ? null : (
-                              <View>
-                                <Text style={styles.detailLabel}>{t('scout.model')}</Text>
-                                <Text style={[styles.detailValue, { color: colors.sageLight }]}>PlantNet-v4.2</Text>
+                            {ev.chainStatus ? (
+                              <View style={[styles.statusPill, statusPalette(ev.chainStatus, colors).pill]}>
+                                <Text style={[styles.statusPillText, statusPalette(ev.chainStatus, colors).text]}>
+                                  {t(STATUS_KEYS[ev.chainStatus])}
+                                </Text>
+                              </View>
+                            ) : (
+                              <View style={styles.eventConfidence}>
+                                <Text style={styles.eventConfidenceLabel}>{t('scout.conf')}</Text>
+                                <Text
+                                  style={[
+                                    styles.eventConfidenceValue,
+                                    {
+                                      color:
+                                        ev.confidence > 0.85
+                                          ? colors.sageLight
+                                          : ev.confidence > 0.65
+                                            ? colors.warningText
+                                            : colors.skyLight,
+                                    },
+                                  ]}
+                                >
+                                  {Math.round(ev.confidence * 100)}%
+                                </Text>
                               </View>
                             )}
                           </View>
 
-                          {/* The evidence itself — thumbnails from the
+                          {isOpen && (
+                            <View style={styles.eventDetail}>
+                              <Text style={styles.eventNotes}>{ev.notes}</Text>
+
+                              <View style={styles.gpsRow}>
+                                <Svg width={12} height={12} viewBox="0 0 12 12" fill="none">
+                                  <Circle cx={6} cy={5} r={2.5} stroke={colors.sage} strokeWidth={1.2} />
+                                  <Path d="M6 7.5L6 11" stroke={colors.sage} strokeWidth={1.2} strokeLinecap="round" />
+                                </Svg>
+                                <Text style={styles.gpsText}>
+                                  {ev.lat.toFixed(4)}° N, {Math.abs(ev.lng).toFixed(4)}° W
+                                </Text>
+                              </View>
+
+                              <View style={styles.detailRow}>
+                                <View>
+                                  <Text style={styles.detailLabel}>{t('scout.images')}</Text>
+                                  <Text style={styles.detailValue}>
+                                    {t(anchoredRow ? 'scout.imagesAnchored' : 'scout.imagesCaptured', { n: ev.images })}
+                                  </Text>
+                                </View>
+                                {ev.chainStatus ? null : (
+                                  <View>
+                                    <Text style={styles.detailLabel}>{t('scout.model')}</Text>
+                                    <Text style={[styles.detailValue, { color: colors.sageLight }]}>PlantNet-v4.2</Text>
+                                  </View>
+                                )}
+                              </View>
+
+                              {/* The evidence itself — thumbnails from the
                               capture's persisted pixels (kept across
                               anchoring); tap for the full-screen viewer. */}
-                          <ScoutPhotoStrip uris={ev.photoUris ?? []} />
+                              <ScoutPhotoStrip uris={ev.photoUris ?? []} />
 
-                          <Text style={styles.detailLabel}>
-                            {anchoredRow ? t('scout.pda') : ev.anchor ? t('scout.photoDigest') : t('scout.tx')}
-                          </Text>
-                          <Text style={styles.txSig}>{ev.txSig}</Text>
+                              <Text style={styles.detailLabel}>
+                                {anchoredRow ? t('scout.pda') : ev.anchor ? t('scout.photoDigest') : t('scout.tx')}
+                              </Text>
+                              <Text style={styles.txSig}>{ev.txSig}</Text>
 
-                          {ev.anchorStatus === 'failed' ? (
-                            <Pressable
-                              style={styles.anchorRetry}
-                              onPress={() => {
-                                Haptics.selectionAsync()
-                                log.requeue(ev.id)
-                              }}
-                              accessibilityRole="button"
-                              accessibilityLabel={t('scout.anchor.retry')}
-                            >
-                              <Text style={styles.anchorRetryText}>{t('scout.anchor.retry')}</Text>
-                            </Pressable>
-                          ) : null}
+                              {ev.anchorStatus === 'failed' ? (
+                                <Pressable
+                                  style={styles.anchorRetry}
+                                  onPress={() => {
+                                    Haptics.selectionAsync()
+                                    log.requeue(ev.id)
+                                  }}
+                                  accessibilityRole="button"
+                                  accessibilityLabel={t('scout.anchor.retry')}
+                                >
+                                  <Text style={styles.anchorRetryText}>{t('scout.anchor.retry')}</Text>
+                                </Pressable>
+                              ) : null}
 
-                          {/* `Verified` is exactly the program's precondition
+                              {/* `Verified` is exactly the program's precondition
                               for `reward_report`, and `ev.id` is the report
                               address — the identity every chain row carries. */}
-                          {ev.chainStatus === 'verified' ? (
-                            <Pressable
-                              style={[styles.anchorRetry, claimReward.isPending ? { opacity: 0.6 } : null]}
-                              disabled={claimReward.isPending}
-                              onPress={() => {
-                                Haptics.selectionAsync()
-                                claimReward.mutate(ev.id)
-                              }}
-                              accessibilityRole="button"
-                              accessibilityLabel={t('scout.reward.claim')}
-                            >
-                              <Text style={styles.anchorRetryText}>
-                                {claimReward.isPending ? t('scout.reward.claiming') : t('scout.reward.claim')}
-                              </Text>
-                            </Pressable>
-                          ) : null}
-                          {/* Scoped by the input the mutation ran with, so a
+                              {ev.chainStatus === 'verified' ? (
+                                <Pressable
+                                  style={[styles.anchorRetry, claimReward.isPending ? { opacity: 0.6 } : null]}
+                                  disabled={claimReward.isPending}
+                                  onPress={() => {
+                                    Haptics.selectionAsync()
+                                    claimReward.mutate(ev.id)
+                                  }}
+                                  accessibilityRole="button"
+                                  accessibilityLabel={t('scout.reward.claim')}
+                                >
+                                  <Text style={styles.anchorRetryText}>
+                                    {claimReward.isPending ? t('scout.reward.claiming') : t('scout.reward.claim')}
+                                  </Text>
+                                </Pressable>
+                              ) : null}
+                              {/* Scoped by the input the mutation ran with, so a
                               failure on one claim can't bleed into another. */}
-                          {claimReward.isError && claimReward.variables === ev.id ? (
-                            <Text style={styles.claimError}>
-                              {claimReward.error instanceof Error
-                                ? claimReward.error.message
-                                : String(claimReward.error)}
-                            </Text>
-                          ) : null}
+                              {claimReward.isError && claimReward.variables === ev.id ? (
+                                <Text style={styles.claimError}>
+                                  {claimReward.error instanceof Error
+                                    ? claimReward.error.message
+                                    : String(claimReward.error)}
+                                </Text>
+                              ) : null}
 
-                          {/* Only rows the local store actually holds: a
+                              {/* Only rows the local store actually holds: a
                               chain-read row has nothing here to erase, and
                               offering the tap would be a lie. Deleting a
                               device-anchored row strips the local copy —
                               the chain's own record re-surfaces from the
                               fetch, exactly as the confirm promises. */}
-                          {log.events.some((row) => row.id === ev.id) ? (
-                            <Pressable
-                              style={styles.deleteBtn}
-                              onPress={() => {
-                                Haptics.selectionAsync()
-                                setPendingDelete(ev.id)
-                              }}
-                              accessibilityRole="button"
-                              accessibilityLabel={t('scout.deleteRow')}
-                            >
-                              <Text style={styles.deleteBtnText}>{t('scout.deleteRow')}</Text>
-                            </Pressable>
-                          ) : null}
-                        </View>
-                      )}
-                    </Pressable>
-                  )
-                })}
+                              {log.events.some((row) => row.id === ev.id) ? (
+                                <Pressable
+                                  style={styles.deleteBtn}
+                                  onPress={() => {
+                                    Haptics.selectionAsync()
+                                    setPendingDelete(ev.id)
+                                  }}
+                                  accessibilityRole="button"
+                                  accessibilityLabel={t('scout.deleteRow')}
+                                >
+                                  <Text style={styles.deleteBtnText}>{t('scout.deleteRow')}</Text>
+                                </Pressable>
+                              ) : null}
+                            </View>
+                          )}
+                        </Pressable>
+                      )
+                    })}
+                  </View>
+                ))}
               </View>
             </>
           )}
@@ -1044,6 +1077,16 @@ const makeStyles = (colors: Colors) =>
     },
     stack: {
       gap: 6,
+    },
+    // One season's rows — same spacing as the flat list, so grouping reads
+    // as headings appearing rather than the whole log reflowing.
+    seasonGroup: {
+      gap: 6,
+    },
+    // Headings only render once the log spans seasons (see shouldLabelSeasons).
+    seasonHeader: {
+      marginTop: spacing.sm,
+      marginBottom: 2,
     },
 
     // Field status

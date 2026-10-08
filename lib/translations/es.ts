@@ -143,6 +143,8 @@ export const es: Record<MessageKey, string> = {
   'scout.tile.fields': 'Lotes',
   'scout.fields': 'Estado de los lotes',
   'scout.log': 'Registro de scouts · {n}',
+  'scout.seasonGroup': '{season} {year}',
+  'scout.seasonUndated': 'Sin fecha',
   'scout.fab': 'Explorar lote',
   'scout.actions': 'Acciones de exploración',
   'scout.conf': 'Conf.',
