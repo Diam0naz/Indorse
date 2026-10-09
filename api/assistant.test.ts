@@ -40,7 +40,10 @@ describe('knowledge doc', () => {
     // exist would make the assistant confidently lie to a farmer.
     expect(KNOWLEDGE_DOC).not.toContain('api/weather')
     expect(KNOWLEDGE_DOC).toContain('No forecasts and no weather API')
-    expect(KNOWLEDGE_DOC).toContain('/api/grade')
+    // Grading is mounted, so it must still be described — as prose, not as the
+    // route that serves it. The doc is what a farmer reads.
+    expect(KNOWLEDGE_DOC).toContain('TWO independent models grade the batch record')
+    expect(KNOWLEDGE_DOC).not.toContain('/api/grade')
     expect(KNOWLEDGE_DOC).toContain('Ustilago maydis')
     expect(KNOWLEDGE_DOC).toContain('does NOT have')
   })
@@ -82,9 +85,11 @@ describe('knowledge doc', () => {
   })
 
   it('never routes a user to a surface that does not exist', () => {
-    // The app has no help pages, privacy policy or support channel anywhere in
-    // the tree — a fallback naming one would itself be an invention.
-    expect(KNOWLEDGE_DOC).toContain('No in-app help pages, no privacy policy')
+    // The tree has no help pages or support channel — a fallback naming one
+    // would itself be an invention. The one written policy it DOES have is
+    // the Terms & Privacy screen, so the doc must name that instead.
+    expect(KNOWLEDGE_DOC).toContain('No in-app help pages, no documentation screen and no support desk')
+    expect(KNOWLEDGE_DOC).toContain('Terms & Privacy screen is the only written policy')
     expect(KNOWLEDGE_DOC).not.toContain('in-app docs')
     expect(KNOWLEDGE_DOC).not.toContain('asking a human')
     expect(KNOWLEDGE_DOC).not.toContain('privacy policy or ask')
@@ -95,10 +100,13 @@ describe('knowledge doc', () => {
 
   it('states that on-chain GPS is public instead of leaving privacy to the model', () => {
     // "Stored on-chain" without "publicly readable" invites a reassuring
-    // privacy claim the model cannot support.
+    // privacy claim the model cannot support. With the Privacy Policy now in
+    // the doc, the no-selling line comes from that policy rather than from
+    // a refusal to say either way.
     expect(KNOWLEDGE_DOC).toContain('latitude and')
     expect(KNOWLEDGE_DOC).toContain('On-chain accounts are public')
-    expect(KNOWLEDGE_DOC).toContain('This document says nothing about selling, sharing or profiling')
+    expect(KNOWLEDGE_DOC).toContain('indorse does not sell personal data')
+    expect(KNOWLEDGE_DOC).toContain('Terms of Use and Privacy Policy:')
   })
 
   it('personalizes from context and omits absent fields', () => {

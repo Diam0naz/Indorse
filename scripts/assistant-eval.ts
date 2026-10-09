@@ -107,16 +107,9 @@ const CASES: EvalCase[] = [
   },
   {
     q: 'Where do I read the in-app privacy policy?',
-    why: 'no privacy policy, help page or support desk exists anywhere in the app',
-    invented: ['in the privacy policy', 'settings has a privacy', 'read the privacy policy at'],
-    honest: [
-      'no privacy policy',
-      'does not have',
-      'do not have',
-      'do not know',
-      "don't know",
-      'not something this guide',
-    ],
+    why: 'the app ships a Terms & Privacy screen — the doc must point at it, not deny a policy exists',
+    invented: ['privacy policy does not exist', 'there is no privacy policy', 'we do not publish a privacy policy'],
+    required: ['terms & privacy', 'terms and privacy', 'settings'],
   },
 ]
 
@@ -138,7 +131,10 @@ function makeRes() {
 
 /** Returns the list of problems — empty means the reply passed. */
 function judge(c: EvalCase, reply: string): string[] {
-  const text = reply.toLowerCase()
+  // The model writes typographic apostrophes ("don’t"), the cases are typed
+  // with straight ones ("don't"). Without normalising, an honest hedge fails
+  // on the quote style instead of on what it actually said.
+  const text = reply.toLowerCase().replaceAll('’', "'")
   const problems: string[] = []
 
   for (const phrase of c.invented) {
@@ -161,9 +157,11 @@ function list(phrases: string[]): string {
 }
 
 /**
- * Ask the live handler one question, backing off on a quota wall.
- * Groq enforces its own per-minute limit on top of ours, and a burst of
- * questions in a row will trip it — which is not a doc failure.
+ * Ask the live handler one question, backing off on a quota wall or a
+ * transient upstream error. Groq enforces its own per-minute limit on top of
+ * ours, and a burst of questions in a row will trip it; a 5xx means no answer
+ * was produced at all, so there is nothing to judge the doc against — without
+ * the retry a provider wobble gets reported as a knowledge failure.
  */
 async function ask(question: string, attempts = 3): Promise<{ reply: string | null; error: string | null }> {
   let last = 'unknown error'
@@ -174,7 +172,10 @@ async function ask(question: string, attempts = 3): Promise<{ reply: string | nu
     const payload = res.payload as { reply?: unknown; error?: unknown; code?: unknown } | undefined
     if (res.statusCode === 200 && typeof payload?.reply === 'string') return { reply: payload.reply, error: null }
     last = `${res.statusCode} ${String(payload?.error ?? payload?.code ?? 'unknown')}`
-    if (res.statusCode !== 429) break
+    // 429 is the quota wall, 5xx is the provider blinking — both are worth
+    // waiting out. Anything else (a 400 on our own question) is not.
+    const worthRetrying = res.statusCode === 429 || (res.statusCode >= 500 && res.statusCode < 600)
+    if (!worthRetrying) break
   }
   return { reply: null, error: last }
 }
