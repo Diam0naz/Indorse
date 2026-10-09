@@ -22,6 +22,7 @@ commands at the bottom).
 | `/(tabs)/rewards`       | Profile    | Operator identity, SOL/USDC balances, farm details, recent on-chain activity, settings list (admin entry only for `config.admin`)                                            |
 | `/onboarding`, `/setup` | —          | 3-slide intro + wallet connect; profile-driven setup wizard                                                                                                                  |
 | `settings/*`            | Settings   | account · **admin** (on-chain console) · export (CSV) · language (en/es/fr) · network (cluster) · notifications · security · theme                                           |
+| `/legal`                | Settings   | Terms of Use + Privacy Policy (`constants/legal.ts`), tabbed; reached from the settings list and the onboarding consent checkbox                                             |
 
 `app/index.tsx` dispatches: new user → `/onboarding`, returning user → `/(tabs)`.
 

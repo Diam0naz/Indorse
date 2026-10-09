@@ -149,6 +149,213 @@ npm run android
 
 ---
 
+## User guide
+
+**What it is.** indorse is a Solana app for smallholder farmers. You
+photograph a crop to diagnose it, keep a farm record on the chain, and buy
+parametric weather cover that pays on rainfall, not on damage.
+
+**The four tabs** are **Scout**, **Provenance**, **Weather** and **Profile**.
+A floating robot head sits bottom-left over every tab — that is **Ask
+indorse**, the in-app guide. It explains how things work and never moves
+money; how it answers is documented under
+[Ask indorse](#ask-indorse--a-grounded-assistant-not-an-oracle).
+
+### Wallet connect and sign-in
+
+**What it does.** A wallet lets the app ask _you_ to sign each action —
+registering a farm, logging a harvest, underwriting cover. Your keys stay in
+your wallet app; indorse never holds them.
+
+**Where.** Setup step **Connect your wallet**, the **Connect wallet** card on
+the Scout tab, the wallet card on **Profile**, or **Settings → Wallet &
+Security**.
+
+**Steps.** Tap **Connect Wallet**, pick your wallet, approve the connection in
+the wallet's own window. **Disconnect** is on the same button; **Log out** on
+Profile disconnects and re-arms your passcode. Mobile Wallet Adapter is
+Android-only, so this needs an Android device or emulator with a wallet app
+installed.
+
+**Device verification (Sign in with Solana).** With a wallet connected,
+**Settings → Wallet & Security → Device verification** asks you to sign a
+message and the server checks that signature against its device list. Tap
+**Verify this device** and approve; the row reads **✓ Device verified** or
+**Not on the allowlist yet**.
+
+**The Seeker / SGT check.** This runs on the server, not on your screen. The
+wallet is checked against the device allowlist first; if it isn't listed, the
+server checks whether it holds a **Seeker Genesis Token** — the on-chain proof
+that you own a Seeker phone. There is no separate "SGT" screen: the result
+simply appears as the verification outcome, and it isn't stored or used to
+gate anything else in the app. What a Seeker device _does_ show you is a
+**Seed Vault secured** chip in the camera, the **Seeker Midnight** theme, and
+a higher cover ceiling.
+
+**Cover ceilings.** Cover is capped per device: **$100** at the base tier,
+**$250** for verified operators, **$500** on a Seeker. Your tier isn't
+displayed on any screen — you only meet the limit if you try to underwrite
+above it, and the form tells you the exact figure.
+
+### Email verification
+
+**What it does.** Confirms an email bound to your wallet so you can recover a
+forgotten passcode. It is _not_ used for notifications.
+
+**Where.** **Settings → Wallet & Security**, with a wallet connected.
+
+**Steps.** **Verify email** → enter the address → **Send a new code** → type
+the 6-digit code → **Email verified**. Codes last 10 minutes and allow 5
+attempts. You're also offered a recovery email when creating a passcode
+(**Skip for now** is available); after a lockout, **Forgot passcode? →
+Recover with email** sends a code there.
+
+### Farms
+
+**What it does.** Registers your farm on the chain and gives you a Provenance
+record.
+
+**Where.** Setup step 3, or the register card on the Scout tab.
+
+**Steps.** Enter **Farm name**, **Latitude** and **Longitude** (or tap **Use
+my location**), optionally **Acres** → **Create farm**. There's no crop field
+at registration — crops come from your scout reports. Without a connected
+wallet the farm is saved to the device only. Several farms are allowed: open
+**Your farms** and tap **Add farm**.
+
+The **Provenance** tab shows your **provenance score** (verified scouting
+reports over the total), the escrow card, your on-chain addresses with
+**Copy**, and **Delete farm**.
+
+### Scouting and scout reports
+
+**What it does.** Diagnoses a plant from up to **5 photos** — disease, pest or
+stress — with severity, a confidence percentage, plain notes, and the plant's
+common and botanical name plus the causal agent's scientific name when it can
+be identified.
+
+**Where.** The **Scout** tab.
+
+**Steps.** Open the camera, take shots (the counter reads _n / 5_) →
+**Analyze crop** → read the result → **Submit to Chain** to record it.
+**Retake** discards, **Retry analysis** re-runs, and **View scouting log**
+jumps to the list.
+
+**Where reports live.** The **Scouting Log** section on the Scout tab — not
+the Weather tab. Each row shows the date, diagnosis, field and crop, GPS,
+image count, and a status: **Pending**, **Verified**, **Rejected** or
+**Rewarded**. Verification is done by a bonded verifier set on the chain;
+there's no in-app button to verify or reject a report.
+
+### Harvest and escrow
+
+**Logging a batch.** On Provenance, **Log a harvest batch** → **Crop**,
+**Quantity (kg)**, coordinates (or **Use my location**), optional **Notes** →
+**Log batch**.
+
+**The AI grade.** Two independent models grade the batch A–D. You see the
+grade and confidence in the logging preview, and whether the models agreed; if
+they disagree the batch is flagged for a human verifier. If grading is
+unavailable the button reads **Submit without a grade** — the batch is
+honestly ungraded, not average. The grade is shown at logging time only.
+
+**Escrow.** **Set up escrow** → **Amount (USDC)** and **Lock (days)** →
+**Fund escrow**. On Provenance, **Release funds** is the farmer's action once
+funded, **Cancel & refund** is the buyer's before the lock expires, and
+otherwise _No conditions attached — funds release on delivery_.
+
+### Weather cover (parametric insurance)
+
+**What it does.** A parametric policy pays out in USDC when total season
+rainfall falls **below** your trigger — a drought line. It's a fixed rule,
+not an assessment: at or above the trigger the policy expires unpaid.
+
+**Where.** The **Weather** tab (marked **β**).
+
+**Steps.** **Underwrite policy** → **Crop**, **Coverage (USDC)**, **Premium
+(USDC)**, **Rainfall trigger (mm)**, **Season start**, **Season end** →
+**Underwrite policy**. The form enforces: premium at least 1% of coverage and
+not above it, trigger no more than 1500 mm, season end after start, start
+today or later, and at least 60 days between seasons.
+
+**Reading the screen.** The policy card shows **Max Payout** and **Premium**,
+an **Active** or **Expired** chip, and _Payout triggers if season rainfall
+falls below N mm_. **Live Oracle Readings** compares season rainfall against
+the trigger, and the verdict reads **Payout condition met — N mm below
+trigger** or **No payout — N mm above trigger**, plus **Days Left**. Rainfall
+comes from an on-chain oracle — there are no forecasts or weather feeds — and
+a reading shows as **—** until enough readers agree and the median is frozen.
+
+**Revoke policy** is available while active and before the season ends; the
+premium returns to you. After the season, settlement and closing happen from
+the admin console, not this screen.
+
+### Rewards
+
+**What it does.** Once a scout report is **Verified**, its reward can be
+claimed.
+
+**Where.** Expand a report row on the **Scout** tab — **Claim SKR reward**
+appears only on a verified report.
+
+**Steps.** Tap it and approve the transaction. If it's already been taken you
+see _That reward has already been claimed_; if it isn't verified yet, _That
+report is not verified yet_. The amount is fixed by the program — the same for
+every report, farm and wallet — and always goes to the report's own reporter.
+There are no bounties, staking or loans.
+
+### Discover (farm directory)
+
+**What it does.** Shows other farms near you, ranked nearest first, excluding
+your own.
+
+**Where.** The **Discover** section on the **Scout** tab, available whether or
+not you have a farm.
+
+**Each row** shows the farm name, a score chip, distance, verified-of-total
+reports (or _No reports yet_), and how many await verification. Tap one for
+**Distance**, **Coordinates**, **Reports**, **Verified**, **Awaiting
+verification** and **Last report**, then **Scout this farm** to target it —
+the camera shows _Scouting \[name\]_ and **Back to my farm** returns to your
+own. If the directory is empty or unreachable the section says so rather than
+showing stale data.
+
+### Admin console
+
+**What it does.** On-chain administration, for the wallet stored as the app's
+admin — the check is the program itself, not just a hidden menu.
+
+**Where.** **Profile → Settings → Admin Console**, shown only for that wallet.
+Anyone else gets a read-only screen saying so.
+
+**Sections.** **Identity**; **Roles** (rotate admin, verifier, oracle);
+**Treasury** (balance and **Withdraw**); **Settlement** (**Settle policy**,
+**Close settled policy**, once the season has ended and the oracle is
+finalised); **Oracle seats** (add readers, submit readings, see the tally);
+**Verifier seats** (add, release, slash, reconfigure); and **API admin**
+(**Refresh API status**, plus the dev and operator allowlists). Every
+destructive action asks you to type its instruction name first, and each admin
+call is signed fresh from your wallet — no session is kept on the device.
+
+Screen-by-screen developer detail for the rest of the settings is under
+[Settings](#settings).
+
+### First run
+
+A three-slide intro leads to a welcome screen where **Enter App** is gated
+behind a checkbox agreeing to the [Terms of Use](/legal?tab=terms) and
+[Privacy Policy](/legal?tab=privacy); both names inside the sentence open
+their tab. Onboarding only ever shows to first-time users, so that tick is
+the one and only time consent is asked for.
+
+Beyond the slides sits a six-step wizard — **Your profile**,
+**Connect your wallet**, your farm, **Camera & location**, **Protect the app**
+(the passcode), and **You're all set**. Every step has **Skip for now** and
+**Back**, and the last button reads **Start scouting**. Anything skipped can
+be finished later from the **Complete your setup** banner on the Profile tab.
+
+---
+
 ## Build process
 
 ### Quality gates
@@ -160,7 +367,7 @@ Every change lands only with all four gates green, run in this order:
 | Types  | `npx tsc --noEmit`       | missing i18n keys (es/fr are typed `Record<MessageKey, string>`), hook/type drift |
 | Format | `npx prettier --check .` | the whole tree — app, tests, `api/`, even `deck/` HTML and Markdown               |
 | Lint   | `npx expo lint`          | React hooks rules, dead code                                                      |
-| Tests  | `npx vitest run`         | behaviour — 87 files, 762 passing + 1 skipped (the opt-in smoke test)             |
+| Tests  | `npx vitest run`         | behaviour — 90 files, 809 passing + 1 skipped (the opt-in smoke test)             |
 
 `npm run ci` chains the same checks and finishes with an Android prebuild, so
 it also catches anything Metro refuses to bundle.
@@ -866,7 +1073,7 @@ and its assessment can never diverge.
 
 ### Ask indorse — a grounded assistant, not an oracle
 
-One floating `?` chip (`components/help-chip.tsx`) sits over all four tabs
+One floating robot chip (`components/help-chip.tsx`) sits over all four tabs
 (bottom-left, clear of the Scout dock) and opens a chat sheet
 (`components/assistant-sheet.tsx`) that sends the screen's question, this
 farm's state and the active policy figures.
@@ -874,7 +1081,8 @@ farm's state and the active policy figures.
 - **Knowledge first, doc second** (`api/_lib/knowledge.ts`): one
   hand-written document audited line by line against what is actually
   mounted — a test asserts it never names unmounted features (no
-  `/api/weather`, no live SGT).
+  `api/weather`) and never quotes an internal route path, because the doc
+  is what a farmer reads.
 - **Context, honestly partial**: route, farm existence/name, policy
   status/cover/trigger/finalized-rainfall only — allowlisted and clipped
   server-side, and fields are omitted while their chain query is still
@@ -1048,17 +1256,30 @@ const { account, client, connect, disconnect, sendTransactions, signMessages } =
 
 ## Settings
 
-The Profile tab's **Settings** card opens seven routes under `app/settings/`:
+The Profile tab's **Settings** card opens eight screens: seven routes under
+`app/settings/`, plus `/legal`:
 
-| Screen             | What it does                                                                                                                       |
-| ------------------ | ---------------------------------------------------------------------------------------------------------------------------------- |
-| Notifications      | Push master switch, unread badge, per-category toggles (diagnosis / escrow / weather / system), quiet hours                        |
-| Wallet & Security  | Session status, disconnect, app passcode (change / forgot), confirm-signatures / biometrics, **hide balances**, auto-lock          |
-| Account            | Account & local data — spells out exactly what "delete" erases (on-device stores + wallet session; on-chain records are untouched) |
-| Network            | mainnet / devnet / testnet / localnet / custom RPC with a real `getSlot` health check (latency + slot)                             |
-| Export Farm Record | Live chain record → flat CSV preview with row counts → share via `expo-sharing` or copy to clipboard                               |
-| Language           | English / Español / Français                                                                                                       |
-| Theme              | System / Dark Field / Light Paper                                                                                                  |
+| Screen             | What it does                                                                                                                               |
+| ------------------ | ------------------------------------------------------------------------------------------------------------------------------------------ |
+| Notifications      | Push master switch, unread badge, per-category toggles (diagnosis / escrow / weather / system), quiet hours                                |
+| Wallet & Security  | Session status, disconnect, app passcode (change / forgot), confirm-signatures / biometrics, **hide balances**, auto-lock                  |
+| Account            | Account & local data — spells out exactly what "delete" erases (on-device stores + wallet session; on-chain records are untouched)         |
+| Network            | mainnet / devnet / testnet / localnet / custom RPC with a real `getSlot` health check (latency + slot)                                     |
+| Export Farm Record | Live chain record → flat CSV preview with row counts → share via `expo-sharing` or copy to clipboard                                       |
+| Language           | English / Español / Français                                                                                                               |
+| Theme              | System / Dark Field / Light Paper                                                                                                          |
+| Terms & Privacy    | Terms of Use and Privacy Policy with a tab switch, version and date stamped on every screen — `app/legal.tsx` renders `constants/legal.ts` |
+
+**Terms & Privacy** — `constants/legal.ts` holds both documents as plain data,
+so the wording lives in one place; the screen only lays it out. The wording
+describes what indorse does today: if a data flow changes, edit it there, bump
+`LEGAL_VERSION` / `LEGAL_UPDATED`, and keep `api/_lib/knowledge.ts` in step
+(the assistant's answers about legal text come from that file, not from a
+read of this one). Consent is collected once, on the onboarding welcome screen —
+**Enter App** stays behind an **"I have read and agree to the Terms of Use and
+Privacy Policy"** checkbox whose two document names are live links to their
+tabs. `OPERATOR_NAME` and `GOVERNING_LAW` are filled in; `CONTACT_EMAIL` still
+ships as a visible `REPLACE:` placeholder in all three places it is printed.
 
 Everything the screens edit lives in `components/settings-provider.tsx` as one
 AsyncStorage document, so other parts of the app react to it: the notification
