@@ -65,6 +65,11 @@ export const en = {
   'onb.s3.tag': 'SPL Rewards',
   'onb.s3.title': 'Earn SPL Rewards',
   'onb.s3.body': 'Every verified report earns you SPL tokens — direct to your Solana wallet.',
+  'onb.consent': 'I have read and agree to the',
+  'onb.consentJoin': 'and',
+  'onb.consentTerms': 'Terms of Use',
+  'onb.consentPrivacy': 'Privacy Policy',
+  'onb.consentRequired': 'Tick the box above to continue.',
 
   /* ── Setup wizard ─────────────────────────────────────── */
   'setup.step': 'Step {n} of {total}',
@@ -233,6 +238,7 @@ export const en = {
   'scout.cam.reviewing': 'Reviewing {n} photos with the AI model…',
   'scout.cam.confidence': '{pct}% confidence',
   'scout.cam.needDiagnosis': 'No diagnosis yet — retry the analysis before submitting.',
+  'scout.cam.photosTooLarge': 'These photos are too large to send — retake with fewer shots.',
   'scout.cam.retry': 'Retry analysis',
   'scout.cam.hintReady': 'All {n} shots go to the AI — tap Analyze crop when ready.',
   'scout.cam.filed': 'Report filed',
@@ -427,6 +433,14 @@ export const en = {
   'settings.theme': 'Theme',
   'settings.admin': 'Admin Console',
   'settings.back': 'Back',
+  'settings.legal': 'Terms & Privacy',
+
+  /* ── Terms & Privacy ────────────────────────────────────── */
+  'legal.title': 'Terms & Privacy',
+  'legal.version': 'Version',
+  'legal.updated': 'Updated',
+  'legal.termsTab': 'Terms of Use',
+  'legal.privacyTab': 'Privacy Policy',
 
   /* ── Account & local data ─────────────────────────────── */
   'account.title': 'Account & Local Data',

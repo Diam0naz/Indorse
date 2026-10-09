@@ -61,6 +61,11 @@ export const es: Record<MessageKey, string> = {
   'onb.s3.tag': 'Recompensas SPL',
   'onb.s3.title': 'Gana recompensas SPL',
   'onb.s3.body': 'Cada informe verificado te entrega tokens SPL — directos a tu billetera Solana.',
+  'onb.consent': 'He leído y acepto las',
+  'onb.consentJoin': 'y',
+  'onb.consentTerms': 'Condiciones de uso',
+  'onb.consentPrivacy': 'Política de privacidad',
+  'onb.consentRequired': 'Marca la casilla para continuar.',
 
   /* ── Asistente de configuración ───────────────────────── */
   'setup.step': 'Paso {n} de {total}',
@@ -232,6 +237,7 @@ export const es: Record<MessageKey, string> = {
   'scout.cam.reviewing': 'Revisando {n} fotos con el modelo de IA…',
   'scout.cam.confidence': '{pct}% de confianza',
   'scout.cam.needDiagnosis': 'Sin diagnóstico todavía — repite el análisis antes de enviar.',
+  'scout.cam.photosTooLarge': 'Estas fotos son demasiado grandes para enviarlas — vuelve a capturar con menos tomas.',
   'scout.cam.retry': 'Reintentar análisis',
   'scout.cam.hintReady': 'Las {n} fotos van a la IA — pulsa Analizar cultivo cuando estés listo.',
   'scout.cam.filed': 'Informe enviado',
@@ -427,6 +433,14 @@ export const es: Record<MessageKey, string> = {
   'settings.theme': 'Tema',
   'settings.admin': 'Consola de administración',
   'settings.back': 'Volver',
+  'settings.legal': 'Condiciones y privacidad',
+
+  /* ── Terms & Privacy ────────────────────────────────────── */
+  'legal.title': 'Condiciones y privacidad',
+  'legal.version': 'Versión',
+  'legal.updated': 'Actualizado',
+  'legal.termsTab': 'Condiciones de uso',
+  'legal.privacyTab': 'Política de privacidad',
 
   /* ── Account & local data ─────────────────────────────── */
   'account.title': 'Cuenta y datos locales',

@@ -54,6 +54,7 @@ const SETTINGS: { icon: string; key: MessageKey; route: Href }[] = [
   { icon: 'clipboard-list', key: 'settings.export', route: '/settings/export' },
   { icon: 'globe-americas', key: 'settings.language', route: '/settings/language' },
   { icon: 'palette', key: 'settings.theme', route: '/settings/theme' },
+  { icon: 'file-alt', key: 'settings.legal', route: '/legal' },
 ]
 
 /**

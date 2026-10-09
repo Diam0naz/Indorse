@@ -61,6 +61,11 @@ export const fr: Record<MessageKey, string> = {
   'onb.s3.tag': 'Récompenses SPL',
   'onb.s3.title': 'Gagnez des SPL',
   'onb.s3.body': 'Chaque rapport vérifié rapporte des tokens SPL — directement dans votre portefeuille.',
+  'onb.consent': 'J’ai lu et j’accepte les',
+  'onb.consentJoin': 'et',
+  'onb.consentTerms': 'Conditions d’utilisation',
+  'onb.consentPrivacy': 'Politique de confidentialité',
+  'onb.consentRequired': 'Cochez la case pour continuer.',
 
   /* ── Assistant de configuration ───────────────────────── */
   'setup.step': 'Étape {n} sur {total}',
@@ -233,6 +238,7 @@ export const fr: Record<MessageKey, string> = {
   'scout.cam.reviewing': 'Examen de {n} photos par le modèle d’IA…',
   'scout.cam.confidence': '{pct}% de confiance',
   'scout.cam.needDiagnosis': 'Pas encore de diagnostic — relancez l’analyse avant d’envoyer.',
+  'scout.cam.photosTooLarge': 'Ces photos sont trop volumineuses pour être envoyées — reprenez avec moins de prises.',
   'scout.cam.retry': 'Réessayer l’analyse',
   'scout.cam.hintReady': 'Les {n} photos partent à l’IA — touchez Analyser la culture quand vous êtes prêt.',
   'scout.cam.filed': 'Rapport transmis',
@@ -429,6 +435,14 @@ export const fr: Record<MessageKey, string> = {
   'settings.theme': 'Thème',
   'settings.admin': 'Console d’administration',
   'settings.back': 'Retour',
+  'settings.legal': 'Conditions et confidentialité',
+
+  /* ── Terms & Privacy ────────────────────────────────────── */
+  'legal.title': 'Conditions et confidentialité',
+  'legal.version': 'Version',
+  'legal.updated': 'Mis à jour',
+  'legal.termsTab': 'Conditions d’utilisation',
+  'legal.privacyTab': 'Politique de confidentialité',
 
   /* ── Account & local data ─────────────────────────────── */
   'account.title': 'Compte et données locales',

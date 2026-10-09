@@ -6,7 +6,7 @@
  * from the Profile tab instead.
  */
 
-import { Dimensions, ScrollView, Text, TouchableOpacity, View } from 'react-native'
+import { Dimensions, Pressable, ScrollView, Text, TouchableOpacity, View } from 'react-native'
 import { SafeAreaView } from 'react-native-safe-area-context'
 import { useRef, useState, useEffect } from 'react'
 import Svg, { Circle, Path } from 'react-native-svg'
@@ -47,6 +47,13 @@ export default function OnboardingScreen() {
   const styles = makeStyles(colors)
   const t = useT()
 
+  // One-time consent. Onboarding only ever shows to first-time users (see
+  // app/index.tsx), so this is the only screen where the Terms of Use and
+  // Privacy Policy can be accepted — Enter App stays behind the box.
+  const [consent, setConsent] = useState(false)
+  const [consentHint, setConsentHint] = useState(false)
+  const consentLabel = `${t('onb.consent')} ${t('onb.consentTerms')} ${t('onb.consentJoin')} ${t('onb.consentPrivacy')}.`
+
   const isLastSlide = activeSlide === SLIDES.length - 1
 
   // Auto-hide splash after SPLASH_MS
@@ -76,6 +83,13 @@ export default function OnboardingScreen() {
   }
 
   function handleEnter() {
+    // Consent is a gate, not a decoration: a tap without the box ticked
+    // nudges instead of navigating, so nobody lands in the app unagreed.
+    if (!consent) {
+      setConsentHint(true)
+      Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error)
+      return
+    }
     Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success)
     router.replace('/(tabs)')
   }
@@ -103,6 +117,46 @@ export default function OnboardingScreen() {
             <Text style={styles.welcomeBody}>{t('onb.welcomeBody')}</Text>
           </View>
           <View style={styles.welcomeActions}>
+            {/* Consent — the Terms of Use and Privacy Policy, accepted once. */}
+            <Pressable
+              accessibilityRole="checkbox"
+              accessibilityState={{ checked: consent }}
+              accessibilityLabel={consentLabel}
+              onPress={() => {
+                Haptics.selectionAsync()
+                setConsent((current) => !current)
+                setConsentHint(false)
+              }}
+              style={styles.consentRow}
+            >
+              <View style={[styles.consentBox, consent && styles.consentBoxOn]}>
+                {consent ? (
+                  <Svg width={12} height={12} viewBox="0 0 12 12" fill="none">
+                    <Path
+                      d="M2.4 6.3 4.9 8.8 9.6 3.4"
+                      stroke={colors.surface}
+                      strokeWidth={1.8}
+                      strokeLinecap="round"
+                      strokeLinejoin="round"
+                    />
+                  </Svg>
+                ) : null}
+              </View>
+              <Text style={styles.consentText}>
+                {t('onb.consent')}{' '}
+                <Text style={styles.consentLink} onPress={() => router.push('/legal?tab=terms')}>
+                  {t('onb.consentTerms')}
+                </Text>{' '}
+                {t('onb.consentJoin')}{' '}
+                <Text style={styles.consentLink} onPress={() => router.push('/legal?tab=privacy')}>
+                  {t('onb.consentPrivacy')}
+                </Text>
+                .
+              </Text>
+            </Pressable>
+
+            {consentHint ? <Text style={styles.consentHint}>{t('onb.consentRequired')}</Text> : null}
+
             <TouchableOpacity
               style={styles.nextBtn}
               onPress={handleEnter}
@@ -451,6 +505,52 @@ const makeStyles = (colors: Colors) =>
     welcomeActions: {
       width: '100%',
       alignItems: 'center',
+    },
+
+    // Consent checkbox — sits above Enter App and shares its full width.
+    consentRow: {
+      width: '100%',
+      flexDirection: 'row',
+      alignItems: 'flex-start',
+      gap: spacing.md,
+      backgroundColor: colors.surfaceAlt,
+      borderWidth: 1,
+      borderColor: colors.border,
+      borderRadius: radii.lg,
+      padding: spacing.md,
+      marginBottom: spacing.lg,
+    },
+    consentBox: {
+      width: 22,
+      height: 22,
+      borderRadius: radii.sm,
+      borderWidth: 1.5,
+      borderColor: colors.borderMid,
+      alignItems: 'center',
+      justifyContent: 'center',
+      backgroundColor: colors.surface,
+    },
+    consentBoxOn: {
+      backgroundColor: colors.amber,
+      borderColor: colors.amber,
+    },
+    consentText: {
+      flex: 1,
+      fontSize: fontSizes.sm,
+      lineHeight: 20,
+      color: colors.textSecondary,
+    },
+    consentLink: {
+      color: colors.amber,
+      fontWeight: fontWeights.semibold,
+      textDecorationLine: 'underline',
+    },
+    consentHint: {
+      width: '100%',
+      fontSize: fontSizes.xs,
+      color: colors.danger,
+      textAlign: 'center',
+      marginBottom: spacing.sm,
     },
 
     // CTA — bottom pinned under the slides
