@@ -121,8 +121,24 @@ interface ChatProvider {
 const GROQ_CHAT_URL = 'https://api.groq.com/openai/v1/chat/completions'
 const OPENAI_CHAT_URL = 'https://api.openai.com/v1/chat/completions'
 
+/**
+ * Wall-clock budget shared by the Groq → OpenAI failover. Sits under the app's
+ * client deadline (`DEFAULT_ASSISTANT_TIMEOUT_MS`, 30 s) so a slow primary
+ * still yields a reply instead of the sheet aborting mid-failover — with two
+ * independent 30 s provider windows the fallback could never finish in time.
+ */
+export const ASSISTANT_TOTAL_BUDGET_MS = 26_000
+
+/** Primary ceiling — leaves the bulk of the shared budget to the failover. */
+export const ASSISTANT_PRIMARY_BUDGET_MS = 12_000
+
 /** Call an OpenAI-compatible chat endpoint and return the raw reply text. */
-async function chatCompletion(system: string, user: string, provider: ChatProvider): Promise<string> {
+async function chatCompletion(
+  system: string,
+  user: string,
+  provider: ChatProvider,
+  timeoutMs: number,
+): Promise<string> {
   let response: Response
   try {
     response = await fetch(provider.baseUrl, {
@@ -140,13 +156,13 @@ async function chatCompletion(system: string, user: string, provider: ChatProvid
         temperature: 0,
         max_completion_tokens: 800,
       }),
-      signal: AbortSignal.timeout(30_000),
+      signal: AbortSignal.timeout(timeoutMs),
     })
   } catch (error) {
     const timedOut = error instanceof Error && (error.name === 'TimeoutError' || error.name === 'AbortError')
     throw new ClassificationError(
       timedOut ? 'timeout' : 'network',
-      timedOut ? 'Assistant request timed out after 30000ms' : 'Assistant request failed',
+      timedOut ? `Assistant request timed out after ${timeoutMs}ms` : 'Assistant request failed',
     )
   }
 
@@ -207,32 +223,49 @@ export default async function handler(req: ProxyRequest, res: ProxyResponse): Pr
     // Ordered failover: Groq answers when healthy, OpenAI takes over on
     // provider-side failures (quota wall, outage, dead key); a total outage
     // reports the primary's error unchanged (see _lib/balance.ts).
+    // One shared budget (see _lib/balance.ts): the primary is capped so it
+    // cannot consume the invocation, and the fallback spends whatever is left
+    // — all of it under the app's 30 s client deadline.
     const attempts: ProviderAttempt<string>[] = []
     if (groqKey) {
       attempts.push({
         name: 'groq',
-        run: () =>
-          chatCompletion(system, message, {
-            label: 'Groq',
-            baseUrl: GROQ_CHAT_URL,
-            apiKey: groqKey,
-            model: process.env.GROQ_MODEL ?? DEFAULT_GROQ_MODEL,
-          }),
+        budgetMs: ASSISTANT_PRIMARY_BUDGET_MS,
+        run: (timeoutMs) =>
+          chatCompletion(
+            system,
+            message,
+            {
+              label: 'Groq',
+              baseUrl: GROQ_CHAT_URL,
+              apiKey: groqKey,
+              model: process.env.GROQ_MODEL ?? DEFAULT_GROQ_MODEL,
+            },
+            timeoutMs,
+          ),
       })
     }
     if (openaiKey) {
       attempts.push({
         name: 'openai',
-        run: () =>
-          chatCompletion(system, message, {
-            label: 'OpenAI',
-            baseUrl: OPENAI_CHAT_URL,
-            apiKey: openaiKey,
-            model: process.env.OPENAI_ASSISTANT_MODEL ?? DEFAULT_VISION_MODEL,
-          }),
+        // No cap: the failover gets whatever the primary left unused.
+        run: (timeoutMs) =>
+          chatCompletion(
+            system,
+            message,
+            {
+              label: 'OpenAI',
+              baseUrl: OPENAI_CHAT_URL,
+              apiKey: openaiKey,
+              model: process.env.OPENAI_ASSISTANT_MODEL ?? DEFAULT_VISION_MODEL,
+            },
+            timeoutMs,
+          ),
       })
     }
-    const { value: rawReply, firstError } = await balanceProviders(attempts)
+    const { value: rawReply, firstError } = await balanceProviders(attempts, {
+      totalMs: ASSISTANT_TOTAL_BUDGET_MS,
+    })
     if (rawReply === null) throw firstError
     const reply = stripMarkdown(rawReply)
     if (reply.length === 0) {

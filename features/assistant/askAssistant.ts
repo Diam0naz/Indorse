@@ -57,7 +57,14 @@ export interface AskAssistantOptions {
   signal?: AbortSignal
 }
 
-const DEFAULT_ASSISTANT_TIMEOUT_MS = 30_000
+/**
+ * Client deadline for one question. The server's Groq → OpenAI failover runs
+ * inside a SINGLE shared budget (`ASSISTANT_TOTAL_BUDGET_MS`, 26 s in
+ * `api/assistant.ts`) beneath this, so a slow primary still lands a reply
+ * instead of the sheet aborting mid-failover. Raising either side alone
+ * re-opens that gap; `api/assistant.test.ts` pins the ordering.
+ */
+export const DEFAULT_ASSISTANT_TIMEOUT_MS = 30_000
 
 /** Reply cap — mirrors the server's `MAX_REPLY_CHARS`. */
 export const MAX_REPLY_CHARS = 4000

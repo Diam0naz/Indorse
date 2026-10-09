@@ -1,5 +1,7 @@
 import { afterEach, beforeEach, describe, it, expect, vi } from 'vitest'
 import handler, {
+  ASSISTANT_PRIMARY_BUDGET_MS,
+  ASSISTANT_TOTAL_BUDGET_MS,
   MAX_MESSAGE_CHARS,
   RATE_LIMIT,
   resetAssistantRateLimit,
@@ -7,6 +9,7 @@ import handler, {
   stripMarkdown,
 } from '@/api/assistant'
 import { KNOWLEDGE_DOC, buildAssistantSystem, contextBlock } from '@/api/_lib/knowledge'
+import { DEFAULT_ASSISTANT_TIMEOUT_MS } from '@/features/assistant/askAssistant'
 
 function mockRes() {
   const res = {
@@ -334,5 +337,15 @@ describe('assistant route', () => {
     const other = mockRes()
     await handler({ ip: '10.0.0.10', body: { message: 'hello' } }, other)
     expect(other.statusCode).toBe(200)
+  })
+})
+
+describe('assistant failover budget', () => {
+  // The bug this guards: with two independent provider windows (30 s + 30 s)
+  // the app gave up at 30 s exactly while the fallback was still working, so
+  // the failover was dead code. The server's whole request must finish first.
+  it('finishes inside the app’s client deadline', () => {
+    expect(ASSISTANT_PRIMARY_BUDGET_MS).toBeLessThan(ASSISTANT_TOTAL_BUDGET_MS)
+    expect(ASSISTANT_TOTAL_BUDGET_MS).toBeLessThan(DEFAULT_ASSISTANT_TIMEOUT_MS)
   })
 })

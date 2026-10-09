@@ -1008,6 +1008,17 @@ a quota wall.
   Groq → OpenAI. A client fault (`bad-request`) fails fast, because every
   provider would reject the same payload, and a total outage reports the
   **primary's** error so the route's contract never changes shape.
+- **One shared deadline (server).** Independent per-provider timeouts would
+  make the failover dead code: a stalled primary consumes the whole invocation
+  (and the app's own client deadline) before the fallback is ever dialled. Each
+  classify route now passes `totalMs: CLASSIFY_TOTAL_BUDGET_MS` (42 s) and caps
+  only its **primary** at that provider's deadline, so the fallback spends
+  whatever time is left — a primary that fails in 2 s hands ~40 s to its
+  sibling. The total sits under the app's `CLASSIFY_TIMEOUT_MS` (45 s) and the
+  platform's 60 s `maxDuration`. `assistant` follows the same shape:
+  `ASSISTANT_TOTAL_BUDGET_MS` (26 s) split into a 12 s `primary` ceiling and
+  the remainder for the fallback, all beneath its `DEFAULT_ASSISTANT_TIMEOUT_MS`
+  (30 s) client deadline — `api/assistant.test.ts` pins that ordering.
 - **Camera reachability chip.** Probes retry 5× at 2.5 s, so a tunnel flap is
   absorbed while the sheet is still open instead of leaving the chip red.
 
