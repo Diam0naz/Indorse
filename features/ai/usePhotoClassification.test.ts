@@ -1,8 +1,8 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { act, renderHook } from '@testing-library/react-native'
-import { usePhotoClassification } from '@/features/ai/usePhotoClassification'
+import { usePhotoClassification, CLASSIFY_TIMEOUT_MS, WATCHDOG_GRACE_MS } from '@/features/ai/usePhotoClassification'
 import { classifyPhoto, getClassifyEndpoint } from '@/features/ai/classify'
-import type { ClassificationResult } from '@/features/ai/types'
+import { ClassificationError, type ClassificationResult } from '@/features/ai/types'
 
 vi.mock('./classify', () => ({
   classifyPhoto: vi.fn(),
@@ -114,6 +114,58 @@ describe('usePhotoClassification', () => {
 
     expect(result.current.classification).toBeNull()
     expect(result.current.classifying).toBe(false)
+  })
+
+  it('keeps the cause of a failure so the caller can explain it', async () => {
+    vi.mocked(classifyPhoto).mockRejectedValue(new ClassificationError('payload-too-large', 'too big', 413))
+    const { result } = await renderHook(() => usePhotoClassification())
+
+    await act(async () => {
+      await result.current.classify(['ZmFrZQ=='])
+    })
+
+    expect(result.current.error?.code).toBe('payload-too-large')
+    expect(result.current.classification).toBeNull()
+  })
+
+  it('refuses an upload the proxy would reject instead of sending it', async () => {
+    // One shot alone over the 3.5 MB body budget: sending it would come back
+    // as a bare host 413 after the whole upload, so it is stopped locally.
+    const huge = 'a'.repeat(4_000_000)
+    const { result } = await renderHook(() => usePhotoClassification())
+
+    await act(async () => {
+      await expect(result.current.classify([huge])).resolves.toBeNull()
+    })
+
+    expect(result.current.error?.code).toBe('payload-too-large')
+    expect(classifyPhoto).not.toHaveBeenCalled()
+  })
+
+  it('settles even when the transport never does (stalled upload)', async () => {
+    vi.useFakeTimers()
+    try {
+      // A request whose abort is never honoured: the promise stays pending.
+      vi.mocked(classifyPhoto).mockReturnValue(new Promise<ClassificationResult>(() => {}))
+      const { result } = await renderHook(() => usePhotoClassification())
+
+      let started!: Promise<ClassificationResult | null>
+      await act(async () => {
+        started = result.current.classify(['ZmFrZQ=='])
+      })
+      expect(result.current.classifying).toBe(true)
+
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(CLASSIFY_TIMEOUT_MS + WATCHDOG_GRACE_MS)
+        await started
+      })
+
+      // The spinner cannot outlive the watchdog: state settles as "no verdict".
+      expect(result.current.classifying).toBe(false)
+      expect(result.current.classification).toBeNull()
+    } finally {
+      vi.useRealTimers()
+    }
   })
 
   it('sends every shot to the proxy in a single classifyPhoto call', async () => {

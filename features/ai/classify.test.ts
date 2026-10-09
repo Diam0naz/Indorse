@@ -94,6 +94,18 @@ describe('classifyPhoto', () => {
     ).rejects.toMatchObject({ code: 'unauthorized', status: 401 })
   })
 
+  it('maps the host body cap (413) to payload-too-large', async () => {
+    // Vercel answers 413 before the handler ever runs, so this is the one
+    // status that does not mean "the proxy said no" — it means the upload was
+    // too big to be read at all.
+    await expect(
+      classifyPhoto(
+        { images: [{ imageBase64: 'x' }] },
+        { endpoint: 'https://example.com', fetchImpl: errorFetch(413) },
+      ),
+    ).rejects.toMatchObject({ code: 'payload-too-large', status: 413 })
+  })
+
   it('maps a 500 to upstream', async () => {
     await expect(
       classifyPhoto(

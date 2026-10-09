@@ -60,6 +60,146 @@ describe('balanceProviders', () => {
   })
 })
 
+describe('balanceProviders — shared deadline', () => {
+  it('stays unbounded when no shared budget is given (callers that self-time-out)', async () => {
+    let budget = 0
+    await balanceProviders([
+      {
+        name: 'primary',
+        run: (timeoutMs) => {
+          budget = timeoutMs
+          return Promise.resolve('ok')
+        },
+      },
+    ])
+    expect(budget).toBe(Number.POSITIVE_INFINITY)
+  })
+
+  it('gives every attempt the shared budget when it declares no cap', async () => {
+    const seen: number[] = []
+    const run =
+      (value: string) =>
+      (timeoutMs: number): Promise<string> => {
+        seen.push(timeoutMs)
+        return Promise.resolve(value)
+      }
+
+    await balanceProviders([{ name: 'a', run: run('a') }], { totalMs: 42_000 })
+    expect(seen[0]).toBeGreaterThan(41_000)
+  })
+
+  it('honours a per-attempt cap regardless of the shared budget', async () => {
+    const seen: number[] = []
+    const result = await balanceProviders<string>(
+      [
+        {
+          name: 'primary',
+          budgetMs: 5_000,
+          run: (timeoutMs) => {
+            seen.push(timeoutMs)
+            return Promise.reject(new Error('down'))
+          },
+        },
+        {
+          name: 'secondary',
+          run: (timeoutMs) => {
+            seen.push(timeoutMs)
+            return Promise.resolve('ok')
+          },
+        },
+      ],
+      { totalMs: 60_000 },
+    )
+
+    expect(seen[0]).toBe(5_000)
+    expect(result.value).toBe('ok')
+  })
+
+  it('hands a fast primary failure’s unused time to the fallback', async () => {
+    let fallbackBudget = 0
+    const result = await balanceProviders<string>(
+      [
+        { name: 'primary', budgetMs: 20_000, run: () => Promise.reject(new Error('down')) },
+        {
+          name: 'secondary',
+          run: (timeoutMs) => {
+            fallbackBudget = timeoutMs
+            return Promise.resolve('ok')
+          },
+        },
+      ],
+      { totalMs: 42_000 },
+    )
+
+    expect(result.value).toBe('ok')
+    // The primary failed instantly, so the fallback gets nearly the whole
+    // 42 s — not a second fixed 20 s window.
+    expect(fallbackBudget).toBeGreaterThan(41_000)
+  })
+
+  it('shrinks the fallback budget by the time the primary spent', async () => {
+    vi.useFakeTimers()
+    try {
+      let fallbackBudget = 0
+      const pending = balanceProviders<string>(
+        [
+          {
+            name: 'primary',
+            run: async () => {
+              await vi.advanceTimersByTimeAsync(10_000)
+              throw new Error('down')
+            },
+          },
+          {
+            name: 'secondary',
+            run: (timeoutMs) => {
+              fallbackBudget = timeoutMs
+              return Promise.resolve('ok')
+            },
+          },
+        ],
+        { totalMs: 42_000 },
+      )
+
+      await expect(pending).resolves.toMatchObject({ value: 'ok' })
+      expect(fallbackBudget).toBeLessThanOrEqual(32_000)
+      expect(fallbackBudget).toBeGreaterThan(31_000)
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('does not dial another provider once too little budget remains', async () => {
+    vi.useFakeTimers()
+    try {
+      const secondary = vi.fn(() => Promise.resolve('never'))
+      const primary = new ClassificationError('timeout', 'primary timed out')
+      const pending = balanceProviders(
+        [
+          {
+            name: 'primary',
+            run: async () => {
+              await vi.advanceTimersByTimeAsync(41_500)
+              throw primary
+            },
+          },
+          { name: 'secondary', run: secondary },
+        ],
+        { totalMs: 42_000 },
+      )
+
+      const result = await pending
+      // ~500 ms left is not enough for a real round trip; starting one would
+      // race the caller's own deadline and misreport the cause.
+      expect(secondary).not.toHaveBeenCalled()
+      expect(result.value).toBeNull()
+      expect(result.firstError).toBe(primary)
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+})
+
 describe('isClientFault', () => {
   it('marks only bad-request as the client’s fault', () => {
     expect(isClientFault(new ClassificationError('bad-request', 'x'))).toBe(true)

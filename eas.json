@@ -19,7 +19,12 @@
         "buildType": "apk"
       },
       "env": {
-        "EXPO_PUBLIC_FORCE_SEEKER": "false"
+        "EXPO_PUBLIC_FORCE_SEEKER": "false",
+        "EXPO_PUBLIC_AI_CLASSIFY_URL": "https://indorse.vercel.app/api/classify-gemini",
+        "EXPO_PUBLIC_AI_GRADE_URL": "https://indorse.vercel.app/api/grade",
+        "EXPO_PUBLIC_AI_ASSISTANT_URL": "https://indorse.vercel.app/api/assistant",
+        "EXPO_PUBLIC_FUND_TIER_URL": "https://indorse.vercel.app/api/funds-tier",
+        "EXPO_PUBLIC_SIWS_URL": "https://indorse.vercel.app/api/siws"
       }
     },
     "production": {
@@ -28,7 +33,12 @@
         "buildType": "app-bundle"
       },
       "env": {
-        "EXPO_PUBLIC_FORCE_SEEKER": "false"
+        "EXPO_PUBLIC_FORCE_SEEKER": "false",
+        "EXPO_PUBLIC_AI_CLASSIFY_URL": "https://indorse.vercel.app/api/classify-gemini",
+        "EXPO_PUBLIC_AI_GRADE_URL": "https://indorse.vercel.app/api/grade",
+        "EXPO_PUBLIC_AI_ASSISTANT_URL": "https://indorse.vercel.app/api/assistant",
+        "EXPO_PUBLIC_FUND_TIER_URL": "https://indorse.vercel.app/api/funds-tier",
+        "EXPO_PUBLIC_SIWS_URL": "https://indorse.vercel.app/api/siws"
       }
     }
   },

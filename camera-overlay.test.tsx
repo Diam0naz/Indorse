@@ -63,6 +63,7 @@ vi.mock('@/features/ai/usePhotoClassification', () => ({
   usePhotoClassification: () => ({
     classification: verdict.classification,
     classifying: false,
+    error: null,
     classify: vi.fn(async () => verdict.classification),
     reset: vi.fn(),
   }),
@@ -160,6 +161,21 @@ describe('camera overlay — AI status', () => {
     const screen = await renderOverlay({ farmName: 'Riverbend Farm' })
     await screen.findByText('AI unavailable', {}, LOAD)
   })
+
+  it('leaves "Checking AI…" when the probe request never settles', async () => {
+    process.env.EXPO_PUBLIC_AI_CLASSIFY_URL = 'http://proxy.test/api/classify'
+    // A transport that neither resolves nor rejects — React Native can
+    // leave an aborted GET pending. Without the settle guard the chip sat
+    // on "Checking AI…" for the whole session; it must move to the honest
+    // "unavailable" instead.
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(() => new Promise(() => {})),
+    )
+    const screen = await renderOverlay({ farmName: 'Riverbend Farm' })
+    expect(screen.getByText('Checking AI…')).toBeTruthy()
+    await screen.findByText('AI unavailable', {}, { timeout: 9000 })
+  }, 15_000)
 })
 
 describe('camera overlay — analyze → done card', () => {

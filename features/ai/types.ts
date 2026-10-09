@@ -73,7 +73,13 @@ export interface ClassifyPhotoInput {
   images: ImageInput[]
 }
 
-export type ClassificationErrorCode = 'bad-request' | 'unauthorized' | 'upstream' | 'network' | 'timeout' | 'malformed'
+/**
+ * `payload-too-large` is the host's own body cap (Vercel answers 413 before
+ * the handler runs), not a proxy verdict — it has no route-level status
+ * mapping because the route never produces it.
+ */
+export type ClassificationErrorCode =
+  'bad-request' | 'payload-too-large' | 'unauthorized' | 'upstream' | 'network' | 'timeout' | 'malformed'
 
 export class ClassificationError extends Error {
   readonly code: ClassificationErrorCode

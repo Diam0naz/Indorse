@@ -15,6 +15,16 @@ export const MAX_IMAGE_CHARS = 8 * 1024 * 1024
 /** Hard ceiling on photos per call — mirrors the app's 5-shot report. */
 export const MAX_IMAGES = 5
 
+/**
+ * Total wall-clock budget for ONE classification request, shared across the
+ * ordered provider attempts (`_lib/balance.ts`): the primary is capped at its
+ * own provider deadline and the failover spends whatever remains, so a
+ * stalled primary can no longer consume the invocation before the fallback is
+ * dialled. 42 s sits under the app's client deadline (`CLASSIFY_TIMEOUT_MS`,
+ * 45 s) and the platform's 60 s `maxDuration` (`vercel.json`).
+ */
+export const CLASSIFY_TOTAL_BUDGET_MS = 42_000
+
 /** One validated image, ready for a provider helper. */
 export interface ProxyImage {
   imageBase64: string

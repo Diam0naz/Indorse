@@ -31,9 +31,17 @@
 
 import { ClassificationError } from './_lib/ai-types'
 import { balanceProviders, type ProviderAttempt } from './_lib/balance'
-import { DEFAULT_GEMINI_MODEL, classifyWithGemini } from './_lib/gemini'
+import { DEFAULT_GEMINI_MODEL, GEMINI_TIMEOUT_MS, classifyWithGemini } from './_lib/gemini'
 import { DEFAULT_VISION_MODEL, classifyWithOpenAI } from './_lib/openai'
-import { MAX_IMAGES, collectImages, parseBody, statusFor, type ProxyRequest, type ProxyResponse } from './_lib/proxy'
+import {
+  CLASSIFY_TOTAL_BUDGET_MS,
+  MAX_IMAGES,
+  collectImages,
+  parseBody,
+  statusFor,
+  type ProxyRequest,
+  type ProxyResponse,
+} from './_lib/proxy'
 
 export default async function handler(req: ProxyRequest, res: ProxyResponse): Promise<void> {
   if (req.method && req.method !== 'POST') {
@@ -67,31 +75,37 @@ export default async function handler(req: ProxyRequest, res: ProxyResponse): Pr
 
   // Ordered failover, mirrored from classify.ts: Gemini answers when healthy,
   // OpenAI takes over on provider-side failures, and a total outage reports
-  // the primary's error unchanged (see _lib/balance.ts).
+  // the primary's error unchanged. Both share ONE deadline (see
+  // _lib/balance.ts): the primary is capped so a stall cannot eat the
+  // request, and the fallback spends whatever time is left.
   const attempts: ProviderAttempt<unknown>[] = []
   if (geminiKey) {
     attempts.push({
       name: 'gemini',
-      run: () =>
+      budgetMs: GEMINI_TIMEOUT_MS,
+      run: (timeoutMs) =>
         classifyWithGemini(images, {
           apiKey: geminiKey,
           model: process.env.GEMINI_MODEL ?? DEFAULT_GEMINI_MODEL,
+          timeoutMs,
         }),
     })
   }
   if (openaiKey) {
     attempts.push({
       name: 'openai',
-      run: () =>
+      // No cap: the failover gets whatever the primary left unused.
+      run: (timeoutMs) =>
         classifyWithOpenAI(images, {
           apiKey: openaiKey,
           model: process.env.OPENAI_VISION_MODEL ?? DEFAULT_VISION_MODEL,
+          timeoutMs,
         }),
     })
   }
 
   try {
-    const { value, firstError } = await balanceProviders(attempts)
+    const { value, firstError } = await balanceProviders(attempts, { totalMs: CLASSIFY_TOTAL_BUDGET_MS })
     if (value === null) throw firstError
     res.status(200).json(value)
   } catch (error) {

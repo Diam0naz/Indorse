@@ -30,13 +30,18 @@ export interface ClassifyPhotoOptions {
   endpoint: string
   /** Injectable fetch for tests / custom transports. */
   fetchImpl?: typeof fetch
-  /** Abort the request after this many milliseconds. Default 15s. */
+  /** Abort the request after this many milliseconds. Default 30s. */
   timeoutMs?: number
   /** Caller-owned abort signal (e.g. a cancelled capture). */
   signal?: AbortSignal
 }
 
-const DEFAULT_TIMEOUT_MS = 15_000
+/**
+ * The proxy's own budget is 60 s (`vercel.json` maxDuration) and a vision
+ * call has been measured at 2–9 s; 30 s sits inside that window instead of
+ * failing a request the server would have answered.
+ */
+const DEFAULT_TIMEOUT_MS = 30_000
 
 /**
  * Read the proxy URL from Expo's public env. Returns `null` when unset so the
@@ -87,6 +92,16 @@ export async function classifyPhoto(
     })
 
     if (!response.ok) {
+      // A 413 here is the host's body cap, not a proxy verdict: the platform
+      // rejected the upload before the handler ever saw it. Naming it lets
+      // the caller tell the scout to take fewer/smaller shots.
+      if (response.status === 413) {
+        throw new ClassificationError(
+          'payload-too-large',
+          'Classifier rejected the upload as too large',
+          response.status,
+        )
+      }
       const code = response.status === 401 ? 'unauthorized' : 'upstream'
       throw new ClassificationError(code, `Classifier responded with ${response.status}`, response.status)
     }

@@ -52,6 +52,7 @@ import { useTheme } from '@/components/theme-provider'
 import { useNotifications } from '@/components/notifications'
 import { createStyles, fontSizes, fontWeights, radii, spacing, type Colors } from '@/constants/theme'
 import { getClassifyEndpoint } from '@/features/ai/classify'
+import { downscaleShot } from '@/features/ai/image'
 import { usePhotoClassification } from '@/features/ai/usePhotoClassification'
 import { SeedVaultBadge } from '@/components/seed-vault-badge'
 import { useSubmitReport } from '@/features/reports/useSubmitReport'
@@ -61,6 +62,7 @@ import { persistEvidence } from '@/features/scout/evidence'
 import { photoHash } from '@/features/scout/photo'
 import type { ScoutEvent } from '@/constants/data'
 import { formatShortDate } from '@/lib/format'
+import { settleAfter } from '@/lib/settle'
 import { useT } from '@/lib/i18n'
 
 interface CameraOverlayProps {
@@ -98,6 +100,19 @@ const FALLBACK_GPS = { lat: 46.8821, lng: -98.7023 }
 
 /** Keep the scanline visible at least this long so the scan reads as work. */
 const SCAN_MS = 1400
+
+/**
+ * Reachability-probe timing. Each attempt aborts its own GET after
+ * `PROBE_TIMEOUT_MS`; `settleAfter` is the guarantee the abort is NOT — React
+ * Native can leave an aborted GET pending, which would otherwise pin the chip
+ * on "Checking AI…" for the entire session. Retries cover a transient tunnel
+ * flap while the sheet stays open (each attempt is itself bounded, so the
+ * campaign cannot run away).
+ */
+const PROBE_TIMEOUT_MS = 4000
+const PROBE_SETTLE_GRACE_MS = 1500
+const PROBE_MAX_ATTEMPTS = 5
+const PROBE_RETRY_MS = 2500
 
 /** Shots per report — the counter is real, this is its ceiling. */
 const MAX_SHOTS = 5
@@ -137,7 +152,13 @@ export function CameraOverlay({ onClose, onSubmit, farmAddress, farmName, queued
   const cancelled = useRef(false)
   const [permission, requestPermission] = useCameraPermissions()
   const submitReport = useSubmitReport()
-  const { classification, classifying, classify, reset: resetClassification } = usePhotoClassification()
+  const {
+    classification,
+    classifying,
+    error: classifyError,
+    classify,
+    reset: resetClassification,
+  } = usePhotoClassification()
   const { add } = useNotifications()
   const { colors } = useTheme()
   const insets = useSafeAreaInsets()
@@ -187,18 +208,24 @@ export function CameraOverlay({ onClose, onSubmit, farmAddress, farmName, queued
 
     const probe = () => {
       controller = new AbortController()
-      const timer = setTimeout(() => controller?.abort(), 4000)
-      fetch(endpoint, { method: 'GET', signal: controller.signal })
-        .then(() => {
-          if (active) setAiEndpoint('up')
-        })
-        .catch(() => {
-          if (!active) return
-          attempt += 1
-          setAiEndpoint('down')
-          if (attempt < 5) retryTimer = setTimeout(probe, 2500)
-        })
-        .finally(() => clearTimeout(timer))
+      const timer = setTimeout(() => controller?.abort(), PROBE_TIMEOUT_MS)
+      // `settleAfter` collapses both a rejection and a platform that never
+      // rejects an aborted request to `null`, so this `.then` always runs and
+      // the chip always leaves "checking".
+      void settleAfter(
+        fetch(endpoint, { method: 'GET', signal: controller.signal }),
+        PROBE_TIMEOUT_MS + PROBE_SETTLE_GRACE_MS,
+      ).then((response) => {
+        clearTimeout(timer)
+        if (!active) return
+        if (response) {
+          setAiEndpoint('up')
+          return
+        }
+        attempt += 1
+        setAiEndpoint('down')
+        if (attempt < PROBE_MAX_ATTEMPTS) retryTimer = setTimeout(probe, PROBE_RETRY_MS)
+      })
     }
     probe()
 
@@ -241,7 +268,19 @@ export function CameraOverlay({ onClose, onSubmit, farmAddress, farmName, queued
     try {
       const shot = await cameraRef.current.takePictureAsync({ quality: 0.7, base64: true })
       if (!shot?.uri) return null
-      return { uri: shot.uri, base64: shot.base64 ?? '' }
+      try {
+        // Shrink before the bytes reach the tray or the classifier: the
+        // proxy sits behind a 4.5 MB host body cap, and full-resolution
+        // photos blow past it after two shots. Re-encoding also becomes what
+        // the evidence copy stores, so the record stays small.
+        const prepared = await downscaleShot({ uri: shot.uri, width: shot.width, height: shot.height })
+        return { uri: prepared.uri, base64: prepared.base64 }
+      } catch {
+        // The manipulator is best-effort (a dev client built before it was
+        // added has no native module). Keep the capture untouched rather
+        // than lose the shot; the upload budget trims what cannot be sent.
+        return { uri: shot.uri, base64: shot.base64 ?? '' }
+      }
     } catch {
       // A failed capture falls through to the local event path.
       return null
@@ -709,7 +748,11 @@ export function CameraOverlay({ onClose, onSubmit, farmAddress, farmName, queued
                   >
                     <Text style={styles.analyzeText}>{t('scout.cam.retry')}</Text>
                   </Pressable>
-                  <Text style={styles.gatedHint}>{t('scout.cam.needDiagnosis')}</Text>
+                  <Text style={styles.gatedHint}>
+                    {classifyError?.code === 'payload-too-large'
+                      ? t('scout.cam.photosTooLarge')
+                      : t('scout.cam.needDiagnosis')}
+                  </Text>
                 </>
               ) : submitReport.isError && submitReport.error ? (
                 <Text style={styles.submitError}>

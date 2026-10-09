@@ -13,6 +13,11 @@
  *
  * No `store` (nothing durable should keep a farmer's photo), no `reasoning.*`,
  * no `include` — this call has no tools, so include would be a no-op.
+ *
+ * The call carries its own deadline (`OPENAI_TIMEOUT_MS`), like Gemini's
+ * `h2Fetch`: without it a stalled connection inherited the platform's 60 s
+ * `maxDuration`, so the route hung with no mapped cause until Vercel killed
+ * the invocation.
  */
 
 import {
@@ -32,12 +37,27 @@ export { CROP_DISEASE_LABELS, EVENT_DIAGNOSIS_SCHEMA, VISION_PROMPT } from './pr
 /** Diagnosis model. Override with OPENAI_VISION_MODEL. */
 export const DEFAULT_VISION_MODEL = 'gpt-6-astra'
 
+/**
+ * Hard deadline for one OpenAI call. Mirrors `GEMINI_TIMEOUT_MS` and fits
+ * inside the app's client deadline alongside its sibling: Gemini 20 s + OpenAI
+ * 20 s stays under `CLASSIFY_TIMEOUT_MS` (45 s, and the platform's 60 s
+ * `maxDuration`), so a stalled connection surfaces as a mapped `timeout` —
+ * with the failover still reachable — instead of a bare, unwinnable 504.
+ */
+export const OPENAI_TIMEOUT_MS = 20_000
+
 const OPENAI_URL = 'https://api.openai.com/v1/responses'
 
 export interface OpenAIClassifyDeps {
   apiKey: string
   model?: string
   fetchImpl?: typeof fetch
+  /**
+   * Budget for this attempt. The failover (`_lib/balance.ts`) sets it so a
+   * stalled primary leaves time for the other provider; direct callers keep
+   * the `OPENAI_TIMEOUT_MS` default.
+   */
+  timeoutMs?: number
 }
 
 /** Shape of the SSE events we care about; everything else is progress noise. */
@@ -74,12 +94,38 @@ export async function classifyWithOpenAI(
   }
 
   const fetchImpl = deps.fetchImpl ?? fetch
+  const timeoutMs = deps.timeoutMs ?? OPENAI_TIMEOUT_MS
+  const controller = typeof AbortController === 'function' ? new AbortController() : undefined
+  const timer = controller ? setTimeout(() => controller.abort(), timeoutMs) : undefined
+  // A pending deadline is not a valid reason to hold the event loop open.
+  timer?.unref?.()
+
+  try {
+    return await requestDiagnosis(images, deps, fetchImpl, controller?.signal)
+  } catch (error) {
+    if (isAbortError(error)) {
+      throw new ClassificationError('timeout', `OpenAI request timed out after ${timeoutMs}ms`)
+    }
+    throw error
+  } finally {
+    if (timer) clearTimeout(timer)
+  }
+}
+
+/** One Responses request, from wire format to a validated verdict. */
+async function requestDiagnosis(
+  images: ImageInput[],
+  deps: OpenAIClassifyDeps,
+  fetchImpl: typeof fetch,
+  signal: AbortSignal | undefined,
+): Promise<ClassificationResult> {
   const response = await fetchImpl(OPENAI_URL, {
     method: 'POST',
     headers: {
       'content-type': 'application/json',
       authorization: `Bearer ${deps.apiKey}`,
     },
+    signal,
     body: JSON.stringify({
       model: deps.model ?? DEFAULT_VISION_MODEL,
       instructions: VISION_PROMPT,
@@ -135,6 +181,11 @@ export async function classifyWithOpenAI(
   }
 
   return parseClassification(parsed)
+}
+
+/** An abort/timeout — what a deadline looks like once it reaches us. */
+function isAbortError(error: unknown): boolean {
+  return error instanceof Error && (error.name === 'AbortError' || error.name === 'TimeoutError')
 }
 
 /**

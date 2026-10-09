@@ -39,8 +39,17 @@ import { connect as http2Connect } from 'node:http2'
  */
 export const DEFAULT_GEMINI_MODEL = 'gemini-3.5-flash-lite'
 
-/** Hard deadline for one Gemini call — a stall becomes a mapped 504, not a hang. */
-export const GEMINI_TIMEOUT_MS = 60_000
+/**
+ * Hard deadline for one Gemini call — a stall becomes a mapped 504, not a hang.
+ *
+ * The route fails over Gemini → OpenAI, so the WHOLE request must finish
+ * inside the app's client deadline (`CLASSIFY_TIMEOUT_MS`, 45 s): 20 s here
+ * plus the fallback's own 20 s (`OPENAI_TIMEOUT_MS`) fits with room to spare,
+ * so a stalled primary still yields a verdict instead of the app aborting
+ * mid-failover. A healthy vision call answers in a few seconds, so 20 s only
+ * ever cuts off a dead connection.
+ */
+export const GEMINI_TIMEOUT_MS = 20_000
 
 /** Backoff before each 503/429 retry (Gemini capacity spikes are short). */
 export const GEMINI_RETRY_DELAY_MS = 500
@@ -88,6 +97,12 @@ export interface GeminiClassifyDeps {
   fetchImpl?: typeof fetch
   /** Backoff before retrying a 503/429; tests set 0 to stay instant. */
   retryDelayMs?: number
+  /**
+   * Budget for this attempt. The failover (`_lib/balance.ts`) sets it so a
+   * stalled primary leaves time for the OpenAI fallback; direct callers keep
+   * the `GEMINI_TIMEOUT_MS` default.
+   */
+  timeoutMs?: number
 }
 
 /** Shape of a `generateContent` reply — only the parts that carry text. */
@@ -115,7 +130,10 @@ export async function classifyWithGemini(
     throw new ClassificationError('unauthorized', 'GEMINI_API_KEY is not configured')
   }
 
-  const fetchImpl = deps.fetchImpl ?? h2Fetch
+  // The H2 transport carries this attempt's deadline; a healthy call answers
+  // in seconds, so the budget only ever cuts off a dead connection.
+  const fetchImpl =
+    deps.fetchImpl ?? ((input: RequestInfo | URL, init?: RequestInit) => h2Fetch(input, init, deps.timeoutMs))
   const model = deps.model ?? DEFAULT_GEMINI_MODEL
   const response = await sendWithRetry(
     () =>
@@ -219,10 +237,15 @@ export function extractText(payload: unknown): { text: string; blocked: string |
  * default transport. Equivalent to the global `fetch` for this call's needs
  * (one buffered GET/POST body in, one `Response` out) but it (a) rides H2,
  * which is what actually gets through to Google's edge on restricted
- * networks, and (b) enforces `GEMINI_TIMEOUT_MS`, rejecting with a mapped
- * `timeout` error instead of leaving the proxy hanging.
+ * networks, and (b) enforces its `timeoutMs` (defaulting to
+ * `GEMINI_TIMEOUT_MS`), rejecting with a mapped `timeout` error instead of
+ * leaving the proxy hanging.
  */
-export async function h2Fetch(input: RequestInfo | URL, init?: RequestInit): Promise<Response> {
+export async function h2Fetch(
+  input: RequestInfo | URL,
+  init?: RequestInit,
+  timeoutMs: number = GEMINI_TIMEOUT_MS,
+): Promise<Response> {
   const url = new URL(String(input))
   const body = typeof init?.body === 'string' ? init.body : ''
 
@@ -239,8 +262,8 @@ export async function h2Fetch(input: RequestInfo | URL, init?: RequestInit): Pro
     }
 
     const timer = setTimeout(() => {
-      fail(new ClassificationError('timeout', `Gemini request timed out after ${GEMINI_TIMEOUT_MS}ms`))
-    }, GEMINI_TIMEOUT_MS)
+      fail(new ClassificationError('timeout', `Gemini request timed out after ${timeoutMs}ms`))
+    }, timeoutMs)
     // A pending request is not a valid reason to hold the event loop open.
     timer.unref?.()
 

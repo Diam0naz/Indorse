@@ -78,6 +78,20 @@ vi.mock('expo-camera', async () => {
   }
 })
 
+// expo-image-manipulator has no native module here, and importing it drags in
+// Expo's winter fetch runtime, which installs its own global `fetch` over the
+// one the tests stub. A load failure is a supported outcome — `downscaleShot`
+// treats it as "re-encode unavailable" and the capture keeps its original
+// bytes, which is the path the capture tests assert on.
+vi.mock('expo-image-manipulator', () => ({
+  ImageManipulator: {
+    manipulate: () => {
+      throw new Error('expo-image-manipulator is not available in this test runtime')
+    },
+  },
+  SaveFormat: { JPEG: 'jpeg', PNG: 'png', WEBP: 'webp' },
+}))
+
 // Deterministic: hashPasscode(passcode, salt) === `sha256:${salt}:${passcode}`.
 vi.mock('expo-crypto', () => ({
   CryptoDigestAlgorithm: { SHA256: 'SHA256' },

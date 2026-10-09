@@ -65,6 +65,7 @@ vi.mock('@/features/ai/usePhotoClassification', () => ({
   usePhotoClassification: () => ({
     classification: null,
     classifying: false,
+    error: null,
     classify: classifier.classify,
     reset: vi.fn(),
   }),
