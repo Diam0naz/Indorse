@@ -19,8 +19,19 @@ import { usePathname } from 'expo-router'
 import { AssistantSheet } from '@/components/assistant-sheet'
 import { RobotHeadIcon } from '@/components/robot-head-icon'
 import { useTheme } from '@/components/theme-provider'
-import { createStyles, type Colors } from '@/constants/theme'
+import { createStyles, radii, spacing, type Colors } from '@/constants/theme'
 import { useT, type MessageKey } from '@/lib/i18n'
+
+/**
+ * The two floating circles have to read as a matched pair, so both of these
+ * mirror the Scout dock: `tabBar` in app/(tabs)/_layout.tsx fixes the bar at
+ * 90, and the dock's `fabStack` in app/(tabs)/index.tsx hangs spacing.lg
+ * above it with a 56-wide `fabCircle`. Copy the numbers from there, never
+ * nudge them here alone — a mismatch is exactly what this pair used to look
+ * like (a 40 circle sitting 10px low).
+ */
+const TAB_BAR_HEIGHT = 90
+const DOCK_BUTTON = 56
 
 /** The question each screen most needs answered first. */
 const SCREEN_QUESTIONS: Record<string, MessageKey> = {
@@ -58,12 +69,14 @@ const makeStyles = (colors: Colors) =>
   createStyles({
     chip: {
       position: 'absolute',
-      left: 16,
-      // The tab bar is 90 tall — float just above it.
-      bottom: 96,
-      width: 40,
-      height: 40,
-      borderRadius: 20,
+      left: spacing.lg,
+      // Level with the dock's circle: 90 of tab bar, then the same
+      // spacing.lg the dock hangs above it. Bottom edges, centres and
+      // diameters all line up across the two corners.
+      bottom: TAB_BAR_HEIGHT + spacing.lg,
+      width: DOCK_BUTTON,
+      height: DOCK_BUTTON,
+      borderRadius: radii.full,
       backgroundColor: colors.amber,
       borderWidth: 1,
       borderColor: colors.border,

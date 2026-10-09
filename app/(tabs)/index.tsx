@@ -1327,7 +1327,10 @@ const makeStyles = (colors: Colors) =>
       gap: spacing.sm,
     },
     // The circular control that folds and unfolds the stack. Same amber as
-    // the primary pill, so it reads as that pill rolled up.
+    // the primary pill, so it reads as that pill rolled up. Its 56 + the
+    // stack's spacing.lg are mirrored by the floating chat bubble
+    // (components/help-chip.tsx) so the two corners sit on one line at one
+    // size — change one, change both.
     fabCircle: {
       width: 56,
       height: 56,
