@@ -3,7 +3,7 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=1920, height=1080" />
-    <title>Indorse — core utilities</title>
+    <title>Indorse — on-chain crop intelligence</title>
     <script src="https://cdn.jsdelivr.net/npm/gsap@3.14.2/dist/gsap.min.js"></script>
     <style>
       * {
@@ -500,11 +500,11 @@
           },
           {
             "sceneId": "weather",
-            "notes": "Weather is not decoration — the policy check uses conditions to open or close the scouting window."
+            "notes": "Parametric cover, not a forecast: the per-season oracle median is compared against the trigger the farmer set, and settlement is a fixed rule — no assessment, no adjuster."
           },
           {
             "sceneId": "provenance",
-            "notes": "The trust story: hashes and merges stay auditable on-chain, summarized as the provenance score. Hold on the score before moving.",
+            "notes": "Trust story: two independent AI models grade the batch A–D, a disagreement flags it for a human, and buyer escrow releases on delivery. Hold on the score before moving.",
             "fragments": [46.0]
           },
           {
@@ -790,7 +790,7 @@
           </div>
           <div data-hf-id="hf-u6np" class="mono" id="fa-label">PLOT 4C2E · 1.4 ha</div>
           <div data-hf-id="hf-8726" class="card" id="fa-rec">
-            <div data-hf-id="hf-nxxs" class="fa-rec-name">Kigali Hill Farm</div>
+            <div data-hf-id="hf-nxxs" class="fa-rec-name">Kano Hill Farm</div>
             <div data-hf-id="hf-eqib" class="fa-rec-gps mono">1.9446° S, 30.0617° E</div>
           </div>
         </div>
@@ -865,29 +865,29 @@
         data-track-index="1"
         style="position: absolute; inset: 0"
       >
-        <div data-hf-id="hf-g57x" class="eyebrow" id="we-eyebrow">04 — Weather</div>
-        <h1 data-hf-id="hf-nk00" class="h1" id="we-h1">Live weather decides when a scouting window opens</h1>
+        <div data-hf-id="hf-g57x" class="eyebrow" id="we-eyebrow">04 — Weather cover</div>
+        <h1 data-hf-id="hf-nk00" class="h1" id="we-h1">Rain below your trigger, and the policy pays out</h1>
         <p data-hf-id="hf-uxn3" class="sub" id="we-sub">
-          Conditions feed the policy check before you head out to the field.
+          A parametric policy is a fixed rule, not a claim assessment.
         </p>
         <div data-hf-id="hf-b25f" id="we-card" class="card">
           <div data-hf-id="hf-ocfk" class="wx-head">
-            <div data-hf-id="hf-ggha" class="wx-temp">24°</div>
+            <div data-hf-id="hf-ggha" class="wx-temp">812</div>
             <div data-hf-id="hf-yeow">
-              <div data-hf-id="hf-82w8" class="wx-cond">Partly cloudy</div>
-              <div data-hf-id="hf-rsvq" class="wx-where">Kigali · 14:20</div>
+              <div data-hf-id="hf-82w8" class="wx-cond">mm season rainfall</div>
+              <div data-hf-id="hf-rsvq" class="wx-where">Trigger 950 mm · Kano</div>
             </div>
           </div>
           <div data-hf-id="hf-yo2e" class="wx-row">
-            <span data-hf-id="hf-zpcc">Humidity</span><span data-hf-id="hf-qteo">62%</span>
+            <span data-hf-id="hf-zpcc">Coverage</span><span data-hf-id="hf-qteo">120 USDC</span>
           </div>
           <div data-hf-id="hf-cfga" class="wx-row">
-            <span data-hf-id="hf-ye2z">Wind</span><span data-hf-id="hf-w5gu">8 km/h</span>
+            <span data-hf-id="hf-ye2z">Premium</span><span data-hf-id="hf-w5gu">4 USDC</span>
           </div>
           <div data-hf-id="hf-ctrb" class="wx-row">
-            <span data-hf-id="hf-scai">Rain risk</span><span data-hf-id="hf-je0p">12%</span>
+            <span data-hf-id="hf-scai">Oracle median</span><span data-hf-id="hf-je0p">Frozen</span>
           </div>
-          <div data-hf-id="hf-wzbh" id="we-pill"><i data-hf-id="hf-zeb8"></i>Window open</div>
+          <div data-hf-id="hf-wzbh" id="we-pill"><i data-hf-id="hf-zeb8"></i>Payout condition met</div>
         </div>
       </section>
     </div>
@@ -917,7 +917,9 @@
         <h1 data-hf-id="hf-awil" class="h1" id="pv-h1">
           Every report lands on-chain with a provenance trail you can audit
         </h1>
-        <p data-hf-id="hf-vrfw" class="sub" id="pv-sub">Hashes, merges and scores stay readable years later.</p>
+        <p data-hf-id="hf-vrfw" class="sub" id="pv-sub">
+          Two AI models grade every batch A–D; buyer escrow releases on delivery.
+        </p>
         <div data-hf-id="hf-650v" id="pv-chain">
           <div data-hf-id="hf-23ua" id="pv-line"></div>
           <div data-hf-id="hf-9p0p" class="pv-row">
@@ -1095,8 +1097,8 @@
           </svg>
         </div>
         <h1 data-hf-id="hf-cvxa" id="cl-h1">From leaf to ledger.</h1>
-        <div data-hf-id="hf-035m" id="cl-kicker">INDORSE — ON-CHAIN CROP INTELLIGENCE</div>
-        <p data-hf-id="hf-crj2" id="cl-frag">Built on Solana — ready for Seeker.</p>
+        <div data-hf-id="hf-035m" id="cl-kicker">INDORSE — CROP INTELLIGENCE, PROOF AND RAINFALL COVER</div>
+        <p data-hf-id="hf-crj2" id="cl-frag">.skr names, SKR rewards — built for Solana Mobile.</p>
       </section>
     </div>
 
